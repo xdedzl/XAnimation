@@ -1,0 +1,12 @@
+{
+    "name": "com.xdedzl.xanimation",
+    "displayName": "Xanimation",
+    "description": "xanimation",
+    "version": "1.0.0",
+    "unity": "2022.3",
+    "license": "Apache",
+    "dependencies": {
+        "com.unity.textmeshpro": "2.0.1",
+        "com.unity.nuget.newtonsoft-json": "3.2.1"
+    }
+}
