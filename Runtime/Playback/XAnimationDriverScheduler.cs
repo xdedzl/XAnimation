@@ -7,7 +7,7 @@ namespace XAnimationEngine
     internal sealed class XAnimationDriverScheduler
     {
 #if UNITY_EDITOR
-        private const string EditorUpdateRunnerTypeName = "XFramework.Animation.XAnimationEditorUpdateRunner, XAnimationEditor";
+        private const string EditorUpdateRunnerTypeName = "XAnimationEditor.XAnimationEditorUpdateRunner, XAnimationEditor";
         private static MethodInfo s_RegisterEditorUpdateRunnerMethod;
         private static MethodInfo s_UnregisterEditorUpdateRunnerMethod;
 #endif

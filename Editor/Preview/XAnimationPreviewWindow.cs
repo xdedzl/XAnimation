@@ -179,7 +179,7 @@ namespace XAnimationEditor
         private const string ClipDragDataKey = nameof(XAnimationPreviewWindow) + ".ClipKey";
         private const string LastAssetPathPrefsKey = "XAnimationEditor.XAnimation.Preview.LastAssetPath";
         private const string LastPrefabPathPrefsKey = "XAnimationEditor.XAnimation.Preview.LastPrefabPath";
-        private const double ActivePreviewUpdateIntervalSeconds = 1d / 30d;
+        private const double ActivePreviewUpdateIntervalSeconds = 1d / 60d;
 
         // ── Theme Colors ──
         private static readonly Color PaneBg = new(0.18f, 0.18f, 0.19f, 1f);
