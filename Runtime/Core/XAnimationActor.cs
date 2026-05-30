@@ -34,6 +34,7 @@ namespace XAnimationEngine
         private XAnimationRootMotionBridge m_RootMotionBridge;
 
         public TextAsset AnimationAsset => m_AnimationAsset;
+        public Animator Animator => m_Animator;
         public bool IsPaused => m_Driver.IsPaused;
         public event Action<XAnimationCueEvent> CueTriggered
         {
@@ -233,6 +234,16 @@ namespace XAnimationEngine
         public void Step(float deltaTime)
         {
             m_Driver.Step(deltaTime);
+        }
+
+        public bool SeekChannel(string channelName, float normalizedTime)
+        {
+            return m_Driver.SeekChannel(channelName, normalizedTime);
+        }
+
+        public void SyncFrame()
+        {
+            m_Driver.SyncFrame();
         }
 
         public void SetParameter(string key, float value)

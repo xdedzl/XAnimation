@@ -17,6 +17,11 @@ namespace XAnimationEditor
         private const float PlaybackLabelWidth = 118f;
         private const long RuntimeRefreshIntervalMs = 33;
         private const float PlaybackSpeedMin = 0.1f;
+        private const float PlaybackSpeedMax = 2f;
+        private const float PlaybackScrubberWidth = 132f;
+        private const float PlaybackSpeedControlWidth = 96f;
+        private const float PlaybackToolbarButtonSize = 20f;
+        private const float InspectorStepDeltaTime = 1f / 60f;
 
         private sealed class StateGroupBucket
         {
@@ -30,6 +35,19 @@ namespace XAnimationEditor
             public string ChannelName { get; }
             public string GroupName { get; }
             public List<XAnimationStateConfig> States { get; }
+            public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
+        }
+
+        private sealed class ClipGroupBucket
+        {
+            public ClipGroupBucket(string groupName)
+            {
+                GroupName = groupName ?? string.Empty;
+                Clips = new List<XAnimationClipConfig>();
+            }
+
+            public string GroupName { get; }
+            public List<XAnimationClipConfig> Clips { get; }
             public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
@@ -58,16 +76,30 @@ namespace XAnimationEditor
         private readonly Dictionary<string, FloatField> m_RuntimeFloatFields = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IntegerField> m_RuntimeIntFields = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Toggle> m_RuntimeBoolFields = new(StringComparer.Ordinal);
+        private readonly XAnimationActorInspectorPlaybackSession m_EditModeSession = new();
 
-        private FloatField m_PlaySpeedField;
         private DropdownField m_PlayTargetChannelField;
+        private VisualElement m_PlaybackScrubber;
+        private VisualElement m_PlaybackScrubberFill;
+        private Label m_PlaybackStatusLabel;
+        private Slider m_PlaySpeedSlider;
+        private Label m_PlaySpeedValueLabel;
+        private Button m_PauseResumeButton;
+        private Button m_StepButton;
+        private Button m_StopAllButton;
+        private VisualElement m_ClipsListView;
+        private VisualElement m_ParametersTabPane;
+        private VisualElement m_ClipsTabPane;
+        private VisualElement m_StatesTabPane;
+        private Button m_ParametersTabButton;
+        private Button m_ClipsTabButton;
+        private Button m_StatesTabButton;
         private FloatField m_PlayFadeInField;
         private FloatField m_PlayFadeOutField;
         private IntegerField m_PlayPriorityField;
         private Toggle m_ApplyTransitionToggle;
         private Toggle m_PlayInterruptibleToggle;
         private FloatField m_PlayEnterTimeField;
-        private Button m_PlayCommandButton;
         private VisualElement m_ParametersListView;
         private VisualElement m_StatesListView;
         private Label m_StatusLabel;
@@ -81,6 +113,11 @@ namespace XAnimationEditor
         private List<ChannelNameOption> m_CachedChannelOptions;
         private readonly Dictionary<string, AnimationClip> m_CachedClipObjectMap = new(StringComparer.Ordinal);
 
+        private string m_CurrentPlaybackChannelName;
+        private string m_CurrentPlaybackStateKey;
+        private string m_CurrentPlaybackClipKey;
+        private bool m_IsScrubbingPlayback;
+        private float m_PlaybackScrubberProgress;
         private string m_PlayTargetChannelName;
         private float m_PlayFadeInOverride;
         private float m_PlayFadeOutOverride;
@@ -90,11 +127,17 @@ namespace XAnimationEditor
         private float m_PlayEnterTimeOverride;
         private float m_PlaySpeed = 1f;
         private bool m_PlaybackPrefsLoaded;
+        private RuntimeInspectorTab m_SelectedRuntimeTab = RuntimeInspectorTab.States;
 
         [SerializeField] private bool m_PlaybackSectionExpanded = true;
         [SerializeField] private bool m_PlayTransitionSectionExpanded;
-        [SerializeField] private bool m_ParametersSectionExpanded = true;
-        [SerializeField] private bool m_StatesSectionExpanded = true;
+
+        private enum RuntimeInspectorTab
+        {
+            Parameters,
+            Clips,
+            States,
+        }
 
         public override VisualElement CreateInspectorGUI()
         {
@@ -127,15 +170,26 @@ namespace XAnimationEditor
 
             animationAssetField?.RegisterCallback<SerializedPropertyChangeEvent>(_ =>
             {
+                ReleaseEditModeSession();
                 RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
                 MarkRuntimeViewsDirty();
                 RefreshRuntimeViews();
             });
 
             root.RegisterCallback<AttachToPanelEvent>(_ => StartRefreshLoop());
-            root.RegisterCallback<DetachFromPanelEvent>(_ => StopRefreshLoop());
+            root.RegisterCallback<DetachFromPanelEvent>(_ =>
+            {
+                StopRefreshLoop();
+                ReleaseEditModeSession();
+            });
             root.schedule.Execute(RefreshRuntimeViews).ExecuteLater(0);
             return root;
+        }
+
+        private void OnDisable()
+        {
+            StopRefreshLoop();
+            ReleaseEditModeSession();
         }
 
         private VisualElement BuildRuntimeInspector()
@@ -151,15 +205,7 @@ namespace XAnimationEditor
             playbackCard.Content.Add(BuildPlaybackSettingsContent());
             root.Add(playbackCard.Root);
 
-            FoldoutCard parametersCard = CreateFoldoutCard("Parameters", m_ParametersSectionExpanded, value => m_ParametersSectionExpanded = value);
-            m_ParametersListView = new VisualElement();
-            parametersCard.Content.Add(m_ParametersListView);
-            root.Add(parametersCard.Root);
-
-            FoldoutCard statesCard = CreateFoldoutCard("States", m_StatesSectionExpanded, value => m_StatesSectionExpanded = value);
-            m_StatesListView = new VisualElement();
-            statesCard.Content.Add(m_StatesListView);
-            root.Add(statesCard.Root);
+            root.Add(BuildRuntimeInspectorTabs());
 
             m_StatusLabel = new("Play Mode 下可直接调试播放和参数。")
             {
@@ -173,6 +219,82 @@ namespace XAnimationEditor
             };
             root.Add(m_StatusLabel);
             return root;
+        }
+
+        private VisualElement BuildRuntimeInspectorTabs()
+        {
+            VisualElement card = CreateSubBox();
+
+            VisualElement toolbar = new();
+            toolbar.style.flexDirection = FlexDirection.Row;
+            toolbar.style.marginBottom = 4;
+            card.Add(toolbar);
+
+            m_StatesTabButton = CreateRuntimeTabButton("States", RuntimeInspectorTab.States);
+            m_ClipsTabButton = CreateRuntimeTabButton("Clips", RuntimeInspectorTab.Clips);
+            m_ParametersTabButton = CreateRuntimeTabButton("Parameters", RuntimeInspectorTab.Parameters);
+            toolbar.Add(m_StatesTabButton);
+            toolbar.Add(m_ClipsTabButton);
+            toolbar.Add(m_ParametersTabButton);
+
+            m_ParametersTabPane = new VisualElement();
+            m_ClipsTabPane = new VisualElement();
+            m_StatesTabPane = new VisualElement();
+
+            m_ParametersListView = new VisualElement();
+            m_ClipsListView = new VisualElement();
+            m_StatesListView = new VisualElement();
+
+            m_ParametersTabPane.Add(m_ParametersListView);
+            m_ClipsTabPane.Add(m_ClipsListView);
+            m_StatesTabPane.Add(m_StatesListView);
+
+            card.Add(m_StatesTabPane);
+            card.Add(m_ClipsTabPane);
+            card.Add(m_ParametersTabPane);
+            RefreshRuntimeTabSelection();
+            return card;
+        }
+
+        private Button CreateRuntimeTabButton(string text, RuntimeInspectorTab tab)
+        {
+            Button button = new(() =>
+            {
+                m_SelectedRuntimeTab = tab;
+                RefreshRuntimeTabSelection();
+            })
+            {
+                text = text
+            };
+            button.tooltip = $"切换到 {text}。";
+            button.style.flexGrow = 1;
+            button.style.flexBasis = 0;
+            button.style.height = 24;
+            button.style.marginLeft = 1;
+            button.style.marginRight = 1;
+            return button;
+        }
+
+        private void RefreshRuntimeTabSelection()
+        {
+            SetRuntimeTabVisible(RuntimeInspectorTab.Parameters, m_ParametersTabPane, m_ParametersTabButton);
+            SetRuntimeTabVisible(RuntimeInspectorTab.Clips, m_ClipsTabPane, m_ClipsTabButton);
+            SetRuntimeTabVisible(RuntimeInspectorTab.States, m_StatesTabPane, m_StatesTabButton);
+        }
+
+        private void SetRuntimeTabVisible(RuntimeInspectorTab tab, VisualElement pane, Button button)
+        {
+            bool selected = m_SelectedRuntimeTab == tab;
+            if (pane != null)
+            {
+                pane.style.display = selected ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+
+            if (button != null)
+            {
+                button.style.backgroundColor = selected ? AccentColor : ListHeaderBg;
+                button.style.color = selected ? Color.white : TextNormal;
+            }
         }
 
         private void LoadPlaybackPrefs()
@@ -203,7 +325,25 @@ namespace XAnimationEditor
                 return 1f;
             }
 
-            return Mathf.Max(PlaybackSpeedMin, speed);
+            return Mathf.Clamp(speed, PlaybackSpeedMin, PlaybackSpeedMax);
+        }
+
+        private void SetInspectorPlaybackSpeed(float speed, bool savePrefs = true)
+        {
+            m_PlaySpeed = ClampPlaybackSpeed(speed);
+            m_PlaySpeedSlider?.SetValueWithoutNotify(m_PlaySpeed);
+            if (m_PlaySpeedValueLabel != null)
+            {
+                m_PlaySpeedValueLabel.text = $"{m_PlaySpeed:0.0}x";
+            }
+
+            if (savePrefs)
+            {
+                SavePlaybackPrefs();
+            }
+
+            ApplyPlaybackSpeedToPlayingChannels();
+            ApplyPlaybackSpeedToEditModeSession();
         }
 
         private void SavePlaybackPrefs()
@@ -213,8 +353,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            float speed = m_PlaySpeedField?.value ?? m_PlaySpeed;
-            m_PlaySpeed = ClampPlaybackSpeed(speed);
+            m_PlaySpeed = ClampPlaybackSpeed(m_PlaySpeedSlider?.value ?? m_PlaySpeed);
 
             XAnimationPlaybackSettingsPrefs.Save(new XAnimationPlaybackSettings
             {
@@ -234,27 +373,12 @@ namespace XAnimationEditor
         private VisualElement BuildPlaybackSettingsContent()
         {
             VisualElement content = new();
+            content.Add(BuildInspectorPlaybackControls());
 
-            VisualElement speedRow = new();
-            speedRow.style.flexDirection = FlexDirection.Row;
-            speedRow.style.alignItems = Align.Center;
-            content.Add(speedRow);
-
-            m_PlaySpeedField = new FloatField { value = GetPlaybackSpeed() };
-            ConfigureCompactPlaybackField(m_PlaySpeedField, 66);
-            m_PlaySpeedField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlaySpeed = ClampPlaybackSpeed(evt.newValue);
-                if (!Mathf.Approximately(m_PlaySpeed, evt.newValue))
-                {
-                    m_PlaySpeedField.SetValueWithoutNotify(m_PlaySpeed);
-                }
-
-                SavePlaybackPrefs();
-                ApplyPlaybackSpeedToPlayingChannels();
-            });
-            VisualElement speedFieldRow = CreatePlaybackFieldContainer("speed", m_PlaySpeedField, PlaybackLabelWidth);
-            speedRow.Add(speedFieldRow);
+            VisualElement channelRow = new();
+            channelRow.style.flexDirection = FlexDirection.Row;
+            channelRow.style.alignItems = Align.Center;
+            content.Add(channelRow);
 
             m_PlayTargetChannelField = new DropdownField();
             m_PlayTargetChannelField.tooltip = "clip 调试播放使用的 channelName。state 播放始终使用 state 自己配置的 channel。";
@@ -268,14 +392,7 @@ namespace XAnimationEditor
             VisualElement channelFieldRow = CreatePlaybackFieldContainer("channelName", m_PlayTargetChannelField, PlaybackLabelWidth);
             channelFieldRow.tooltip = "用于 clip 调试播放的目标 channel。";
             channelFieldRow.style.flexGrow = 1;
-            speedRow.Add(channelFieldRow);
-
-            m_PlayCommandButton = new Button(PlayConfiguredCommand)
-            {
-                text = "Play"
-            };
-            m_PlayCommandButton.style.marginLeft = 8;
-            speedRow.Add(m_PlayCommandButton);
+            channelRow.Add(channelFieldRow);
 
             m_ApplyTransitionToggle = CreateHeaderApplyToggle(m_ApplyTransitionOverrides, "是否应用 Transition 覆盖。关闭时本分区会自动收起。");
             FoldoutCard transitionCard = CreateSectionFoldoutCard("Transition", m_PlayTransitionSectionExpanded, value =>
@@ -358,6 +475,212 @@ namespace XAnimationEditor
             return content;
         }
 
+        private VisualElement BuildInspectorPlaybackControls()
+        {
+            VisualElement controls = CreateSubBox();
+            controls.style.marginBottom = 4;
+
+            VisualElement statusRow = new();
+            statusRow.style.flexDirection = FlexDirection.Row;
+            statusRow.style.alignItems = Align.Center;
+            controls.Add(statusRow);
+
+            m_PlaybackStatusLabel = new("Edit Mode 可直接在当前 Actor 上临时预览。")
+            {
+                style =
+                {
+                    color = TextMuted,
+                    fontSize = BodyFontSize,
+                    flexGrow = 1,
+                    minWidth = 0,
+                    whiteSpace = WhiteSpace.Normal,
+                }
+            };
+            statusRow.Add(m_PlaybackStatusLabel);
+
+            VisualElement playbackActions = new();
+            playbackActions.style.flexDirection = FlexDirection.Row;
+            playbackActions.style.alignItems = Align.Center;
+            playbackActions.style.flexWrap = Wrap.NoWrap;
+            playbackActions.style.minWidth = 0;
+            playbackActions.style.marginTop = 4;
+            controls.Add(playbackActions);
+
+            m_PlaybackScrubber = CreateInspectorPlaybackScrubber();
+            playbackActions.Add(m_PlaybackScrubber);
+
+            VisualElement speedControls = new();
+            speedControls.style.flexDirection = FlexDirection.Row;
+            speedControls.style.alignItems = Align.Center;
+            speedControls.style.width = PlaybackSpeedControlWidth;
+            speedControls.style.flexShrink = 0;
+            speedControls.style.marginLeft = 6;
+            speedControls.tooltip = "本次 Inspector 播放使用的时间缩放倍率。";
+
+            m_PlaySpeedSlider = new Slider(PlaybackSpeedMin, PlaybackSpeedMax)
+            {
+                value = GetPlaybackSpeed()
+            };
+            m_PlaySpeedSlider.style.flexGrow = 1;
+            m_PlaySpeedSlider.style.flexShrink = 1;
+            m_PlaySpeedSlider.style.minWidth = 56;
+            m_PlaySpeedSlider.tooltip = "拖动调整播放速度。";
+            m_PlaySpeedSlider.RegisterValueChangedCallback(evt => SetInspectorPlaybackSpeed(evt.newValue));
+            speedControls.Add(m_PlaySpeedSlider);
+
+            m_PlaySpeedValueLabel = new Label();
+            m_PlaySpeedValueLabel.style.width = 34;
+            m_PlaySpeedValueLabel.style.minWidth = 34;
+            m_PlaySpeedValueLabel.style.unityTextAlign = TextAnchor.MiddleRight;
+            m_PlaySpeedValueLabel.style.color = TextNormal;
+            m_PlaySpeedValueLabel.style.fontSize = BodyFontSize;
+            m_PlaySpeedValueLabel.style.marginLeft = 4;
+            speedControls.Add(m_PlaySpeedValueLabel);
+            SetInspectorPlaybackSpeed(GetPlaybackSpeed(), savePrefs: false);
+            playbackActions.Add(speedControls);
+
+            m_PauseResumeButton = CreateInspectorPlaybackButton("Ⅱ", ToggleInspectorPause, AccentColor);
+            ConfigureInspectorPlaybackToolbarButton(m_PauseResumeButton, 6f);
+            playbackActions.Add(m_PauseResumeButton);
+
+            m_StepButton = CreateInspectorPlaybackButton("▸|", StepInspectorPlayback, AccentColor);
+            ConfigureInspectorPlaybackToolbarButton(m_StepButton, 4f);
+            playbackActions.Add(m_StepButton);
+
+            m_StopAllButton = CreateInspectorPlaybackButton("■", StopAllInspectorPlayback, DangerColor);
+            ConfigureInspectorPlaybackToolbarButton(m_StopAllButton, 4f);
+            playbackActions.Add(m_StopAllButton);
+            return controls;
+        }
+
+        private static Button CreateInspectorPlaybackButton(string label, Action onClick, Color bgColor)
+        {
+            Button button = new(onClick) { text = label };
+            button.tooltip = label switch
+            {
+                "■" => "停止所有正在播放的 channel。",
+                "Ⅱ" => "暂停或继续当前 Inspector 播放。",
+                "▶" => "播放默认 state，或继续当前 Inspector 播放。",
+                "▸|" => "暂停状态下向后推进固定一帧（1/60s）。",
+                _ => label,
+            };
+            button.style.backgroundColor = bgColor;
+            button.style.color = Color.white;
+            button.style.borderTopWidth = 0;
+            button.style.borderBottomWidth = 0;
+            button.style.borderLeftWidth = 0;
+            button.style.borderRightWidth = 0;
+            button.style.borderTopLeftRadius = 3;
+            button.style.borderTopRightRadius = 3;
+            button.style.borderBottomLeftRadius = 3;
+            button.style.borderBottomRightRadius = 3;
+            button.style.fontSize = label == "▶" ? BodyFontSize - 1f : BodyFontSize;
+            button.style.paddingLeft = 0;
+            button.style.paddingRight = 0;
+            button.style.paddingTop = 0;
+            button.style.paddingBottom = 0;
+            return button;
+        }
+
+        private static void ConfigureInspectorPlaybackToolbarButton(Button button, float marginLeft)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.style.width = PlaybackToolbarButtonSize;
+            button.style.minWidth = PlaybackToolbarButtonSize;
+            button.style.maxWidth = PlaybackToolbarButtonSize;
+            button.style.height = PlaybackToolbarButtonSize;
+            button.style.minHeight = PlaybackToolbarButtonSize;
+            button.style.maxHeight = PlaybackToolbarButtonSize;
+            button.style.unityTextAlign = TextAnchor.MiddleCenter;
+            button.style.marginLeft = marginLeft;
+            button.style.flexShrink = 0;
+        }
+
+        private VisualElement CreateInspectorPlaybackScrubber()
+        {
+            VisualElement scrubber = new();
+            scrubber.style.width = PlaybackScrubberWidth;
+            scrubber.style.minWidth = PlaybackScrubberWidth;
+            scrubber.style.maxWidth = PlaybackScrubberWidth;
+            scrubber.style.height = 18;
+            scrubber.style.flexShrink = 0;
+            scrubber.style.position = Position.Relative;
+            scrubber.style.backgroundColor = new Color(0.08f, 0.08f, 0.085f, 1f);
+            scrubber.style.borderTopWidth = 1;
+            scrubber.style.borderBottomWidth = 1;
+            scrubber.style.borderLeftWidth = 1;
+            scrubber.style.borderRightWidth = 1;
+            scrubber.style.borderTopColor = SectionDivider;
+            scrubber.style.borderBottomColor = SectionDivider;
+            scrubber.style.borderLeftColor = SectionDivider;
+            scrubber.style.borderRightColor = SectionDivider;
+            scrubber.tooltip = "拖动当前播放 channel 的归一化进度。";
+
+            m_PlaybackScrubberFill = new VisualElement();
+            m_PlaybackScrubberFill.pickingMode = PickingMode.Ignore;
+            m_PlaybackScrubberFill.style.position = Position.Absolute;
+            m_PlaybackScrubberFill.style.left = 0f;
+            m_PlaybackScrubberFill.style.top = 0f;
+            m_PlaybackScrubberFill.style.bottom = 0f;
+            m_PlaybackScrubberFill.style.width = Length.Percent(0f);
+            m_PlaybackScrubberFill.style.backgroundColor = ProgressFillBg;
+            scrubber.Add(m_PlaybackScrubberFill);
+
+            scrubber.RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (evt.button != 0 || !CanScrubInspectorPlayback())
+                {
+                    return;
+                }
+
+                m_IsScrubbingPlayback = true;
+                scrubber.CapturePointer(evt.pointerId);
+                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
+                evt.StopPropagation();
+            });
+            scrubber.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!m_IsScrubbingPlayback || !scrubber.HasPointerCapture(evt.pointerId))
+                {
+                    return;
+                }
+
+                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
+                evt.StopPropagation();
+            });
+            scrubber.RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (!m_IsScrubbingPlayback)
+                {
+                    return;
+                }
+
+                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
+                m_IsScrubbingPlayback = false;
+                if (scrubber.HasPointerCapture(evt.pointerId))
+                {
+                    scrubber.ReleasePointer(evt.pointerId);
+                }
+
+                evt.StopPropagation();
+            });
+            scrubber.RegisterCallback<PointerCancelEvent>(evt =>
+            {
+                m_IsScrubbingPlayback = false;
+                if (scrubber.HasPointerCapture(evt.pointerId))
+                {
+                    scrubber.ReleasePointer(evt.pointerId);
+                }
+            });
+
+            UpdateInspectorPlaybackScrubber(0f, enabled: false);
+            return scrubber;
+        }
+
         private void StartRefreshLoop()
         {
             StopRefreshLoop();
@@ -378,17 +701,20 @@ namespace XAnimationEditor
         private void RefreshRuntimeViews()
         {
             RefreshRuntimeViewState();
-            RefreshPlayButtonState();
+            RefreshEditModeSessionState();
             if (m_RuntimeViewsDirty)
             {
                 RefreshChannelChoices();
                 RebuildParameterList();
+                RebuildClipList();
                 RebuildStateList();
                 m_RuntimeViewsDirty = false;
             }
 
             RefreshRuntimeParameterValues();
             RefreshStatePlayingStates();
+            RefreshClipPlayingStates();
+            RefreshInspectorPlaybackControls();
         }
 
         private void RefreshRuntimeLoop()
@@ -402,9 +728,25 @@ namespace XAnimationEditor
             bool isPlaying = Application.isPlaying;
             if (currentAssetInstanceId != m_LastAnimationAssetInstanceId || isPlaying != m_LastPlayingState)
             {
+                ReleaseEditModeSession();
                 m_LastAnimationAssetInstanceId = currentAssetInstanceId;
                 m_LastPlayingState = isPlaying;
                 m_RuntimeViewsDirty = true;
+            }
+        }
+
+        private void RefreshEditModeSessionState()
+        {
+            if (Application.isPlaying)
+            {
+                ReleaseEditModeSession();
+                return;
+            }
+
+            XAnimationActor actor = target as XAnimationActor;
+            if (m_EditModeSession.IsLoaded && !m_EditModeSession.Matches(actor))
+            {
+                ReleaseEditModeSession();
             }
         }
 
@@ -418,14 +760,6 @@ namespace XAnimationEditor
         {
             SerializedProperty assetProperty = serializedObject.FindProperty("m_AnimationAsset");
             return assetProperty?.objectReferenceValue != null ? assetProperty.objectReferenceValue.GetInstanceID() : 0;
-        }
-
-        private void RefreshPlayButtonState()
-        {
-            if (m_PlayCommandButton != null)
-            {
-                m_PlayCommandButton.SetEnabled(target is XAnimationActor);
-            }
         }
 
         private void RefreshChannelChoices()
@@ -514,6 +848,164 @@ namespace XAnimationEditor
             RemoveStaleValues(m_RuntimeBoolPreviewValues, validBoolKeys);
         }
 
+        private void RebuildClipList()
+        {
+            m_ClipsListView?.Clear();
+            m_ClipRowMap.Clear();
+            m_ClipButtonMap.Clear();
+            m_ClipVisualStateMap.Clear();
+
+            XAnimationAsset asset = LoadCurrentAnimationAsset();
+            if (m_ClipsListView == null || asset?.clips == null || asset.clips.Length == 0)
+            {
+                AddEmptyLabel(m_ClipsListView, "No clips");
+                return;
+            }
+
+            List<ClipGroupBucket> buckets = new();
+            for (int i = 0; i < asset.clips.Length; i++)
+            {
+                XAnimationClipConfig clip = asset.clips[i];
+                if (clip == null || string.IsNullOrWhiteSpace(clip.key))
+                {
+                    continue;
+                }
+
+                string groupName = NormalizeClipEditorGroupName(clip.editorGroupName);
+                ClipGroupBucket bucket = FindClipGroupBucket(buckets, groupName);
+                if (bucket == null)
+                {
+                    bucket = new ClipGroupBucket(groupName);
+                    buckets.Add(bucket);
+                }
+
+                bucket.Clips.Add(clip);
+            }
+
+            int rowIndex = 0;
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                ClipGroupBucket bucket = buckets[i];
+                if (bucket == null)
+                {
+                    continue;
+                }
+
+                if (bucket.IsUngrouped)
+                {
+                    for (int clipIndex = 0; clipIndex < bucket.Clips.Count; clipIndex++)
+                    {
+                        m_ClipsListView.Add(CreateClipRow(bucket.Clips[clipIndex], rowIndex++));
+                    }
+
+                    continue;
+                }
+
+                m_ClipsListView.Add(CreateClipEditorGroup(bucket, ref rowIndex));
+            }
+        }
+
+        private VisualElement CreateClipEditorGroup(ClipGroupBucket bucket, ref int rowIndex)
+        {
+            VisualElement group = CreateNestedListGroup();
+            string groupKey = BuildClipGroupKey(bucket.GroupName);
+
+            VisualElement header = CreateListHeader();
+            Label foldoutLabel = CreateFoldoutGlyph(!IsClipGroupCollapsed(groupKey));
+            header.Add(foldoutLabel);
+
+            Label title = CreateBoldLabel(bucket.GroupName);
+            title.style.flexGrow = 1;
+            title.style.minWidth = 0;
+            header.Add(title);
+
+            Label info = CreateSmallInfoLabel($"{bucket.Clips.Count} clips");
+            header.Add(info);
+            group.Add(header);
+
+            VisualElement content = new VisualElement();
+            content.style.display = IsClipGroupCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
+            for (int i = 0; i < bucket.Clips.Count; i++)
+            {
+                content.Add(CreateClipRow(bucket.Clips[i], rowIndex++));
+            }
+
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                {
+                    return;
+                }
+
+                bool expanded = content.style.display != DisplayStyle.None;
+                content.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
+                foldoutLabel.text = expanded ? "▸" : "▾";
+                SetClipGroupCollapsed(groupKey, expanded);
+                evt.StopPropagation();
+            });
+
+            group.Add(content);
+            return group;
+        }
+
+        private VisualElement CreateClipRow(XAnimationClipConfig clip, int rowIndex)
+        {
+            VisualElement container = CreateRowContainer(rowIndex);
+            VisualElement progressFill = CreateRowProgressFill();
+            container.Add(progressFill);
+            ClipRowVisualState visualState = new()
+            {
+                BaseColor = RowBaseColor(rowIndex),
+                ProgressFill = progressFill,
+            };
+            m_ClipVisualStateMap[clip.key] = visualState;
+            container.RegisterCallback<MouseEnterEvent>(_ =>
+            {
+                visualState.Hovered = true;
+                ApplyClipRowVisualState(clip.key);
+            });
+            container.RegisterCallback<MouseLeaveEvent>(_ =>
+            {
+                visualState.Hovered = false;
+                ApplyClipRowVisualState(clip.key);
+            });
+
+            VisualElement row = CreateRowContent();
+            container.Add(row);
+
+            Label nameLabel = new(clip.key);
+            nameLabel.style.width = 140;
+            nameLabel.style.flexShrink = 0;
+            nameLabel.style.color = TextNormal;
+            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            nameLabel.style.position = Position.Relative;
+            row.Add(nameLabel);
+
+            Label pathLabel = new(clip.clipPath);
+            pathLabel.style.flexGrow = 1;
+            pathLabel.style.flexShrink = 1;
+            pathLabel.style.minWidth = 0;
+            pathLabel.style.marginLeft = 6;
+            pathLabel.style.color = TextMuted;
+            pathLabel.style.fontSize = BodyFontSize;
+            pathLabel.style.position = Position.Relative;
+            row.Add(pathLabel);
+
+            Button playButton = new(() => ToggleClipPlayback(clip))
+            {
+                text = "▶"
+            };
+            playButton.tooltip = "使用当前 channelName 播放或暂停这个 clip。";
+            ApplyClipIconButtonStyle(playButton);
+            playButton.style.marginLeft = 6;
+            playButton.style.position = Position.Relative;
+            row.Add(playButton);
+
+            m_ClipRowMap[clip.key] = container;
+            m_ClipButtonMap[clip.key] = playButton;
+            return container;
+        }
+
         private VisualElement CreateParameterRow(XAnimationParameterConfig parameter, int rowIndex)
         {
             VisualElement container = CreateRowContainer(rowIndex);
@@ -558,7 +1050,18 @@ namespace XAnimationEditor
                     field.RegisterValueChangedCallback(evt =>
                     {
                         m_RuntimeFloatPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying || actor == null)
+                        if (!Application.isPlaying)
+                        {
+                            if (m_EditModeSession.IsLoaded)
+                            {
+                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
+                                SetStatus($"{parameter.name} = {evt.newValue:0.###}");
+                            }
+
+                            return;
+                        }
+
+                        if (actor == null)
                         {
                             return;
                         }
@@ -583,11 +1086,21 @@ namespace XAnimationEditor
                     {
                         value = GetRuntimeBoolPreviewValue(parameter)
                     };
-                    toggle.SetEnabled(Application.isPlaying);
                     toggle.RegisterValueChangedCallback(evt =>
                     {
                         m_RuntimeBoolPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying || actor == null)
+                        if (!Application.isPlaying)
+                        {
+                            if (m_EditModeSession.IsLoaded)
+                            {
+                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
+                                SetStatus($"{parameter.name} = {evt.newValue}");
+                            }
+
+                            return;
+                        }
+
+                        if (actor == null)
                         {
                             return;
                         }
@@ -612,11 +1125,21 @@ namespace XAnimationEditor
                     {
                         value = GetRuntimeIntPreviewValue(parameter)
                     };
-                    field.SetEnabled(Application.isPlaying);
                     field.RegisterValueChangedCallback(evt =>
                     {
                         m_RuntimeIntPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying || actor == null)
+                        if (!Application.isPlaying)
+                        {
+                            if (m_EditModeSession.IsLoaded)
+                            {
+                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
+                                SetStatus($"{parameter.name} = {evt.newValue}");
+                            }
+
+                            return;
+                        }
+
+                        if (actor == null)
                         {
                             return;
                         }
@@ -640,7 +1163,18 @@ namespace XAnimationEditor
                 {
                     Button button = new(() =>
                     {
-                        if (!Application.isPlaying || actor == null)
+                        if (!Application.isPlaying)
+                        {
+                            if (m_EditModeSession.IsLoaded)
+                            {
+                                m_EditModeSession.SetTrigger(parameter.name);
+                                SetStatus($"Trigger {parameter.name} 已触发。");
+                            }
+
+                            return;
+                        }
+
+                        if (actor == null)
                         {
                             return;
                         }
@@ -659,7 +1193,6 @@ namespace XAnimationEditor
                     {
                         text = "Trigger"
                     };
-                    button.SetEnabled(Application.isPlaying);
                     return button;
                 }
             }
@@ -668,7 +1201,13 @@ namespace XAnimationEditor
         private void RefreshRuntimeParameterValues()
         {
             XAnimationActor actor = target as XAnimationActor;
-            if (actor == null || !Application.isPlaying)
+            if (!Application.isPlaying)
+            {
+                RefreshEditModeParameterValues();
+                return;
+            }
+
+            if (actor == null)
             {
                 return;
             }
@@ -712,6 +1251,64 @@ namespace XAnimationEditor
                 if (kvp.Value.value != value)
                 {
                     kvp.Value.SetValueWithoutNotify(value);
+                }
+            }
+        }
+
+        private void RefreshEditModeParameterValues()
+        {
+            bool sessionLoaded = m_EditModeSession.IsLoaded;
+            foreach (KeyValuePair<string, FloatField> kvp in m_RuntimeFloatFields)
+            {
+                if (kvp.Value == null)
+                {
+                    continue;
+                }
+
+                kvp.Value.SetEnabled(sessionLoaded);
+                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out float value))
+                {
+                    m_RuntimeFloatPreviewValues[kvp.Key] = value;
+                    if (!Mathf.Approximately(kvp.Value.value, value))
+                    {
+                        kvp.Value.SetValueWithoutNotify(value);
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<string, IntegerField> kvp in m_RuntimeIntFields)
+            {
+                if (kvp.Value == null)
+                {
+                    continue;
+                }
+
+                kvp.Value.SetEnabled(sessionLoaded);
+                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out int value))
+                {
+                    m_RuntimeIntPreviewValues[kvp.Key] = value;
+                    if (kvp.Value.value != value)
+                    {
+                        kvp.Value.SetValueWithoutNotify(value);
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<string, Toggle> kvp in m_RuntimeBoolFields)
+            {
+                if (kvp.Value == null)
+                {
+                    continue;
+                }
+
+                kvp.Value.SetEnabled(sessionLoaded);
+                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out bool value))
+                {
+                    m_RuntimeBoolPreviewValues[kvp.Key] = value;
+                    if (kvp.Value.value != value)
+                    {
+                        kvp.Value.SetValueWithoutNotify(value);
+                    }
                 }
             }
         }
@@ -986,7 +1583,7 @@ namespace XAnimationEditor
 
             if (!Application.isPlaying)
             {
-                OpenPreviewAndPlayState(actor, state.key);
+                ToggleEditModeStatePlayback(actor, state);
                 return;
             }
 
@@ -998,13 +1595,129 @@ namespace XAnimationEditor
                 if (isPlaying)
                 {
                     actor.Stop(channelName, 0f);
+                    ClearCurrentPlaybackIfMatches(channelName, state.key, null);
                     SetStatus($"已停止 state {state.key}。");
                 }
                 else
                 {
                     actor.GlobalSpeed = GetPlaybackSpeed();
                     actor.PlayState(state.key, BuildTransitionOptions());
+                    SetCurrentPlayback(channelName, state.key, null);
                     SetStatus($"正在播放 state {state.key}。");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void ToggleEditModeStatePlayback(XAnimationActor actor, XAnimationStateConfig state)
+        {
+            if (actor == null || state == null)
+            {
+                return;
+            }
+
+            try
+            {
+                m_EditModeSession.EnsureLoaded(actor);
+                string channelName = state.channelName;
+                XAnimationChannelState channelState = string.IsNullOrWhiteSpace(channelName) ? null : m_EditModeSession.GetChannelState(channelName);
+                bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
+                if (isPlaying)
+                {
+                    m_EditModeSession.StopAll(restorePose: true);
+                    ClearCurrentPlayback();
+                    SetStatus($"已停止 state {state.key}，并恢复编辑态姿势。");
+                }
+                else
+                {
+                    m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
+                    m_EditModeSession.PlayState(actor, state.key, BuildTransitionOptions());
+                    SetCurrentPlayback(state.channelName, state.key, null);
+                    SetStatus($"正在当前 Actor 上预览 state {state.key}。");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void ToggleClipPlayback(XAnimationClipConfig clip)
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            if (actor == null || clip == null)
+            {
+                return;
+            }
+
+            string channelName = GetSelectedChannelName();
+            if (string.IsNullOrWhiteSpace(channelName))
+            {
+                SetStatus("请先选择 clip 调试播放使用的 channelName。", true);
+                return;
+            }
+
+            if (!Application.isPlaying)
+            {
+                ToggleEditModeClipPlayback(actor, clip, channelName);
+                return;
+            }
+
+            try
+            {
+                XAnimationChannelState channelState = actor.GetChannelState(channelName);
+                bool isPlaying = channelState != null && string.Equals(channelState.clipKey, clip.key, StringComparison.Ordinal);
+                if (isPlaying)
+                {
+                    actor.Stop(channelName, 0f);
+                    ClearCurrentPlaybackIfMatches(channelName, null, clip.key);
+                    SetStatus($"已停止 clip {clip.key}。");
+                }
+                else
+                {
+                    actor.GlobalSpeed = GetPlaybackSpeed();
+                    actor.PlayClip(clip.key, channelName, BuildTransitionOptions());
+                    SetCurrentPlayback(channelName, null, clip.key);
+                    SetStatus($"正在 {channelName} 播放 clip {clip.key}。");
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void ToggleEditModeClipPlayback(XAnimationActor actor, XAnimationClipConfig clip, string channelName)
+        {
+            try
+            {
+                m_EditModeSession.EnsureLoaded(actor);
+                XAnimationChannelState channelState = m_EditModeSession.GetChannelState(channelName);
+                bool isPlaying = channelState != null && string.Equals(channelState.clipKey, clip.key, StringComparison.Ordinal);
+                if (isPlaying)
+                {
+                    m_EditModeSession.StopAll(restorePose: true);
+                    ClearCurrentPlayback();
+                    SetStatus($"已停止 clip {clip.key}，并恢复编辑态姿势。");
+                }
+                else
+                {
+                    m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
+                    m_EditModeSession.PlayClip(actor, clip.key, channelName, BuildTransitionOptions());
+                    SetCurrentPlayback(channelName, null, clip.key);
+                    SetStatus($"正在当前 Actor 的 {channelName} 预览 clip {clip.key}。");
                 }
             }
             catch (Exception ex)
@@ -1055,12 +1768,20 @@ namespace XAnimationEditor
             }
         }
 
+        private void ApplyPlaybackSpeedToEditModeSession()
+        {
+            if (!Application.isPlaying && m_EditModeSession.IsLoaded)
+            {
+                m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
+            }
+        }
+
         private void RefreshStatePlayingStates()
         {
             XAnimationActor actor = target as XAnimationActor;
             HashSet<string> playingStateKeys = null;
             Dictionary<string, float> stateProgressByKey = null;
-            if (actor != null && Application.isPlaying)
+            if (actor != null)
             {
                 XAnimationAsset asset = LoadCurrentAnimationAsset();
                 if (asset?.channels != null)
@@ -1073,7 +1794,7 @@ namespace XAnimationEditor
                             continue;
                         }
 
-                        XAnimationChannelState state = actor.GetChannelState(channel.name);
+                        XAnimationChannelState state = GetChannelState(actor, channel.name);
                         if (state != null && !string.IsNullOrWhiteSpace(state.stateKey))
                         {
                             playingStateKeys ??= new HashSet<string>(StringComparer.Ordinal);
@@ -1104,44 +1825,53 @@ namespace XAnimationEditor
             }
         }
 
-        private void PlayConfiguredCommand()
+        private void RefreshClipPlayingStates()
         {
             XAnimationActor actor = target as XAnimationActor;
-            if (actor == null)
+            HashSet<string> playingClipKeys = null;
+            Dictionary<string, float> clipProgressByKey = null;
+            if (actor != null)
             {
-                return;
+                XAnimationAsset asset = LoadCurrentAnimationAsset();
+                if (asset?.channels != null)
+                {
+                    for (int i = 0; i < asset.channels.Length; i++)
+                    {
+                        XAnimationChannelConfig channel = asset.channels[i];
+                        if (channel == null || string.IsNullOrWhiteSpace(channel.name))
+                        {
+                            continue;
+                        }
+
+                        XAnimationChannelState state = GetChannelState(actor, channel.name);
+                        if (state != null && !string.IsNullOrWhiteSpace(state.clipKey))
+                        {
+                            playingClipKeys ??= new HashSet<string>(StringComparer.Ordinal);
+                            playingClipKeys.Add(state.clipKey);
+                            clipProgressByKey ??= new Dictionary<string, float>(StringComparer.Ordinal);
+                            clipProgressByKey[state.clipKey] = Mathf.Clamp01(state.normalizedTime);
+                        }
+                    }
+                }
             }
 
-            if (!Application.isPlaying)
+            foreach (KeyValuePair<string, VisualElement> kvp in m_ClipRowMap)
             {
-                string startStateKey = serializedObject.FindProperty("m_StartStateKey")?.stringValue;
-                if (string.IsNullOrWhiteSpace(startStateKey))
+                bool isPlaying = playingClipKeys != null && playingClipKeys.Contains(kvp.Key);
+                if (m_ClipVisualStateMap.TryGetValue(kvp.Key, out ClipRowVisualState visualState))
                 {
-                    SetStatus("请先配置 Start State Key，或直接使用下方 state/clip 行内播放按钮。", true);
-                    return;
+                    visualState.Playing = isPlaying;
+                    visualState.Progress = isPlaying && clipProgressByKey != null && clipProgressByKey.TryGetValue(kvp.Key, out float progress)
+                        ? progress
+                        : 0f;
+                    ApplyClipRowVisualState(kvp.Key);
                 }
 
-                OpenPreviewAndPlayState(actor, startStateKey);
-                return;
-            }
-
-            try
-            {
-                string startStateKey = serializedObject.FindProperty("m_StartStateKey")?.stringValue;
-                if (string.IsNullOrWhiteSpace(startStateKey))
+                if (m_ClipButtonMap.TryGetValue(kvp.Key, out Button button))
                 {
-                    throw new XAnimationException("请先配置 Start State Key，或直接使用下方 state/clip 行内播放按钮。");
+                    ApplyClipIconButtonStyle(button, isPlaying ? AccentColor : null);
+                    button.text = isPlaying ? "■" : "▶";
                 }
-
-                actor.GlobalSpeed = GetPlaybackSpeed();
-                actor.PlayState(startStateKey, BuildTransitionOptions());
-
-                SetStatus($"已播放 Start State {startStateKey}。");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
             }
         }
 
@@ -1293,6 +2023,412 @@ namespace XAnimationEditor
             }
 
             return null;
+        }
+
+        private XAnimationChannelState GetChannelState(XAnimationActor actor, string channelName)
+        {
+            if (string.IsNullOrWhiteSpace(channelName))
+            {
+                return null;
+            }
+
+            if (!Application.isPlaying)
+            {
+                return m_EditModeSession.IsLoaded ? m_EditModeSession.GetChannelState(channelName) : null;
+            }
+
+            return actor != null ? actor.GetChannelState(channelName) : null;
+        }
+
+        private string GetSelectedChannelName()
+        {
+            string channelName = m_PlayTargetChannelName;
+            if (!string.IsNullOrWhiteSpace(channelName))
+            {
+                return channelName;
+            }
+
+            return NormalizeChannelOptionValue(m_PlayTargetChannelField?.value);
+        }
+
+        private void SetCurrentPlayback(string channelName, string stateKey, string clipKey)
+        {
+            m_CurrentPlaybackChannelName = channelName ?? string.Empty;
+            m_CurrentPlaybackStateKey = stateKey ?? string.Empty;
+            m_CurrentPlaybackClipKey = clipKey ?? string.Empty;
+        }
+
+        private void ClearCurrentPlaybackIfMatches(string channelName, string stateKey, string clipKey)
+        {
+            bool channelMatches = string.IsNullOrWhiteSpace(channelName) ||
+                                  string.Equals(m_CurrentPlaybackChannelName, channelName, StringComparison.Ordinal);
+            bool stateMatches = string.IsNullOrWhiteSpace(stateKey) ||
+                                string.Equals(m_CurrentPlaybackStateKey, stateKey, StringComparison.Ordinal);
+            bool clipMatches = string.IsNullOrWhiteSpace(clipKey) ||
+                               string.Equals(m_CurrentPlaybackClipKey, clipKey, StringComparison.Ordinal);
+            if (channelMatches && stateMatches && clipMatches)
+            {
+                ClearCurrentPlayback();
+            }
+        }
+
+        private void ClearCurrentPlayback()
+        {
+            m_CurrentPlaybackChannelName = string.Empty;
+            m_CurrentPlaybackStateKey = string.Empty;
+            m_CurrentPlaybackClipKey = string.Empty;
+        }
+
+        private void ReleaseEditModeSession()
+        {
+            if (m_EditModeSession.IsLoaded)
+            {
+                m_EditModeSession.Dispose();
+            }
+
+            ClearCurrentPlayback();
+        }
+
+        private void RefreshInspectorPlaybackControls()
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            XAnimationChannelState state = GetCurrentPlaybackState(actor);
+            bool hasPlayback = state != null;
+            bool paused = Application.isPlaying ? actor != null && actor.IsPaused : m_EditModeSession.IsLoaded && m_EditModeSession.IsPaused;
+            bool canPlayDefault = CanPlayDefaultInspectorState();
+            bool pauseEnabled = hasPlayback || canPlayDefault;
+
+            UpdateInspectorPlaybackScrubber(hasPlayback ? Mathf.Clamp01(state.normalizedTime) : m_PlaybackScrubberProgress, hasPlayback);
+
+            if (m_PauseResumeButton != null)
+            {
+                m_PauseResumeButton.SetEnabled(pauseEnabled);
+                m_PauseResumeButton.style.opacity = pauseEnabled ? 1f : 0.45f;
+                m_PauseResumeButton.text = hasPlayback && !paused ? "Ⅱ" : "▶";
+            }
+
+            if (m_StepButton != null)
+            {
+                m_StepButton.SetEnabled(hasPlayback);
+                m_StepButton.style.opacity = hasPlayback ? 1f : 0.45f;
+            }
+
+            if (m_StopAllButton != null)
+            {
+                bool stopEnabled = hasPlayback || (!Application.isPlaying && m_EditModeSession.IsLoaded);
+                m_StopAllButton.SetEnabled(stopEnabled);
+                m_StopAllButton.style.opacity = stopEnabled ? 1f : 0.45f;
+            }
+
+            if (m_PlaybackStatusLabel != null)
+            {
+                if (!Application.isPlaying && !m_EditModeSession.CanPreviewActor(actor, out string message))
+                {
+                    m_PlaybackStatusLabel.text = message;
+                    m_PlaybackStatusLabel.style.color = DangerColor;
+                }
+                else if (hasPlayback)
+                {
+                    string item = !string.IsNullOrWhiteSpace(state.stateKey) ? state.stateKey : state.clipKey;
+                    m_PlaybackStatusLabel.text = $"{state.channelName} | {item} | {state.normalizedTime:0.000}";
+                    m_PlaybackStatusLabel.style.color = TextMuted;
+                }
+                else
+                {
+                    m_PlaybackStatusLabel.text = Application.isPlaying
+                        ? "Play Mode 下控制真实 XAnimationActor。"
+                        : "Edit Mode 下控制当前场景 Actor 的临时预览。";
+                    m_PlaybackStatusLabel.style.color = TextMuted;
+                }
+            }
+        }
+
+        private XAnimationChannelState GetCurrentPlaybackState(XAnimationActor actor)
+        {
+            XAnimationAsset asset = LoadCurrentAnimationAsset();
+            if (asset?.channels == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(m_CurrentPlaybackChannelName))
+            {
+                XAnimationChannelState current = GetChannelState(actor, m_CurrentPlaybackChannelName);
+                if (current != null)
+                {
+                    return current;
+                }
+            }
+
+            for (int i = 0; i < asset.channels.Length; i++)
+            {
+                XAnimationChannelConfig channel = asset.channels[i];
+                if (channel == null || string.IsNullOrWhiteSpace(channel.name))
+                {
+                    continue;
+                }
+
+                XAnimationChannelState state = GetChannelState(actor, channel.name);
+                if (state != null)
+                {
+                    SetCurrentPlayback(channel.name, state.stateKey, state.clipKey);
+                    return state;
+                }
+            }
+
+            return null;
+        }
+
+        private bool CanScrubInspectorPlayback()
+        {
+            return GetCurrentPlaybackState(target as XAnimationActor) != null;
+        }
+
+        private bool CanPlayDefaultInspectorState()
+        {
+            return target is XAnimationActor actor && ResolveDefaultInspectorState(actor) != null;
+        }
+
+        private XAnimationStateConfig ResolveDefaultInspectorState(XAnimationActor actor)
+        {
+            if (actor == null)
+            {
+                return null;
+            }
+
+            string startStateKey = serializedObject.FindProperty("m_StartStateKey")?.stringValue;
+            XAnimationStateConfig startState = FindStateConfig(startStateKey);
+            if (startState != null)
+            {
+                return startState;
+            }
+
+            XAnimationAsset asset = LoadCurrentAnimationAsset();
+            XAnimationStateConfig[] states = asset?.states ?? Array.Empty<XAnimationStateConfig>();
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (states[i] != null && !string.IsNullOrWhiteSpace(states[i].key))
+                {
+                    return states[i];
+                }
+            }
+
+            return null;
+        }
+
+        private bool TryPlayDefaultInspectorState()
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            XAnimationStateConfig state = ResolveDefaultInspectorState(actor);
+            if (actor == null || state == null)
+            {
+                return false;
+            }
+
+            if (Application.isPlaying)
+            {
+                try
+                {
+                    actor.GlobalSpeed = GetPlaybackSpeed();
+                    actor.PlayState(state.key, BuildTransitionOptions());
+                    SetCurrentPlayback(state.channelName, state.key, null);
+                    SetStatus($"正在播放 state {state.key}。");
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex, actor);
+                    SetStatus(ex.Message, true);
+                    return false;
+                }
+            }
+
+            ToggleEditModeStatePlayback(actor, state);
+            return true;
+        }
+
+        private void UpdateInspectorPlaybackScrubber(float progress, bool enabled)
+        {
+            if (m_PlaybackScrubber == null)
+            {
+                return;
+            }
+
+            m_PlaybackScrubber.SetEnabled(enabled);
+            if (m_IsScrubbingPlayback)
+            {
+                ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
+                return;
+            }
+
+            m_PlaybackScrubberProgress = Mathf.Clamp01(progress);
+            ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
+        }
+
+        private void ApplyInspectorPlaybackScrubberProgress(float progress)
+        {
+            if (m_PlaybackScrubberFill != null)
+            {
+                m_PlaybackScrubberFill.style.width = Length.Percent(Mathf.Clamp01(progress) * 100f);
+            }
+        }
+
+        private void UpdateInspectorPlaybackScrubberFromPointer(float localX, bool seek)
+        {
+            if (m_PlaybackScrubber == null)
+            {
+                return;
+            }
+
+            float width = Mathf.Max(1f, m_PlaybackScrubber.resolvedStyle.width);
+            m_PlaybackScrubberProgress = Mathf.Clamp01(localX / width);
+            ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
+            if (seek)
+            {
+                SeekInspectorPlayback(m_PlaybackScrubberProgress);
+            }
+        }
+
+        private void ToggleInspectorPause()
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            XAnimationChannelState state = GetCurrentPlaybackState(actor);
+            if (state == null)
+            {
+                if (!TryPlayDefaultInspectorState())
+                {
+                    SetStatus("当前没有可播放的 state。", true);
+                }
+                return;
+            }
+
+            if (Application.isPlaying)
+            {
+                if (actor == null)
+                {
+                    return;
+                }
+
+                if (actor.IsPaused)
+                {
+                    actor.Resume();
+                    SetStatus("已继续播放。");
+                }
+                else
+                {
+                    actor.Pause();
+                    SetStatus("已暂停播放。");
+                }
+            }
+            else
+            {
+                if (m_EditModeSession.IsPaused)
+                {
+                    m_EditModeSession.Resume();
+                    SetStatus("已继续编辑态预览。");
+                }
+                else
+                {
+                    m_EditModeSession.Pause();
+                    SetStatus("已暂停编辑态预览。");
+                }
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void StepInspectorPlayback()
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            XAnimationChannelState state = GetCurrentPlaybackState(actor);
+            if (state == null)
+            {
+                SetStatus("当前没有可步进的播放项。", true);
+                return;
+            }
+
+            try
+            {
+                if (Application.isPlaying)
+                {
+                    actor.Pause();
+                    actor.Step(InspectorStepDeltaTime);
+                }
+                else
+                {
+                    m_EditModeSession.Step(InspectorStepDeltaTime);
+                }
+
+                SetStatus("已向后推进一帧。");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void StopAllInspectorPlayback()
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            try
+            {
+                if (Application.isPlaying)
+                {
+                    actor?.StopAll(0f);
+                }
+                else
+                {
+                    m_EditModeSession.StopAll(restorePose: true);
+                }
+
+                ClearCurrentPlayback();
+                SetStatus("已停止全部 channel。");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
+
+            RefreshRuntimeViews();
+        }
+
+        private void SeekInspectorPlayback(float normalizedTime)
+        {
+            XAnimationActor actor = target as XAnimationActor;
+            XAnimationChannelState state = GetCurrentPlaybackState(actor);
+            if (state == null || string.IsNullOrWhiteSpace(state.channelName))
+            {
+                return;
+            }
+
+            try
+            {
+                if (Application.isPlaying)
+                {
+                    actor.Pause();
+                    if (actor.SeekChannel(state.channelName, normalizedTime))
+                    {
+                        if (actor.UpdateMode == XAnimationUpdateMode.Manual)
+                        {
+                            actor.SyncFrame();
+                        }
+                    }
+                }
+                else
+                {
+                    m_EditModeSession.SetPaused(true);
+                    m_EditModeSession.SeekChannel(state.channelName, normalizedTime);
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
         }
 
         private PropertyField AddProperty(VisualElement root, string propertyName)
@@ -1997,7 +3133,24 @@ namespace XAnimationEditor
             ApplyRowVisualState(row, visualState);
         }
 
+        private void ApplyClipRowVisualState(string clipKey)
+        {
+            if (!m_ClipRowMap.TryGetValue(clipKey, out VisualElement row) ||
+                !m_ClipVisualStateMap.TryGetValue(clipKey, out ClipRowVisualState visualState))
+            {
+                return;
+            }
+
+            ApplyRowVisualState(row, visualState);
+        }
+
         private static string NormalizeStateEditorGroupName(string groupName)
+        {
+            groupName = groupName?.Trim();
+            return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
+        }
+
+        private static string NormalizeClipEditorGroupName(string groupName)
         {
             groupName = groupName?.Trim();
             return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
@@ -2008,9 +3161,19 @@ namespace XAnimationEditor
             return $"{channelName ?? string.Empty}::{NormalizeStateEditorGroupName(groupName)}";
         }
 
+        private static string BuildClipGroupKey(string groupName)
+        {
+            return NormalizeClipEditorGroupName(groupName);
+        }
+
         private bool IsStateGroupCollapsed(string groupKey)
         {
-            return !string.IsNullOrWhiteSpace(groupKey) && m_CollapsedStateGroupKeys.Contains(groupKey);
+            return !string.IsNullOrWhiteSpace(groupKey) && !m_CollapsedStateGroupKeys.Contains(groupKey);
+        }
+
+        private bool IsClipGroupCollapsed(string groupKey)
+        {
+            return !string.IsNullOrWhiteSpace(groupKey) && !m_CollapsedStateGroupKeys.Contains($"clip::{groupKey}");
         }
 
         private void SetStateGroupCollapsed(string groupKey, bool collapsed)
@@ -2022,11 +3185,29 @@ namespace XAnimationEditor
 
             if (collapsed)
             {
-                m_CollapsedStateGroupKeys.Add(groupKey);
+                m_CollapsedStateGroupKeys.Remove(groupKey);
             }
             else
             {
-                m_CollapsedStateGroupKeys.Remove(groupKey);
+                m_CollapsedStateGroupKeys.Add(groupKey);
+            }
+        }
+
+        private void SetClipGroupCollapsed(string groupKey, bool collapsed)
+        {
+            if (string.IsNullOrWhiteSpace(groupKey))
+            {
+                return;
+            }
+
+            string key = $"clip::{groupKey}";
+            if (collapsed)
+            {
+                m_CollapsedStateGroupKeys.Remove(key);
+            }
+            else
+            {
+                m_CollapsedStateGroupKeys.Add(key);
             }
         }
 
@@ -2043,6 +3224,27 @@ namespace XAnimationEditor
                 StateGroupBucket bucket = buckets[i];
                 if (bucket != null &&
                     string.Equals(NormalizeStateEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
+                {
+                    return bucket;
+                }
+            }
+
+            return null;
+        }
+
+        private static ClipGroupBucket FindClipGroupBucket(List<ClipGroupBucket> buckets, string groupName)
+        {
+            if (buckets == null)
+            {
+                return null;
+            }
+
+            groupName = NormalizeClipEditorGroupName(groupName);
+            for (int i = 0; i < buckets.Count; i++)
+            {
+                ClipGroupBucket bucket = buckets[i];
+                if (bucket != null &&
+                    string.Equals(NormalizeClipEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
                 {
                     return bucket;
                 }
