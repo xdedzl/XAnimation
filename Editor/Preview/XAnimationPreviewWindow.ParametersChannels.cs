@@ -630,7 +630,7 @@ namespace XAnimationEditor
             SetPauseButtonState(false, false);
             SetStepForwardButtonEnabled(false);
             SetStopAllButtonEnabled(false);
-            UpdatePlaybackScrubber(0f, enabled: false);
+            m_PlaybackHudView?.Refresh();
             SetAddClipButtonEnabled(false);
             SetAddChannelButtonEnabled(false);
             SetAutoTransitionButtonsEnabled(false);
@@ -654,10 +654,7 @@ namespace XAnimationEditor
             m_SelectedLogId = null;
             m_FollowLatestLog = true;
             m_PressedKeys.Clear();
-            m_IsDraggingPlaybackScrubber = false;
-            m_PlaybackScrubberDragStartX = 0f;
-            m_PlaybackScrubberDragStartProgress = 0f;
-            UpdatePlaybackScrubber(0f, enabled: false);
+            m_PlaybackHudView?.Refresh();
             double now = EditorApplication.timeSinceStartup;
             m_UpdateCoordinator.Reset(now);
             MarkEventUiDirty();

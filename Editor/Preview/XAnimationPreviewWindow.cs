@@ -157,11 +157,8 @@ namespace XAnimationEditor
         private const float CueLogSectionMinHeight = 72f;
         private const float ClipIconButtonSize = 22f;
         private const float ChannelStateLabelHeight = 64f;
-        private const float PlaybackLabelWidth = 118f;
         private const float PlaybackSpeedMin = 0.1f;
         private const float PlaybackSpeedMax = 2f;
-        private const float PlaybackScrubberWidth = 132f;
-        private const float PlaybackSpeedControlWidth = 96f;
         private const float PlaybackOverlayInitialLeft = 10f;
         private const float PlaybackOverlayInitialTop = 10f;
         private const float PlaybackOverlayMinWidth = 392f;
@@ -170,11 +167,6 @@ namespace XAnimationEditor
         private const float FreeformBlendGraphOverlayInitialBottom = 12f;
         private const float FreeformBlendGraphOverlayWidth = 244f;
         private const float BlendGraphOverlayHeaderMarginBottomExpanded = 4f;
-        private const float PlaybackToolbarButtonSize = 20f;
-        private const float PlaybackMainFieldLabelWidth = 68f;
-        private const float PlaybackMainFieldValueWidth = 112f;
-        private const float TransitionFieldLabelWidth = 58f;
-        private const float TransitionFieldValueWidth = 64f;
         private const string StateDragDataKey = nameof(XAnimationPreviewWindow) + ".StateKey";
         private const string ClipDragDataKey = nameof(XAnimationPreviewWindow) + ".ClipKey";
         private const string LastAssetPathPrefsKey = "XAnimationEditor.XAnimation.Preview.LastAssetPath";
@@ -236,24 +228,7 @@ namespace XAnimationEditor
         private Button m_ResetPrefabToDefaultButton;
         private Image m_PreviewImage;
         private Label m_StatusLabel;
-        private VisualElement m_PlaybackScrubber;
-        private VisualElement m_PlaybackScrubberLine;
-        private Slider m_PlaySpeedSlider;
-        private Label m_PlaySpeedValueLabel;
-        private FloatField m_PlayFadeInField;
-        private FloatField m_PlayFadeOutField;
-
-        private FloatField m_PlayEnterTimeField;
-        private IntegerField m_PlayPriorityField;
-        private Toggle m_ApplyTransitionRequestToggle;
-
-        private Toggle m_PlayInterruptibleToggle;
-        private Toggle m_RootMotionToggle;
         private Toggle m_GridToggle;
-        private DropdownField m_PlayTargetChannelField;
-        private Button m_PauseButton;
-        private Button m_StepForwardButton;
-        private Button m_StopAllButton;
         private Button m_AddClipButton;
         private Button m_AddClipGroupButton;
         private Button m_AddChannelButton;
@@ -355,14 +330,10 @@ namespace XAnimationEditor
         private readonly HashSet<KeyCode> m_PressedKeys = new();
         private readonly XAnimationPreviewPlaybackUiState m_PlaybackUiState = new();
         private readonly XAnimationPreviewUpdateCoordinator m_UpdateCoordinator = new();
-        private bool m_IsDraggingPlaybackScrubber;
         private bool m_IsDraggingPlaybackOverlay;
         private bool m_IsDraggingFreeformBlendGraphOverlay;
         private bool m_PlaybackOverlayDragMoved;
         private bool m_FreeformBlendGraphOverlayDragMoved;
-        private float m_PlaybackScrubberProgress;
-        private float m_PlaybackScrubberDragStartX;
-        private float m_PlaybackScrubberDragStartProgress;
         private Vector2 m_PlaybackOverlayDragStartPointer;
         private Vector2 m_PlaybackOverlayDragStartPosition;
         private Vector2 m_FreeformBlendGraphOverlayDragStartPointer;
@@ -374,6 +345,7 @@ namespace XAnimationEditor
         private FoldoutCard m_DefaultTransitionsCard;
         private FoldoutCard m_ChannelsCard;
         private VisualElement m_FreeformBlendGraphOverlay;
+        private XAnimationPlaybackHudView m_PlaybackHudView;
         private VisualElement m_FreeformBlendGraphOverlayHeader;
         private VisualElement m_FreeformBlendGraphOverlayContent;
         private XAnimationDirectionalBlendGraphElement m_FreeformBlendGraphElement;

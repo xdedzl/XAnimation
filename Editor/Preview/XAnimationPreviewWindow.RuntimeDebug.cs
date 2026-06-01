@@ -640,7 +640,7 @@ namespace XAnimationEditor
             {
                 m_Session.SetAssetRootMotion(rootMotion);
                 m_PreviewRootMotionEnabled = rootMotion;
-                m_RootMotionToggle?.SetValueWithoutNotify(rootMotion);
+                m_PlaybackHudView?.Refresh();
                 RenderPreview();
             }
             else

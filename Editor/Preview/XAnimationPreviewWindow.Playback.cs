@@ -55,7 +55,7 @@ namespace XAnimationEditor
                 MarkEventUiDirty();
                 SetPauseButtonState(false, false);
                 SetStepForwardButtonEnabled(true);
-                m_RootMotionToggle?.SetValueWithoutNotify(m_PreviewRootMotionEnabled);
+                m_PlaybackHudView?.Refresh();
                 m_GridToggle.SetValueWithoutNotify(true);
                 RebuildCorePreviewLists();
                 RebuildDefaultTransitionsEditor();
@@ -115,7 +115,7 @@ namespace XAnimationEditor
                     }
 
                     m_PlayTargetChannelName = request.ChannelName;
-                    m_PlayTargetChannelField?.SetValueWithoutNotify(request.ChannelName);
+                    m_PlaybackHudView?.Refresh();
                     SavePlaybackPrefs();
 
                     m_IsPaused = false;
@@ -470,13 +470,7 @@ namespace XAnimationEditor
 
         private void SetStopAllButtonEnabled(bool enabled)
         {
-            if (m_StopAllButton == null)
-            {
-                return;
-            }
-
-            m_StopAllButton.SetEnabled(enabled);
-            m_StopAllButton.style.opacity = enabled ? 1f : 0.45f;
+            m_PlaybackHudView?.Refresh();
         }
 
         private void SetAddChannelButtonEnabled(bool enabled)
@@ -532,16 +526,7 @@ namespace XAnimationEditor
 
         private void SetStepForwardButtonEnabled(bool enabled)
         {
-            if (m_StepForwardButton == null)
-            {
-                return;
-            }
-
-            m_StepForwardButton.SetEnabled(enabled);
-            m_StepForwardButton.style.opacity = enabled ? 1f : 0.45f;
-            m_StepForwardButton.tooltip = enabled
-                ? "暂停状态下向后推进固定一帧（1/60s）。"
-                : "需要先加载预览并存在可调试播放。";
+            m_PlaybackHudView?.Refresh();
         }
 
         private void SetAutoTransitionButtonsEnabled(bool addEnabled)
@@ -574,17 +559,7 @@ namespace XAnimationEditor
 
         private void SetPauseButtonState(bool enabled, bool paused, bool? hasActivePlayback = null)
         {
-            if (m_PauseButton == null)
-            {
-                return;
-            }
-
-            bool isPlaying = hasActivePlayback ?? HasAnyPlayingChannel();
-            m_PauseButton.text = enabled && isPlaying && !paused
-                ? "Ⅱ"
-                : "▶";
-            m_PauseButton.SetEnabled(enabled);
-            m_PauseButton.style.opacity = enabled ? 1f : 0.45f;
+            m_PlaybackHudView?.Refresh();
         }
 
         private bool TryPlayFirstStateFromOverlay()
@@ -826,36 +801,7 @@ namespace XAnimationEditor
 
         private void RefreshPlaybackScrubber()
         {
-            if (m_IsDraggingPlaybackScrubber)
-            {
-                return;
-            }
-
-            if (TryGetDominantPlaybackState(out XAnimationChannelState state))
-            {
-                UpdatePlaybackScrubber(Mathf.Clamp01(state.normalizedTime), enabled: true);
-                return;
-            }
-
-            UpdatePlaybackScrubber(0f, enabled: false);
-        }
-
-        private void UpdatePlaybackScrubber(float progress, bool enabled)
-        {
-            m_PlaybackScrubberProgress = Mathf.Clamp01(progress);
-            if (m_PlaybackScrubber != null)
-            {
-                m_PlaybackScrubber.style.opacity = enabled ? 1f : 0.35f;
-            }
-
-            if (m_PlaybackScrubberLine == null)
-            {
-                return;
-            }
-
-            float width = Mathf.Max(0f, m_PlaybackScrubber?.resolvedStyle.width ?? PlaybackScrubberWidth);
-            float x = Mathf.Clamp(m_PlaybackScrubberProgress * width, 0f, Mathf.Max(0f, width - 2f));
-            m_PlaybackScrubberLine.style.left = x;
+            m_PlaybackHudView?.Refresh();
         }
 
         private bool TryGetDominantPlaybackState(out XAnimationChannelState dominantState)
@@ -900,19 +846,6 @@ namespace XAnimationEditor
             return dominantState != null;
         }
 
-        private void UpdatePlaybackScrubberFromDrag(float localX)
-        {
-            if (m_PlaybackScrubber == null)
-            {
-                return;
-            }
-
-            float width = Mathf.Max(1f, m_PlaybackScrubber.resolvedStyle.width);
-            float speed = Mathf.Max(PlaybackSpeedMin, GetPlaybackSpeed());
-            float progress = Mathf.Clamp01(m_PlaybackScrubberDragStartProgress + ((localX - m_PlaybackScrubberDragStartX) / width * speed));
-            UpdatePlaybackScrubber(progress, enabled: true);
-        }
-
         private void SeekDominantPlayback(float normalizedTime)
         {
             if (m_Session == null || !m_Session.IsLoaded || !TryGetDominantPlaybackState(out XAnimationChannelState state))
@@ -933,7 +866,7 @@ namespace XAnimationEditor
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
 
             m_Session.Step(0.0001f);
-            UpdatePlaybackScrubber(normalizedTime, enabled: true);
+            m_PlaybackHudView?.Refresh();
             MarkEventUiDirty();
             RefreshPlaybackAndLogViews();
             RenderPreview();
@@ -1557,6 +1490,7 @@ namespace XAnimationEditor
         {
             RefreshStatePlayingStates();
             RefreshChannelStates();
+            m_PlaybackHudView?.Refresh();
         }
 
         private void RefreshPlaybackViews()
@@ -1564,6 +1498,7 @@ namespace XAnimationEditor
             RefreshStatePlayingStates();
             RefreshClipPlayingStates();
             RefreshChannelStates();
+            m_PlaybackHudView?.Refresh();
         }
 
         private void RefreshPlaybackAndLogViews()

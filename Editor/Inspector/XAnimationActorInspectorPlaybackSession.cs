@@ -159,6 +159,16 @@ namespace XAnimationEditor
             m_Driver?.SetGlobalSpeed(speed);
         }
 
+        public void SetRootMotionEnabled(bool enabled)
+        {
+            m_Driver?.SetRootMotionEnabled(enabled);
+        }
+
+        public bool GetRootMotionEnabled()
+        {
+            return m_Driver != null && m_Driver.ShouldApplyNativeRootMotion();
+        }
+
         public void Step(float deltaTime)
         {
             if (m_Driver == null)
@@ -214,6 +224,13 @@ namespace XAnimationEditor
         public void SetTrigger(string key)
         {
             m_Driver?.SetTrigger(key);
+        }
+
+        public void ClearParameterOverrides()
+        {
+            m_FloatParameters.Clear();
+            m_IntParameters.Clear();
+            m_BoolParameters.Clear();
         }
 
         public bool TryGetParameter(string key, out float value)

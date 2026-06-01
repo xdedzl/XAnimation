@@ -6,7 +6,6 @@ using UnityEditor.UIElements;
 using UnityEngine;
 using UnityEngine.UIElements;
 using XAnimationEngine;
-using static XAnimationEditor.XAnimationEditorParameterUtility;
 using static XAnimationEditor.XAnimationEditorUi;
 
 namespace XAnimationEditor
@@ -14,14 +13,9 @@ namespace XAnimationEditor
     [CustomEditor(typeof(XAnimationActor))]
     public sealed class XAnimationActorEditor : UnityEditor.Editor
     {
-        private const float PlaybackLabelWidth = 118f;
         private const long RuntimeRefreshIntervalMs = 33;
         private const float PlaybackSpeedMin = 0.1f;
         private const float PlaybackSpeedMax = 2f;
-        private const float PlaybackScrubberWidth = 132f;
-        private const float PlaybackSpeedControlWidth = 96f;
-        private const float PlaybackToolbarButtonSize = 20f;
-        private const float InspectorStepDeltaTime = 1f / 60f;
 
         private sealed class StateGroupBucket
         {
@@ -70,37 +64,12 @@ namespace XAnimationEditor
         private readonly Dictionary<string, VisualElement> m_ClipRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_ClipButtonMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, ClipRowVisualState> m_ClipVisualStateMap = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, float> m_RuntimeFloatPreviewValues = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> m_RuntimeIntPreviewValues = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, bool> m_RuntimeBoolPreviewValues = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, FloatField> m_RuntimeFloatFields = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, IntegerField> m_RuntimeIntFields = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, Toggle> m_RuntimeBoolFields = new(StringComparer.Ordinal);
-        private readonly XAnimationActorInspectorPlaybackSession m_EditModeSession = new();
 
-        private DropdownField m_PlayTargetChannelField;
-        private VisualElement m_PlaybackScrubber;
-        private VisualElement m_PlaybackScrubberFill;
-        private Label m_PlaybackStatusLabel;
-        private Slider m_PlaySpeedSlider;
-        private Label m_PlaySpeedValueLabel;
-        private Button m_PauseResumeButton;
-        private Button m_StepButton;
-        private Button m_StopAllButton;
         private VisualElement m_ClipsListView;
-        private VisualElement m_ParametersTabPane;
         private VisualElement m_ClipsTabPane;
         private VisualElement m_StatesTabPane;
-        private Button m_ParametersTabButton;
         private Button m_ClipsTabButton;
         private Button m_StatesTabButton;
-        private FloatField m_PlayFadeInField;
-        private FloatField m_PlayFadeOutField;
-        private IntegerField m_PlayPriorityField;
-        private Toggle m_ApplyTransitionToggle;
-        private Toggle m_PlayInterruptibleToggle;
-        private FloatField m_PlayEnterTimeField;
-        private VisualElement m_ParametersListView;
         private VisualElement m_StatesListView;
         private Label m_StatusLabel;
         private IVisualElementScheduledItem m_RefreshItem;
@@ -116,8 +85,6 @@ namespace XAnimationEditor
         private string m_CurrentPlaybackChannelName;
         private string m_CurrentPlaybackStateKey;
         private string m_CurrentPlaybackClipKey;
-        private bool m_IsScrubbingPlayback;
-        private float m_PlaybackScrubberProgress;
         private string m_PlayTargetChannelName;
         private float m_PlayFadeInOverride;
         private float m_PlayFadeOutOverride;
@@ -126,15 +93,10 @@ namespace XAnimationEditor
         private bool m_ApplyTransitionOverrides;
         private float m_PlayEnterTimeOverride;
         private float m_PlaySpeed = 1f;
-        private bool m_PlaybackPrefsLoaded;
         private RuntimeInspectorTab m_SelectedRuntimeTab = RuntimeInspectorTab.States;
-
-        [SerializeField] private bool m_PlaybackSectionExpanded = true;
-        [SerializeField] private bool m_PlayTransitionSectionExpanded;
 
         private enum RuntimeInspectorTab
         {
-            Parameters,
             Clips,
             States,
         }
@@ -170,7 +132,7 @@ namespace XAnimationEditor
 
             animationAssetField?.RegisterCallback<SerializedPropertyChangeEvent>(_ =>
             {
-                ReleaseEditModeSession();
+                ClearCurrentPlayback();
                 RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
                 MarkRuntimeViewsDirty();
                 RefreshRuntimeViews();
@@ -180,7 +142,7 @@ namespace XAnimationEditor
             root.RegisterCallback<DetachFromPanelEvent>(_ =>
             {
                 StopRefreshLoop();
-                ReleaseEditModeSession();
+                ClearCurrentPlayback();
             });
             root.schedule.Execute(RefreshRuntimeViews).ExecuteLater(0);
             return root;
@@ -189,7 +151,7 @@ namespace XAnimationEditor
         private void OnDisable()
         {
             StopRefreshLoop();
-            ReleaseEditModeSession();
+            ClearCurrentPlayback();
         }
 
         private VisualElement BuildRuntimeInspector()
@@ -197,17 +159,9 @@ namespace XAnimationEditor
             VisualElement root = new();
             root.style.marginTop = 8;
 
-            FoldoutCard playbackCard = CreateFoldoutCard("播放设置", m_PlaybackSectionExpanded, value =>
-            {
-                m_PlaybackSectionExpanded = value;
-                SavePlaybackPrefs();
-            });
-            playbackCard.Content.Add(BuildPlaybackSettingsContent());
-            root.Add(playbackCard.Root);
-
             root.Add(BuildRuntimeInspectorTabs());
 
-            m_StatusLabel = new("Play Mode 下可直接调试播放和参数。")
+            m_StatusLabel = new("播放和参数调试请使用 SceneView XAnimation Overlay。")
             {
                 style =
                 {
@@ -232,26 +186,20 @@ namespace XAnimationEditor
 
             m_StatesTabButton = CreateRuntimeTabButton("States", RuntimeInspectorTab.States);
             m_ClipsTabButton = CreateRuntimeTabButton("Clips", RuntimeInspectorTab.Clips);
-            m_ParametersTabButton = CreateRuntimeTabButton("Parameters", RuntimeInspectorTab.Parameters);
             toolbar.Add(m_StatesTabButton);
             toolbar.Add(m_ClipsTabButton);
-            toolbar.Add(m_ParametersTabButton);
 
-            m_ParametersTabPane = new VisualElement();
             m_ClipsTabPane = new VisualElement();
             m_StatesTabPane = new VisualElement();
 
-            m_ParametersListView = new VisualElement();
             m_ClipsListView = new VisualElement();
             m_StatesListView = new VisualElement();
 
-            m_ParametersTabPane.Add(m_ParametersListView);
             m_ClipsTabPane.Add(m_ClipsListView);
             m_StatesTabPane.Add(m_StatesListView);
 
             card.Add(m_StatesTabPane);
             card.Add(m_ClipsTabPane);
-            card.Add(m_ParametersTabPane);
             RefreshRuntimeTabSelection();
             return card;
         }
@@ -277,7 +225,6 @@ namespace XAnimationEditor
 
         private void RefreshRuntimeTabSelection()
         {
-            SetRuntimeTabVisible(RuntimeInspectorTab.Parameters, m_ParametersTabPane, m_ParametersTabButton);
             SetRuntimeTabVisible(RuntimeInspectorTab.Clips, m_ClipsTabPane, m_ClipsTabButton);
             SetRuntimeTabVisible(RuntimeInspectorTab.States, m_StatesTabPane, m_StatesTabButton);
         }
@@ -300,8 +247,6 @@ namespace XAnimationEditor
         private void LoadPlaybackPrefs()
         {
             XAnimationPlaybackSettings settings = XAnimationPlaybackSettingsPrefs.Load();
-            m_PlaybackSectionExpanded = settings.PlaybackSectionExpanded;
-            m_PlayTransitionSectionExpanded = settings.TransitionSectionExpanded;
             m_PlayTargetChannelName = settings.ChannelName;
             m_PlaySpeed = ClampPlaybackSpeed(settings.Speed);
             m_ApplyTransitionOverrides = settings.ApplyTransition;
@@ -310,7 +255,6 @@ namespace XAnimationEditor
             m_PlayPriorityOverride = settings.Priority;
             m_PlayInterruptibleOverride = settings.Interruptible;
             m_PlayEnterTimeOverride = Mathf.Clamp01(settings.EnterTime);
-            m_PlaybackPrefsLoaded = true;
         }
 
         private float GetPlaybackSpeed()
@@ -326,359 +270,6 @@ namespace XAnimationEditor
             }
 
             return Mathf.Clamp(speed, PlaybackSpeedMin, PlaybackSpeedMax);
-        }
-
-        private void SetInspectorPlaybackSpeed(float speed, bool savePrefs = true)
-        {
-            m_PlaySpeed = ClampPlaybackSpeed(speed);
-            m_PlaySpeedSlider?.SetValueWithoutNotify(m_PlaySpeed);
-            if (m_PlaySpeedValueLabel != null)
-            {
-                m_PlaySpeedValueLabel.text = $"{m_PlaySpeed:0.0}x";
-            }
-
-            if (savePrefs)
-            {
-                SavePlaybackPrefs();
-            }
-
-            ApplyPlaybackSpeedToPlayingChannels();
-            ApplyPlaybackSpeedToEditModeSession();
-        }
-
-        private void SavePlaybackPrefs()
-        {
-            if (!m_PlaybackPrefsLoaded)
-            {
-                return;
-            }
-
-            m_PlaySpeed = ClampPlaybackSpeed(m_PlaySpeedSlider?.value ?? m_PlaySpeed);
-
-            XAnimationPlaybackSettingsPrefs.Save(new XAnimationPlaybackSettings
-            {
-                PlaybackSectionExpanded = m_PlaybackSectionExpanded,
-                TransitionSectionExpanded = m_PlayTransitionSectionExpanded,
-                ChannelName = m_PlayTargetChannelName,
-                Speed = m_PlaySpeed,
-                ApplyTransition = m_ApplyTransitionOverrides,
-                FadeIn = m_PlayFadeInOverride,
-                FadeOut = m_PlayFadeOutOverride,
-                Priority = m_PlayPriorityOverride,
-                Interruptible = m_PlayInterruptibleOverride,
-                EnterTime = m_PlayEnterTimeOverride,
-            });
-        }
-
-        private VisualElement BuildPlaybackSettingsContent()
-        {
-            VisualElement content = new();
-            content.Add(BuildInspectorPlaybackControls());
-
-            VisualElement channelRow = new();
-            channelRow.style.flexDirection = FlexDirection.Row;
-            channelRow.style.alignItems = Align.Center;
-            content.Add(channelRow);
-
-            m_PlayTargetChannelField = new DropdownField();
-            m_PlayTargetChannelField.tooltip = "clip 调试播放使用的 channelName。state 播放始终使用 state 自己配置的 channel。";
-            m_PlayTargetChannelField.style.flexGrow = 1;
-            m_PlayTargetChannelField.style.minWidth = 0;
-            m_PlayTargetChannelField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayTargetChannelName = NormalizeChannelOptionValue(evt.newValue) ?? string.Empty;
-                SavePlaybackPrefs();
-            });
-            VisualElement channelFieldRow = CreatePlaybackFieldContainer("channelName", m_PlayTargetChannelField, PlaybackLabelWidth);
-            channelFieldRow.tooltip = "用于 clip 调试播放的目标 channel。";
-            channelFieldRow.style.flexGrow = 1;
-            channelRow.Add(channelFieldRow);
-
-            m_ApplyTransitionToggle = CreateHeaderApplyToggle(m_ApplyTransitionOverrides, "是否应用 Transition 覆盖。关闭时本分区会自动收起。");
-            FoldoutCard transitionCard = CreateSectionFoldoutCard("Transition", m_PlayTransitionSectionExpanded, value =>
-            {
-                m_PlayTransitionSectionExpanded = value;
-                SavePlaybackPrefs();
-            }, m_ApplyTransitionToggle, () => m_ApplyTransitionOverrides);
-            transitionCard.Root.style.marginTop = 4;
-            m_ApplyTransitionToggle.RegisterValueChangedCallback(evt =>
-            {
-                m_ApplyTransitionOverrides = evt.newValue;
-                if (!evt.newValue)
-                {
-                    transitionCard.SetExpanded?.Invoke(false);
-                }
-                transitionCard.RefreshState?.Invoke();
-                SavePlaybackPrefs();
-            });
-
-            m_PlayFadeInField = new FloatField { value = m_PlayFadeInOverride };
-            ConfigureCompactPlaybackField(m_PlayFadeInField, 66);
-            m_PlayFadeInField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayFadeInOverride = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(m_PlayFadeInOverride, evt.newValue))
-                {
-                    m_PlayFadeInField.SetValueWithoutNotify(m_PlayFadeInOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-            transitionCard.Content.Add(CreatePlaybackFieldContainer("fadeIn", m_PlayFadeInField, PlaybackLabelWidth));
-
-            m_PlayFadeOutField = new FloatField { value = m_PlayFadeOutOverride };
-            ConfigureCompactPlaybackField(m_PlayFadeOutField, 66);
-            m_PlayFadeOutField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayFadeOutOverride = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(m_PlayFadeOutOverride, evt.newValue))
-                {
-                    m_PlayFadeOutField.SetValueWithoutNotify(m_PlayFadeOutOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-            transitionCard.Content.Add(CreatePlaybackFieldContainer("fadeOut", m_PlayFadeOutField, PlaybackLabelWidth));
-
-            m_PlayPriorityField = new IntegerField { value = m_PlayPriorityOverride };
-            ConfigureCompactPlaybackElement(m_PlayPriorityField, 66);
-            m_PlayPriorityField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayPriorityOverride = evt.newValue;
-                SavePlaybackPrefs();
-            });
-            transitionCard.Content.Add(CreatePlaybackFieldContainer("priority", m_PlayPriorityField, PlaybackLabelWidth));
-
-            m_PlayInterruptibleToggle = new Toggle { value = m_PlayInterruptibleOverride };
-            m_PlayInterruptibleToggle.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayInterruptibleOverride = evt.newValue;
-                SavePlaybackPrefs();
-            });
-            transitionCard.Content.Add(CreatePlaybackToggleRow("interruptible", m_PlayInterruptibleToggle, PlaybackLabelWidth));
-
-            m_PlayEnterTimeField = new FloatField { value = m_PlayEnterTimeOverride };
-            ConfigureCompactPlaybackField(m_PlayEnterTimeField, 72);
-            m_PlayEnterTimeField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayEnterTimeOverride = Mathf.Clamp01(evt.newValue);
-                if (!Mathf.Approximately(m_PlayEnterTimeOverride, evt.newValue))
-                {
-                    m_PlayEnterTimeField.SetValueWithoutNotify(m_PlayEnterTimeOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-            transitionCard.Content.Add(CreatePlaybackFieldContainer("enterTime", m_PlayEnterTimeField, PlaybackLabelWidth));
-            content.Add(transitionCard.Root);
-
-            return content;
-        }
-
-        private VisualElement BuildInspectorPlaybackControls()
-        {
-            VisualElement controls = CreateSubBox();
-            controls.style.marginBottom = 4;
-
-            VisualElement statusRow = new();
-            statusRow.style.flexDirection = FlexDirection.Row;
-            statusRow.style.alignItems = Align.Center;
-            controls.Add(statusRow);
-
-            m_PlaybackStatusLabel = new("Edit Mode 可直接在当前 Actor 上临时预览。")
-            {
-                style =
-                {
-                    color = TextMuted,
-                    fontSize = BodyFontSize,
-                    flexGrow = 1,
-                    minWidth = 0,
-                    whiteSpace = WhiteSpace.Normal,
-                }
-            };
-            statusRow.Add(m_PlaybackStatusLabel);
-
-            VisualElement playbackActions = new();
-            playbackActions.style.flexDirection = FlexDirection.Row;
-            playbackActions.style.alignItems = Align.Center;
-            playbackActions.style.flexWrap = Wrap.NoWrap;
-            playbackActions.style.minWidth = 0;
-            playbackActions.style.marginTop = 4;
-            controls.Add(playbackActions);
-
-            m_PlaybackScrubber = CreateInspectorPlaybackScrubber();
-            playbackActions.Add(m_PlaybackScrubber);
-
-            VisualElement speedControls = new();
-            speedControls.style.flexDirection = FlexDirection.Row;
-            speedControls.style.alignItems = Align.Center;
-            speedControls.style.width = PlaybackSpeedControlWidth;
-            speedControls.style.flexShrink = 0;
-            speedControls.style.marginLeft = 6;
-            speedControls.tooltip = "本次 Inspector 播放使用的时间缩放倍率。";
-
-            m_PlaySpeedSlider = new Slider(PlaybackSpeedMin, PlaybackSpeedMax)
-            {
-                value = GetPlaybackSpeed()
-            };
-            m_PlaySpeedSlider.style.flexGrow = 1;
-            m_PlaySpeedSlider.style.flexShrink = 1;
-            m_PlaySpeedSlider.style.minWidth = 56;
-            m_PlaySpeedSlider.tooltip = "拖动调整播放速度。";
-            m_PlaySpeedSlider.RegisterValueChangedCallback(evt => SetInspectorPlaybackSpeed(evt.newValue));
-            speedControls.Add(m_PlaySpeedSlider);
-
-            m_PlaySpeedValueLabel = new Label();
-            m_PlaySpeedValueLabel.style.width = 34;
-            m_PlaySpeedValueLabel.style.minWidth = 34;
-            m_PlaySpeedValueLabel.style.unityTextAlign = TextAnchor.MiddleRight;
-            m_PlaySpeedValueLabel.style.color = TextNormal;
-            m_PlaySpeedValueLabel.style.fontSize = BodyFontSize;
-            m_PlaySpeedValueLabel.style.marginLeft = 4;
-            speedControls.Add(m_PlaySpeedValueLabel);
-            SetInspectorPlaybackSpeed(GetPlaybackSpeed(), savePrefs: false);
-            playbackActions.Add(speedControls);
-
-            m_PauseResumeButton = CreateInspectorPlaybackButton("Ⅱ", ToggleInspectorPause, AccentColor);
-            ConfigureInspectorPlaybackToolbarButton(m_PauseResumeButton, 6f);
-            playbackActions.Add(m_PauseResumeButton);
-
-            m_StepButton = CreateInspectorPlaybackButton("▸|", StepInspectorPlayback, AccentColor);
-            ConfigureInspectorPlaybackToolbarButton(m_StepButton, 4f);
-            playbackActions.Add(m_StepButton);
-
-            m_StopAllButton = CreateInspectorPlaybackButton("■", StopAllInspectorPlayback, DangerColor);
-            ConfigureInspectorPlaybackToolbarButton(m_StopAllButton, 4f);
-            playbackActions.Add(m_StopAllButton);
-            return controls;
-        }
-
-        private static Button CreateInspectorPlaybackButton(string label, Action onClick, Color bgColor)
-        {
-            Button button = new(onClick) { text = label };
-            button.tooltip = label switch
-            {
-                "■" => "停止所有正在播放的 channel。",
-                "Ⅱ" => "暂停或继续当前 Inspector 播放。",
-                "▶" => "播放默认 state，或继续当前 Inspector 播放。",
-                "▸|" => "暂停状态下向后推进固定一帧（1/60s）。",
-                _ => label,
-            };
-            button.style.backgroundColor = bgColor;
-            button.style.color = Color.white;
-            button.style.borderTopWidth = 0;
-            button.style.borderBottomWidth = 0;
-            button.style.borderLeftWidth = 0;
-            button.style.borderRightWidth = 0;
-            button.style.borderTopLeftRadius = 3;
-            button.style.borderTopRightRadius = 3;
-            button.style.borderBottomLeftRadius = 3;
-            button.style.borderBottomRightRadius = 3;
-            button.style.fontSize = label == "▶" ? BodyFontSize - 1f : BodyFontSize;
-            button.style.paddingLeft = 0;
-            button.style.paddingRight = 0;
-            button.style.paddingTop = 0;
-            button.style.paddingBottom = 0;
-            return button;
-        }
-
-        private static void ConfigureInspectorPlaybackToolbarButton(Button button, float marginLeft)
-        {
-            if (button == null)
-            {
-                return;
-            }
-
-            button.style.width = PlaybackToolbarButtonSize;
-            button.style.minWidth = PlaybackToolbarButtonSize;
-            button.style.maxWidth = PlaybackToolbarButtonSize;
-            button.style.height = PlaybackToolbarButtonSize;
-            button.style.minHeight = PlaybackToolbarButtonSize;
-            button.style.maxHeight = PlaybackToolbarButtonSize;
-            button.style.unityTextAlign = TextAnchor.MiddleCenter;
-            button.style.marginLeft = marginLeft;
-            button.style.flexShrink = 0;
-        }
-
-        private VisualElement CreateInspectorPlaybackScrubber()
-        {
-            VisualElement scrubber = new();
-            scrubber.style.width = PlaybackScrubberWidth;
-            scrubber.style.minWidth = PlaybackScrubberWidth;
-            scrubber.style.maxWidth = PlaybackScrubberWidth;
-            scrubber.style.height = 18;
-            scrubber.style.flexShrink = 0;
-            scrubber.style.position = Position.Relative;
-            scrubber.style.backgroundColor = new Color(0.08f, 0.08f, 0.085f, 1f);
-            scrubber.style.borderTopWidth = 1;
-            scrubber.style.borderBottomWidth = 1;
-            scrubber.style.borderLeftWidth = 1;
-            scrubber.style.borderRightWidth = 1;
-            scrubber.style.borderTopColor = SectionDivider;
-            scrubber.style.borderBottomColor = SectionDivider;
-            scrubber.style.borderLeftColor = SectionDivider;
-            scrubber.style.borderRightColor = SectionDivider;
-            scrubber.tooltip = "拖动当前播放 channel 的归一化进度。";
-
-            m_PlaybackScrubberFill = new VisualElement();
-            m_PlaybackScrubberFill.pickingMode = PickingMode.Ignore;
-            m_PlaybackScrubberFill.style.position = Position.Absolute;
-            m_PlaybackScrubberFill.style.left = 0f;
-            m_PlaybackScrubberFill.style.top = 0f;
-            m_PlaybackScrubberFill.style.bottom = 0f;
-            m_PlaybackScrubberFill.style.width = Length.Percent(0f);
-            m_PlaybackScrubberFill.style.backgroundColor = ProgressFillBg;
-            scrubber.Add(m_PlaybackScrubberFill);
-
-            scrubber.RegisterCallback<PointerDownEvent>(evt =>
-            {
-                if (evt.button != 0 || !CanScrubInspectorPlayback())
-                {
-                    return;
-                }
-
-                m_IsScrubbingPlayback = true;
-                scrubber.CapturePointer(evt.pointerId);
-                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerMoveEvent>(evt =>
-            {
-                if (!m_IsScrubbingPlayback || !scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    return;
-                }
-
-                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerUpEvent>(evt =>
-            {
-                if (!m_IsScrubbingPlayback)
-                {
-                    return;
-                }
-
-                UpdateInspectorPlaybackScrubberFromPointer(evt.localPosition.x, seek: true);
-                m_IsScrubbingPlayback = false;
-                if (scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    scrubber.ReleasePointer(evt.pointerId);
-                }
-
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerCancelEvent>(evt =>
-            {
-                m_IsScrubbingPlayback = false;
-                if (scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    scrubber.ReleasePointer(evt.pointerId);
-                }
-            });
-
-            UpdateInspectorPlaybackScrubber(0f, enabled: false);
-            return scrubber;
         }
 
         private void StartRefreshLoop()
@@ -701,20 +292,16 @@ namespace XAnimationEditor
         private void RefreshRuntimeViews()
         {
             RefreshRuntimeViewState();
-            RefreshEditModeSessionState();
             if (m_RuntimeViewsDirty)
             {
                 RefreshChannelChoices();
-                RebuildParameterList();
                 RebuildClipList();
                 RebuildStateList();
                 m_RuntimeViewsDirty = false;
             }
 
-            RefreshRuntimeParameterValues();
             RefreshStatePlayingStates();
             RefreshClipPlayingStates();
-            RefreshInspectorPlaybackControls();
         }
 
         private void RefreshRuntimeLoop()
@@ -728,25 +315,10 @@ namespace XAnimationEditor
             bool isPlaying = Application.isPlaying;
             if (currentAssetInstanceId != m_LastAnimationAssetInstanceId || isPlaying != m_LastPlayingState)
             {
-                ReleaseEditModeSession();
+                ClearCurrentPlayback();
                 m_LastAnimationAssetInstanceId = currentAssetInstanceId;
                 m_LastPlayingState = isPlaying;
                 m_RuntimeViewsDirty = true;
-            }
-        }
-
-        private void RefreshEditModeSessionState()
-        {
-            if (Application.isPlaying)
-            {
-                ReleaseEditModeSession();
-                return;
-            }
-
-            XAnimationActor actor = target as XAnimationActor;
-            if (m_EditModeSession.IsLoaded && !m_EditModeSession.Matches(actor))
-            {
-                ReleaseEditModeSession();
             }
         }
 
@@ -764,88 +336,13 @@ namespace XAnimationEditor
 
         private void RefreshChannelChoices()
         {
-            if (m_PlayTargetChannelField == null)
-            {
-                return;
-            }
-
-            List<string> choices = new();
             List<ChannelNameOption> options = GetChannelOptions();
-            for (int i = 0; i < options.Count; i++)
+            if (!string.IsNullOrWhiteSpace(m_PlayTargetChannelName) && HasChannel(options, m_PlayTargetChannelName))
             {
-                choices.Add(options[i].DisplayName);
-            }
-
-            string selected = string.IsNullOrWhiteSpace(m_PlayTargetChannelName) ? FindFirstChannelName(options) : FindChannelDisplayName(options, m_PlayTargetChannelName);
-            if (string.IsNullOrWhiteSpace(selected) && choices.Count > 0)
-            {
-                selected = choices[0];
-            }
-
-            m_PlayTargetChannelField.choices = choices;
-            m_PlayTargetChannelField.SetValueWithoutNotify(selected ?? string.Empty);
-            m_PlayTargetChannelName = NormalizeChannelOptionValue(selected);
-            m_PlayTargetChannelField.SetEnabled(choices.Count > 0);
-        }
-
-        private void RebuildParameterList()
-        {
-            m_ParametersListView?.Clear();
-            m_RuntimeFloatFields.Clear();
-            m_RuntimeIntFields.Clear();
-            m_RuntimeBoolFields.Clear();
-            XAnimationAsset asset = LoadCurrentAnimationAsset();
-            if (m_ParametersListView == null || asset?.parameters == null || asset.parameters.Length == 0)
-            {
-                m_RuntimeFloatPreviewValues.Clear();
-                m_RuntimeIntPreviewValues.Clear();
-                m_RuntimeBoolPreviewValues.Clear();
-                AddEmptyLabel(m_ParametersListView, "No parameters");
                 return;
             }
 
-            HashSet<string> validFloatKeys = new(StringComparer.Ordinal);
-            HashSet<string> validIntKeys = new(StringComparer.Ordinal);
-            HashSet<string> validBoolKeys = new(StringComparer.Ordinal);
-            for (int i = 0; i < asset.parameters.Length; i++)
-            {
-                XAnimationParameterConfig parameter = asset.parameters[i];
-                if (parameter == null || string.IsNullOrWhiteSpace(parameter.name))
-                {
-                    continue;
-                }
-
-                switch (parameter.type)
-                {
-                    case XAnimationParameterType.Float:
-                        validFloatKeys.Add(parameter.name);
-                        if (!m_RuntimeFloatPreviewValues.ContainsKey(parameter.name))
-                        {
-                            m_RuntimeFloatPreviewValues[parameter.name] = ConvertParameterDefaultToFloat(parameter.defaultValue);
-                        }
-                        break;
-                    case XAnimationParameterType.Int:
-                        validIntKeys.Add(parameter.name);
-                        if (!m_RuntimeIntPreviewValues.ContainsKey(parameter.name))
-                        {
-                            m_RuntimeIntPreviewValues[parameter.name] = ConvertParameterDefaultToInt(parameter.defaultValue);
-                        }
-                        break;
-                    case XAnimationParameterType.Bool:
-                        validBoolKeys.Add(parameter.name);
-                        if (!m_RuntimeBoolPreviewValues.ContainsKey(parameter.name))
-                        {
-                            m_RuntimeBoolPreviewValues[parameter.name] = ConvertParameterDefaultToBool(parameter.defaultValue);
-                        }
-                        break;
-                }
-
-                m_ParametersListView.Add(CreateParameterRow(parameter, i));
-            }
-
-            RemoveStaleValues(m_RuntimeFloatPreviewValues, validFloatKeys);
-            RemoveStaleValues(m_RuntimeIntPreviewValues, validIntKeys);
-            RemoveStaleValues(m_RuntimeBoolPreviewValues, validBoolKeys);
+            m_PlayTargetChannelName = FindFirstChannelName(options);
         }
 
         private void RebuildClipList()
@@ -991,6 +488,17 @@ namespace XAnimationEditor
             pathLabel.style.position = Position.Relative;
             row.Add(pathLabel);
 
+            Button locateButton = new(() => PingClipAsset(clip))
+            {
+                text = "◎"
+            };
+            locateButton.tooltip = "定位当前 clip 对应的 AnimationClip 资源。";
+            locateButton.SetEnabled(TryGetClipAsset(clip, out _));
+            ApplyClipIconButtonStyle(locateButton);
+            locateButton.style.marginLeft = 6;
+            locateButton.style.position = Position.Relative;
+            row.Add(locateButton);
+
             Button playButton = new(() => ToggleClipPlayback(clip))
             {
                 text = "▶"
@@ -1006,347 +514,42 @@ namespace XAnimationEditor
             return container;
         }
 
-        private VisualElement CreateParameterRow(XAnimationParameterConfig parameter, int rowIndex)
+        private void PingClipAsset(XAnimationClipConfig clip)
         {
-            VisualElement container = CreateRowContainer(rowIndex);
-            VisualElement row = new();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-            container.Add(row);
-
-            Label nameLabel = new(parameter.name);
-            nameLabel.style.width = 140;
-            nameLabel.style.flexShrink = 0;
-            nameLabel.style.color = TextNormal;
-            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            row.Add(nameLabel);
-
-            Label typeLabel = new(parameter.type.ToString());
-            typeLabel.style.width = 72;
-            typeLabel.style.flexShrink = 0;
-            typeLabel.style.color = TextMuted;
-            typeLabel.style.marginLeft = 6;
-            row.Add(typeLabel);
-
-            VisualElement field = CreateRuntimeParameterField(parameter);
-            field.style.flexGrow = 1;
-            field.style.marginLeft = 8;
-            row.Add(field);
-            return container;
-        }
-
-        private VisualElement CreateRuntimeParameterField(XAnimationParameterConfig parameter)
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            switch (parameter.type)
+            if (!TryGetClipAsset(clip, out AnimationClip clipAsset))
             {
-                case XAnimationParameterType.Float:
-                {
-                    FloatField field = new("value")
-                    {
-                        value = GetRuntimeFloatPreviewValue(parameter)
-                    };
-                    field.SetEnabled(Application.isPlaying);
-                    field.RegisterValueChangedCallback(evt =>
-                    {
-                        m_RuntimeFloatPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying)
-                        {
-                            if (m_EditModeSession.IsLoaded)
-                            {
-                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
-                                SetStatus($"{parameter.name} = {evt.newValue:0.###}");
-                            }
-
-                            return;
-                        }
-
-                        if (actor == null)
-                        {
-                            return;
-                        }
-
-                        try
-                        {
-                            actor.SetParameter(parameter.name, evt.newValue);
-                            SetStatus($"{parameter.name} = {evt.newValue:0.###}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogException(ex, actor);
-                            SetStatus(ex.Message, true);
-                        }
-                    });
-                    m_RuntimeFloatFields[parameter.name] = field;
-                    return field;
-                }
-                case XAnimationParameterType.Bool:
-                {
-                    Toggle toggle = new("value")
-                    {
-                        value = GetRuntimeBoolPreviewValue(parameter)
-                    };
-                    toggle.RegisterValueChangedCallback(evt =>
-                    {
-                        m_RuntimeBoolPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying)
-                        {
-                            if (m_EditModeSession.IsLoaded)
-                            {
-                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
-                                SetStatus($"{parameter.name} = {evt.newValue}");
-                            }
-
-                            return;
-                        }
-
-                        if (actor == null)
-                        {
-                            return;
-                        }
-
-                        try
-                        {
-                            actor.SetParameter(parameter.name, evt.newValue);
-                            SetStatus($"{parameter.name} = {evt.newValue}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogException(ex, actor);
-                            SetStatus(ex.Message, true);
-                        }
-                    });
-                    m_RuntimeBoolFields[parameter.name] = toggle;
-                    return toggle;
-                }
-                case XAnimationParameterType.Int:
-                {
-                    IntegerField field = new("value")
-                    {
-                        value = GetRuntimeIntPreviewValue(parameter)
-                    };
-                    field.RegisterValueChangedCallback(evt =>
-                    {
-                        m_RuntimeIntPreviewValues[parameter.name] = evt.newValue;
-                        if (!Application.isPlaying)
-                        {
-                            if (m_EditModeSession.IsLoaded)
-                            {
-                                m_EditModeSession.SetParameter(parameter.name, evt.newValue);
-                                SetStatus($"{parameter.name} = {evt.newValue}");
-                            }
-
-                            return;
-                        }
-
-                        if (actor == null)
-                        {
-                            return;
-                        }
-
-                        try
-                        {
-                            actor.SetParameter(parameter.name, evt.newValue);
-                            SetStatus($"{parameter.name} = {evt.newValue}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogException(ex, actor);
-                            SetStatus(ex.Message, true);
-                        }
-                    });
-                    m_RuntimeIntFields[parameter.name] = field;
-                    return field;
-                }
-                case XAnimationParameterType.Trigger:
-                default:
-                {
-                    Button button = new(() =>
-                    {
-                        if (!Application.isPlaying)
-                        {
-                            if (m_EditModeSession.IsLoaded)
-                            {
-                                m_EditModeSession.SetTrigger(parameter.name);
-                                SetStatus($"Trigger {parameter.name} 已触发。");
-                            }
-
-                            return;
-                        }
-
-                        if (actor == null)
-                        {
-                            return;
-                        }
-
-                        try
-                        {
-                            actor.SetTrigger(parameter.name);
-                            SetStatus($"Trigger {parameter.name} 已触发。");
-                        }
-                        catch (Exception ex)
-                        {
-                            Debug.LogException(ex, actor);
-                            SetStatus(ex.Message, true);
-                        }
-                    })
-                    {
-                        text = "Trigger"
-                    };
-                    return button;
-                }
-            }
-        }
-
-        private void RefreshRuntimeParameterValues()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            if (!Application.isPlaying)
-            {
-                RefreshEditModeParameterValues();
+                SetStatus(string.IsNullOrWhiteSpace(clip?.key)
+                    ? "当前没有可定位的 clip。"
+                    : $"没有找到 clip '{clip.key}' 对应的 AnimationClip 资源。", true);
                 return;
             }
 
-            if (actor == null)
-            {
-                return;
-            }
-
-            foreach (KeyValuePair<string, FloatField> kvp in m_RuntimeFloatFields)
-            {
-                if (kvp.Value == null || !actor.TryGetParameter(kvp.Key, out float value))
-                {
-                    continue;
-                }
-
-                m_RuntimeFloatPreviewValues[kvp.Key] = value;
-                if (!Mathf.Approximately(kvp.Value.value, value))
-                {
-                    kvp.Value.SetValueWithoutNotify(value);
-                }
-            }
-
-            foreach (KeyValuePair<string, IntegerField> kvp in m_RuntimeIntFields)
-            {
-                if (kvp.Value == null || !actor.TryGetParameter(kvp.Key, out int value))
-                {
-                    continue;
-                }
-
-                m_RuntimeIntPreviewValues[kvp.Key] = value;
-                if (kvp.Value.value != value)
-                {
-                    kvp.Value.SetValueWithoutNotify(value);
-                }
-            }
-
-            foreach (KeyValuePair<string, Toggle> kvp in m_RuntimeBoolFields)
-            {
-                if (kvp.Value == null || !actor.TryGetParameter(kvp.Key, out bool value))
-                {
-                    continue;
-                }
-
-                m_RuntimeBoolPreviewValues[kvp.Key] = value;
-                if (kvp.Value.value != value)
-                {
-                    kvp.Value.SetValueWithoutNotify(value);
-                }
-            }
+            Selection.activeObject = clipAsset;
+            EditorGUIUtility.PingObject(clipAsset);
+            SetStatus($"已定位动画资源: {clipAsset.name}。");
         }
 
-        private void RefreshEditModeParameterValues()
+        private bool TryGetClipAsset(XAnimationClipConfig clip, out AnimationClip clipAsset)
         {
-            bool sessionLoaded = m_EditModeSession.IsLoaded;
-            foreach (KeyValuePair<string, FloatField> kvp in m_RuntimeFloatFields)
-            {
-                if (kvp.Value == null)
-                {
-                    continue;
-                }
-
-                kvp.Value.SetEnabled(sessionLoaded);
-                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out float value))
-                {
-                    m_RuntimeFloatPreviewValues[kvp.Key] = value;
-                    if (!Mathf.Approximately(kvp.Value.value, value))
-                    {
-                        kvp.Value.SetValueWithoutNotify(value);
-                    }
-                }
-            }
-
-            foreach (KeyValuePair<string, IntegerField> kvp in m_RuntimeIntFields)
-            {
-                if (kvp.Value == null)
-                {
-                    continue;
-                }
-
-                kvp.Value.SetEnabled(sessionLoaded);
-                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out int value))
-                {
-                    m_RuntimeIntPreviewValues[kvp.Key] = value;
-                    if (kvp.Value.value != value)
-                    {
-                        kvp.Value.SetValueWithoutNotify(value);
-                    }
-                }
-            }
-
-            foreach (KeyValuePair<string, Toggle> kvp in m_RuntimeBoolFields)
-            {
-                if (kvp.Value == null)
-                {
-                    continue;
-                }
-
-                kvp.Value.SetEnabled(sessionLoaded);
-                if (sessionLoaded && m_EditModeSession.TryGetParameter(kvp.Key, out bool value))
-                {
-                    m_RuntimeBoolPreviewValues[kvp.Key] = value;
-                    if (kvp.Value.value != value)
-                    {
-                        kvp.Value.SetValueWithoutNotify(value);
-                    }
-                }
-            }
-        }
-
-        private float GetRuntimeFloatPreviewValue(XAnimationParameterConfig parameter)
-        {
-            if (parameter == null || string.IsNullOrWhiteSpace(parameter.name))
-            {
-                return 0f;
-            }
-
-            return m_RuntimeFloatPreviewValues.TryGetValue(parameter.name, out float value)
-                ? value
-                : ConvertParameterDefaultToFloat(parameter.defaultValue);
-        }
-
-        private bool GetRuntimeBoolPreviewValue(XAnimationParameterConfig parameter)
-        {
-            if (parameter == null || string.IsNullOrWhiteSpace(parameter.name))
+            clipAsset = null;
+            if (clip == null || string.IsNullOrWhiteSpace(clip.clipPath))
             {
                 return false;
             }
 
-            return m_RuntimeBoolPreviewValues.TryGetValue(parameter.name, out bool value)
-                ? value
-                : ConvertParameterDefaultToBool(parameter.defaultValue);
-        }
-
-        private int GetRuntimeIntPreviewValue(XAnimationParameterConfig parameter)
-        {
-            if (parameter == null || string.IsNullOrWhiteSpace(parameter.name))
+            string cacheKey = !string.IsNullOrWhiteSpace(clip.key) ? clip.key : clip.clipPath;
+            if (m_CachedClipObjectMap.TryGetValue(cacheKey, out clipAsset))
             {
-                return 0;
+                return clipAsset != null;
             }
 
-            return m_RuntimeIntPreviewValues.TryGetValue(parameter.name, out int value)
-                ? value
-                : ConvertParameterDefaultToInt(parameter.defaultValue);
+            clipAsset = XAnimationEditorAssetResolver.ResolveAnimationClip(clip.clipPath);
+            if (clipAsset != null)
+            {
+                m_CachedClipObjectMap[cacheKey] = clipAsset;
+            }
+
+            return clipAsset != null;
         }
 
         private void RebuildStateList()
@@ -1612,6 +815,7 @@ namespace XAnimationEditor
                 SetStatus(ex.Message, true);
             }
 
+            XAnimationSceneOverlaySelection.RequestRepaint();
             RefreshRuntimeViews();
         }
 
@@ -1622,31 +826,10 @@ namespace XAnimationEditor
                 return;
             }
 
-            try
-            {
-                m_EditModeSession.EnsureLoaded(actor);
-                string channelName = state.channelName;
-                XAnimationChannelState channelState = string.IsNullOrWhiteSpace(channelName) ? null : m_EditModeSession.GetChannelState(channelName);
-                bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
-                if (isPlaying)
-                {
-                    m_EditModeSession.StopAll(restorePose: true);
-                    ClearCurrentPlayback();
-                    SetStatus($"已停止 state {state.key}，并恢复编辑态姿势。");
-                }
-                else
-                {
-                    m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
-                    m_EditModeSession.PlayState(actor, state.key, BuildTransitionOptions());
-                    SetCurrentPlayback(state.channelName, state.key, null);
-                    SetStatus($"正在当前 Actor 上预览 state {state.key}。");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
-            }
+            ClearCurrentPlayback();
+            XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
+            controller.ToggleStatePlayback(actor, state, GetPlaybackSpeed(), BuildTransitionOptions());
+            SetStatus(controller.StatusText, controller.StatusIsError);
 
             RefreshRuntimeViews();
         }
@@ -1696,84 +879,18 @@ namespace XAnimationEditor
                 SetStatus(ex.Message, true);
             }
 
+            XAnimationSceneOverlaySelection.RequestRepaint();
             RefreshRuntimeViews();
         }
 
         private void ToggleEditModeClipPlayback(XAnimationActor actor, XAnimationClipConfig clip, string channelName)
         {
-            try
-            {
-                m_EditModeSession.EnsureLoaded(actor);
-                XAnimationChannelState channelState = m_EditModeSession.GetChannelState(channelName);
-                bool isPlaying = channelState != null && string.Equals(channelState.clipKey, clip.key, StringComparison.Ordinal);
-                if (isPlaying)
-                {
-                    m_EditModeSession.StopAll(restorePose: true);
-                    ClearCurrentPlayback();
-                    SetStatus($"已停止 clip {clip.key}，并恢复编辑态姿势。");
-                }
-                else
-                {
-                    m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
-                    m_EditModeSession.PlayClip(actor, clip.key, channelName, BuildTransitionOptions());
-                    SetCurrentPlayback(channelName, null, clip.key);
-                    SetStatus($"正在当前 Actor 的 {channelName} 预览 clip {clip.key}。");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
-            }
+            ClearCurrentPlayback();
+            XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
+            controller.ToggleClipPlayback(actor, clip, channelName, GetPlaybackSpeed(), BuildTransitionOptions());
+            SetStatus(controller.StatusText, controller.StatusIsError);
 
             RefreshRuntimeViews();
-        }
-
-        private void ApplyPlaybackSpeedToPlayingChannels()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            if (actor == null || !Application.isPlaying)
-            {
-                return;
-            }
-
-            XAnimationAsset asset = LoadCurrentAnimationAsset();
-            if (asset?.channels == null)
-            {
-                return;
-            }
-
-            float speed = GetPlaybackSpeed();
-            for (int i = 0; i < asset.channels.Length; i++)
-            {
-                XAnimationChannelConfig channel = asset.channels[i];
-                if (channel == null || string.IsNullOrWhiteSpace(channel.name))
-                {
-                    continue;
-                }
-
-                try
-                {
-                    if (actor.GetChannelState(channel.name) != null)
-                    {
-                        actor.GlobalSpeed = speed;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex, actor);
-                    SetStatus(ex.Message, true);
-                    return;
-                }
-            }
-        }
-
-        private void ApplyPlaybackSpeedToEditModeSession()
-        {
-            if (!Application.isPlaying && m_EditModeSession.IsLoaded)
-            {
-                m_EditModeSession.SetGlobalSpeed(GetPlaybackSpeed());
-            }
         }
 
         private void RefreshStatePlayingStates()
@@ -2034,7 +1151,9 @@ namespace XAnimationEditor
 
             if (!Application.isPlaying)
             {
-                return m_EditModeSession.IsLoaded ? m_EditModeSession.GetChannelState(channelName) : null;
+                XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
+                controller.RefreshSelection();
+                return controller.GetChannelState(channelName);
             }
 
             return actor != null ? actor.GetChannelState(channelName) : null;
@@ -2048,7 +1167,8 @@ namespace XAnimationEditor
                 return channelName;
             }
 
-            return NormalizeChannelOptionValue(m_PlayTargetChannelField?.value);
+            List<ChannelNameOption> options = GetChannelOptions();
+            return FindFirstChannelName(options);
         }
 
         private void SetCurrentPlayback(string channelName, string stateKey, string clipKey)
@@ -2077,358 +1197,6 @@ namespace XAnimationEditor
             m_CurrentPlaybackChannelName = string.Empty;
             m_CurrentPlaybackStateKey = string.Empty;
             m_CurrentPlaybackClipKey = string.Empty;
-        }
-
-        private void ReleaseEditModeSession()
-        {
-            if (m_EditModeSession.IsLoaded)
-            {
-                m_EditModeSession.Dispose();
-            }
-
-            ClearCurrentPlayback();
-        }
-
-        private void RefreshInspectorPlaybackControls()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            XAnimationChannelState state = GetCurrentPlaybackState(actor);
-            bool hasPlayback = state != null;
-            bool paused = Application.isPlaying ? actor != null && actor.IsPaused : m_EditModeSession.IsLoaded && m_EditModeSession.IsPaused;
-            bool canPlayDefault = CanPlayDefaultInspectorState();
-            bool pauseEnabled = hasPlayback || canPlayDefault;
-
-            UpdateInspectorPlaybackScrubber(hasPlayback ? Mathf.Clamp01(state.normalizedTime) : m_PlaybackScrubberProgress, hasPlayback);
-
-            if (m_PauseResumeButton != null)
-            {
-                m_PauseResumeButton.SetEnabled(pauseEnabled);
-                m_PauseResumeButton.style.opacity = pauseEnabled ? 1f : 0.45f;
-                m_PauseResumeButton.text = hasPlayback && !paused ? "Ⅱ" : "▶";
-            }
-
-            if (m_StepButton != null)
-            {
-                m_StepButton.SetEnabled(hasPlayback);
-                m_StepButton.style.opacity = hasPlayback ? 1f : 0.45f;
-            }
-
-            if (m_StopAllButton != null)
-            {
-                bool stopEnabled = hasPlayback || (!Application.isPlaying && m_EditModeSession.IsLoaded);
-                m_StopAllButton.SetEnabled(stopEnabled);
-                m_StopAllButton.style.opacity = stopEnabled ? 1f : 0.45f;
-            }
-
-            if (m_PlaybackStatusLabel != null)
-            {
-                if (!Application.isPlaying && !m_EditModeSession.CanPreviewActor(actor, out string message))
-                {
-                    m_PlaybackStatusLabel.text = message;
-                    m_PlaybackStatusLabel.style.color = DangerColor;
-                }
-                else if (hasPlayback)
-                {
-                    string item = !string.IsNullOrWhiteSpace(state.stateKey) ? state.stateKey : state.clipKey;
-                    m_PlaybackStatusLabel.text = $"{state.channelName} | {item} | {state.normalizedTime:0.000}";
-                    m_PlaybackStatusLabel.style.color = TextMuted;
-                }
-                else
-                {
-                    m_PlaybackStatusLabel.text = Application.isPlaying
-                        ? "Play Mode 下控制真实 XAnimationActor。"
-                        : "Edit Mode 下控制当前场景 Actor 的临时预览。";
-                    m_PlaybackStatusLabel.style.color = TextMuted;
-                }
-            }
-        }
-
-        private XAnimationChannelState GetCurrentPlaybackState(XAnimationActor actor)
-        {
-            XAnimationAsset asset = LoadCurrentAnimationAsset();
-            if (asset?.channels == null)
-            {
-                return null;
-            }
-
-            if (!string.IsNullOrWhiteSpace(m_CurrentPlaybackChannelName))
-            {
-                XAnimationChannelState current = GetChannelState(actor, m_CurrentPlaybackChannelName);
-                if (current != null)
-                {
-                    return current;
-                }
-            }
-
-            for (int i = 0; i < asset.channels.Length; i++)
-            {
-                XAnimationChannelConfig channel = asset.channels[i];
-                if (channel == null || string.IsNullOrWhiteSpace(channel.name))
-                {
-                    continue;
-                }
-
-                XAnimationChannelState state = GetChannelState(actor, channel.name);
-                if (state != null)
-                {
-                    SetCurrentPlayback(channel.name, state.stateKey, state.clipKey);
-                    return state;
-                }
-            }
-
-            return null;
-        }
-
-        private bool CanScrubInspectorPlayback()
-        {
-            return GetCurrentPlaybackState(target as XAnimationActor) != null;
-        }
-
-        private bool CanPlayDefaultInspectorState()
-        {
-            return target is XAnimationActor actor && ResolveDefaultInspectorState(actor) != null;
-        }
-
-        private XAnimationStateConfig ResolveDefaultInspectorState(XAnimationActor actor)
-        {
-            if (actor == null)
-            {
-                return null;
-            }
-
-            string startStateKey = serializedObject.FindProperty("m_StartStateKey")?.stringValue;
-            XAnimationStateConfig startState = FindStateConfig(startStateKey);
-            if (startState != null)
-            {
-                return startState;
-            }
-
-            XAnimationAsset asset = LoadCurrentAnimationAsset();
-            XAnimationStateConfig[] states = asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
-            {
-                if (states[i] != null && !string.IsNullOrWhiteSpace(states[i].key))
-                {
-                    return states[i];
-                }
-            }
-
-            return null;
-        }
-
-        private bool TryPlayDefaultInspectorState()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            XAnimationStateConfig state = ResolveDefaultInspectorState(actor);
-            if (actor == null || state == null)
-            {
-                return false;
-            }
-
-            if (Application.isPlaying)
-            {
-                try
-                {
-                    actor.GlobalSpeed = GetPlaybackSpeed();
-                    actor.PlayState(state.key, BuildTransitionOptions());
-                    SetCurrentPlayback(state.channelName, state.key, null);
-                    SetStatus($"正在播放 state {state.key}。");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    Debug.LogException(ex, actor);
-                    SetStatus(ex.Message, true);
-                    return false;
-                }
-            }
-
-            ToggleEditModeStatePlayback(actor, state);
-            return true;
-        }
-
-        private void UpdateInspectorPlaybackScrubber(float progress, bool enabled)
-        {
-            if (m_PlaybackScrubber == null)
-            {
-                return;
-            }
-
-            m_PlaybackScrubber.SetEnabled(enabled);
-            if (m_IsScrubbingPlayback)
-            {
-                ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
-                return;
-            }
-
-            m_PlaybackScrubberProgress = Mathf.Clamp01(progress);
-            ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
-        }
-
-        private void ApplyInspectorPlaybackScrubberProgress(float progress)
-        {
-            if (m_PlaybackScrubberFill != null)
-            {
-                m_PlaybackScrubberFill.style.width = Length.Percent(Mathf.Clamp01(progress) * 100f);
-            }
-        }
-
-        private void UpdateInspectorPlaybackScrubberFromPointer(float localX, bool seek)
-        {
-            if (m_PlaybackScrubber == null)
-            {
-                return;
-            }
-
-            float width = Mathf.Max(1f, m_PlaybackScrubber.resolvedStyle.width);
-            m_PlaybackScrubberProgress = Mathf.Clamp01(localX / width);
-            ApplyInspectorPlaybackScrubberProgress(m_PlaybackScrubberProgress);
-            if (seek)
-            {
-                SeekInspectorPlayback(m_PlaybackScrubberProgress);
-            }
-        }
-
-        private void ToggleInspectorPause()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            XAnimationChannelState state = GetCurrentPlaybackState(actor);
-            if (state == null)
-            {
-                if (!TryPlayDefaultInspectorState())
-                {
-                    SetStatus("当前没有可播放的 state。", true);
-                }
-                return;
-            }
-
-            if (Application.isPlaying)
-            {
-                if (actor == null)
-                {
-                    return;
-                }
-
-                if (actor.IsPaused)
-                {
-                    actor.Resume();
-                    SetStatus("已继续播放。");
-                }
-                else
-                {
-                    actor.Pause();
-                    SetStatus("已暂停播放。");
-                }
-            }
-            else
-            {
-                if (m_EditModeSession.IsPaused)
-                {
-                    m_EditModeSession.Resume();
-                    SetStatus("已继续编辑态预览。");
-                }
-                else
-                {
-                    m_EditModeSession.Pause();
-                    SetStatus("已暂停编辑态预览。");
-                }
-            }
-
-            RefreshRuntimeViews();
-        }
-
-        private void StepInspectorPlayback()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            XAnimationChannelState state = GetCurrentPlaybackState(actor);
-            if (state == null)
-            {
-                SetStatus("当前没有可步进的播放项。", true);
-                return;
-            }
-
-            try
-            {
-                if (Application.isPlaying)
-                {
-                    actor.Pause();
-                    actor.Step(InspectorStepDeltaTime);
-                }
-                else
-                {
-                    m_EditModeSession.Step(InspectorStepDeltaTime);
-                }
-
-                SetStatus("已向后推进一帧。");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
-            }
-
-            RefreshRuntimeViews();
-        }
-
-        private void StopAllInspectorPlayback()
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            try
-            {
-                if (Application.isPlaying)
-                {
-                    actor?.StopAll(0f);
-                }
-                else
-                {
-                    m_EditModeSession.StopAll(restorePose: true);
-                }
-
-                ClearCurrentPlayback();
-                SetStatus("已停止全部 channel。");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
-            }
-
-            RefreshRuntimeViews();
-        }
-
-        private void SeekInspectorPlayback(float normalizedTime)
-        {
-            XAnimationActor actor = target as XAnimationActor;
-            XAnimationChannelState state = GetCurrentPlaybackState(actor);
-            if (state == null || string.IsNullOrWhiteSpace(state.channelName))
-            {
-                return;
-            }
-
-            try
-            {
-                if (Application.isPlaying)
-                {
-                    actor.Pause();
-                    if (actor.SeekChannel(state.channelName, normalizedTime))
-                    {
-                        if (actor.UpdateMode == XAnimationUpdateMode.Manual)
-                        {
-                            actor.SyncFrame();
-                        }
-                    }
-                }
-                else
-                {
-                    m_EditModeSession.SetPaused(true);
-                    m_EditModeSession.SeekChannel(state.channelName, normalizedTime);
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogException(ex, actor);
-                SetStatus(ex.Message, true);
-            }
         }
 
         private PropertyField AddProperty(VisualElement root, string propertyName)
@@ -3108,7 +1876,25 @@ namespace XAnimationEditor
 
         private static string FindFirstChannelName(List<ChannelNameOption> options)
         {
-            return options != null && options.Count > 0 ? options[0].DisplayName : null;
+            return options != null && options.Count > 0 ? options[0].Name : null;
+        }
+
+        private static bool HasChannel(List<ChannelNameOption> options, string channelName)
+        {
+            if (options == null || string.IsNullOrWhiteSpace(channelName))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < options.Count; i++)
+            {
+                if (string.Equals(options[i].Name, channelName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void SetStatus(string message, bool isError = false)

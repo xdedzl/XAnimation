@@ -1,0 +1,171 @@
+#if UNITY_EDITOR
+using System.Collections.Generic;
+using UnityEngine;
+using XAnimationEngine;
+
+namespace XAnimationEditor
+{
+    public sealed partial class XAnimationPreviewWindow
+    {
+        private sealed class PreviewPlaybackHudHost : IXAnimationPlaybackHudHost
+        {
+            private readonly XAnimationPreviewWindow m_Window;
+            private readonly XAnimationPlaybackSettings m_Settings = new();
+            private readonly List<string> m_ChannelChoices = new();
+
+            public PreviewPlaybackHudHost(XAnimationPreviewWindow window)
+            {
+                m_Window = window;
+            }
+
+            public XAnimationPlaybackSettings Settings
+            {
+                get
+                {
+                    m_Settings.PlaybackSectionExpanded = m_Window.m_PlaybackSectionExpanded;
+                    m_Settings.TransitionSectionExpanded = m_Window.m_PlayTransitionSectionExpanded;
+                    m_Settings.ChannelName = m_Window.m_PlayTargetChannelName;
+                    m_Settings.Speed = m_Window.GetPlaybackSpeed();
+                    m_Settings.ApplyTransition = m_Window.m_ApplyTransitionRequestOverrides;
+                    m_Settings.FadeIn = m_Window.m_PlayFadeInOverride;
+                    m_Settings.FadeOut = m_Window.m_PlayFadeOutOverride;
+                    m_Settings.EnterTime = m_Window.m_PlayEnterTimeOverride;
+                    m_Settings.Priority = m_Window.m_PlayPriorityOverride;
+                    m_Settings.Interruptible = m_Window.m_PlayInterruptibleOverride;
+                    return m_Settings;
+                }
+            }
+
+            public bool PlaybackExpanded
+            {
+                get => m_Window.m_PlaybackSectionExpanded;
+                set => m_Window.m_PlaybackSectionExpanded = value;
+            }
+
+            public bool TransitionExpanded
+            {
+                get => m_Window.m_PlayTransitionSectionExpanded;
+                set => m_Window.m_PlayTransitionSectionExpanded = value;
+            }
+
+            public bool ShowRootMotion => true;
+            public bool RootMotionEnabled
+            {
+                get => m_Window.m_PreviewRootMotionEnabled;
+                set => SetRootMotionEnabled(value);
+            }
+
+            public string StatusText => string.Empty;
+            public bool StatusIsError => false;
+            public bool CanPlayOrPause => HasPlayback || CanPlayFirstState;
+            public bool HasPlayback => m_Window.HasAnyPlayingChannel();
+            public bool IsPaused => m_Window.m_IsPaused;
+            public bool CanStep => m_Window.m_Session != null && m_Window.m_Session.IsLoaded && HasPlayback;
+            public bool CanStop => HasPlayback;
+            public bool CanSeek => m_Window.m_Session != null && m_Window.m_Session.IsLoaded && m_Window.TryGetDominantPlaybackState(out _);
+            public float NormalizedTime => m_Window.TryGetDominantPlaybackState(out XAnimationChannelState state)
+                ? Mathf.Clamp01(state.normalizedTime)
+                : 0f;
+
+            public IReadOnlyList<string> ChannelChoices
+            {
+                get
+                {
+                    m_ChannelChoices.Clear();
+                    if (m_Window.m_Session != null && m_Window.m_Session.IsLoaded)
+                    {
+                        IReadOnlyList<XAnimationCompiledChannel> channels = m_Window.m_Session.CompiledAsset.Channels;
+                        for (int i = 0; i < channels.Count; i++)
+                        {
+                            m_ChannelChoices.Add(channels[i].Name);
+                        }
+                    }
+
+                    return m_ChannelChoices;
+                }
+            }
+
+            private bool CanPlayFirstState => m_Window.m_Session != null &&
+                                              m_Window.m_Session.IsLoaded &&
+                                              m_Window.m_Session.CompiledAsset?.States != null &&
+                                              m_Window.m_Session.CompiledAsset.States.Count > 0;
+
+            public void SaveSettings()
+            {
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetSpeed(float speed)
+            {
+                m_Window.SetPlaybackSpeed(speed);
+            }
+
+            public void SetChannel(string channelName)
+            {
+                m_Window.m_PlayTargetChannelName = channelName ?? string.Empty;
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetRootMotionEnabled(bool enabled)
+            {
+                m_Window.m_PreviewRootMotionEnabled = enabled;
+                if (m_Window.m_Session != null && m_Window.m_Session.IsLoaded)
+                {
+                    m_Window.m_Session.SetRootMotionEnabled(enabled);
+                    m_Window.RenderPreview();
+                }
+            }
+
+            public void SetApplyTransition(bool enabled)
+            {
+                m_Window.m_ApplyTransitionRequestOverrides = enabled;
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetFadeIn(float value)
+            {
+                m_Window.m_PlayFadeInOverride = Mathf.Max(0f, value);
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetFadeOut(float value)
+            {
+                m_Window.m_PlayFadeOutOverride = Mathf.Max(0f, value);
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetEnterTime(float value)
+            {
+                m_Window.m_PlayEnterTimeOverride = Mathf.Clamp01(value);
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void SetPriority(int value)
+            {
+                m_Window.m_PlayPriorityOverride = value;
+                m_Window.SavePlaybackPrefs();
+            }
+
+            public void TogglePlayPause()
+            {
+                m_Window.TogglePause();
+            }
+
+            public void Step()
+            {
+                m_Window.StepForward();
+            }
+
+            public void StopAll()
+            {
+                m_Window.StopAllClips();
+            }
+
+            public void Seek(float normalizedTime)
+            {
+                m_Window.SeekDominantPlayback(normalizedTime);
+            }
+        }
+    }
+}
+#endif

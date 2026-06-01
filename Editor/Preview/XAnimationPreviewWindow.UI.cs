@@ -77,11 +77,6 @@ namespace XAnimationEditor
         private void SetPlaybackSpeed(float speed, bool savePrefs = true, bool updateSession = true)
         {
             m_PlaySpeed = ClampPlaybackSpeed(speed);
-            m_PlaySpeedSlider?.SetValueWithoutNotify(m_PlaySpeed);
-            if (m_PlaySpeedValueLabel != null)
-            {
-                m_PlaySpeedValueLabel.text = $"{m_PlaySpeed:0.0}x";
-            }
 
             if (updateSession && m_Session != null && m_Session.IsLoaded)
             {
@@ -100,8 +95,6 @@ namespace XAnimationEditor
             {
                 return;
             }
-
-            m_PlaySpeed = ClampPlaybackSpeed(m_PlaySpeedSlider?.value ?? m_PlaySpeed);
 
             XAnimationPlaybackSettingsPrefs.Save(new XAnimationPlaybackSettings
             {
@@ -151,114 +144,6 @@ namespace XAnimationEditor
             btn.style.paddingBottom = 2;
             if (marginLeft > 0f) btn.style.marginLeft = marginLeft;
             return btn;
-        }
-
-        private static void ConfigurePlaybackToolbarButton(Button button, float marginLeft = 0f)
-        {
-            if (button == null)
-            {
-                return;
-            }
-
-            button.style.width = PlaybackToolbarButtonSize;
-            button.style.minWidth = PlaybackToolbarButtonSize;
-            button.style.maxWidth = PlaybackToolbarButtonSize;
-            button.style.height = PlaybackToolbarButtonSize;
-            button.style.minHeight = PlaybackToolbarButtonSize;
-            button.style.maxHeight = PlaybackToolbarButtonSize;
-            button.style.paddingLeft = 0;
-            button.style.paddingRight = 0;
-            button.style.paddingTop = 0;
-            button.style.paddingBottom = 0;
-            button.style.unityTextAlign = TextAnchor.MiddleCenter;
-            button.style.marginLeft = marginLeft;
-            button.style.flexShrink = 0;
-        }
-
-        private VisualElement CreatePlaybackScrubber()
-        {
-            VisualElement scrubber = new();
-            scrubber.style.width = PlaybackScrubberWidth;
-            scrubber.style.height = 18;
-            scrubber.style.flexShrink = 0;
-            scrubber.style.position = Position.Relative;
-            scrubber.style.backgroundColor = new Color(0.08f, 0.08f, 0.085f, 1f);
-            scrubber.style.borderTopWidth = 1;
-            scrubber.style.borderBottomWidth = 1;
-            scrubber.style.borderLeftWidth = 1;
-            scrubber.style.borderRightWidth = 1;
-            scrubber.style.borderTopColor = SectionDivider;
-            scrubber.style.borderBottomColor = SectionDivider;
-            scrubber.style.borderLeftColor = SectionDivider;
-            scrubber.style.borderRightColor = SectionDivider;
-            scrubber.tooltip = "播放进度。暂停时可拖动调整当前最高权重播放项的归一化时间。";
-
-            m_PlaybackScrubberLine = new VisualElement();
-            m_PlaybackScrubberLine.pickingMode = PickingMode.Ignore;
-            m_PlaybackScrubberLine.style.position = Position.Absolute;
-            m_PlaybackScrubberLine.style.top = 2;
-            m_PlaybackScrubberLine.style.bottom = 2;
-            m_PlaybackScrubberLine.style.left = 0;
-            m_PlaybackScrubberLine.style.width = 2;
-            m_PlaybackScrubberLine.style.backgroundColor = Color.white;
-            scrubber.Add(m_PlaybackScrubberLine);
-
-            scrubber.RegisterCallback<PointerDownEvent>(evt =>
-            {
-                if (evt.button != 0 || !TryBeginPlaybackScrub())
-                {
-                    return;
-                }
-
-                m_IsDraggingPlaybackScrubber = true;
-                m_PlaybackScrubberDragStartX = evt.localPosition.x;
-                m_PlaybackScrubberDragStartProgress = m_PlaybackScrubberProgress;
-                scrubber.CapturePointer(evt.pointerId);
-                UpdatePlaybackScrubberFromDrag(evt.localPosition.x);
-                SeekDominantPlayback(m_PlaybackScrubberProgress);
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerMoveEvent>(evt =>
-            {
-                if (!m_IsDraggingPlaybackScrubber || !scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    return;
-                }
-
-                UpdatePlaybackScrubberFromDrag(evt.localPosition.x);
-                SeekDominantPlayback(m_PlaybackScrubberProgress);
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerUpEvent>(evt =>
-            {
-                if (!m_IsDraggingPlaybackScrubber)
-                {
-                    return;
-                }
-
-                m_IsDraggingPlaybackScrubber = false;
-                if (scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    scrubber.ReleasePointer(evt.pointerId);
-                }
-
-                UpdatePlaybackScrubberFromDrag(evt.localPosition.x);
-                SeekDominantPlayback(m_PlaybackScrubberProgress);
-                evt.StopPropagation();
-            });
-            scrubber.RegisterCallback<PointerCancelEvent>(evt =>
-            {
-                m_IsDraggingPlaybackScrubber = false;
-                m_PlaybackScrubberDragStartX = 0f;
-                m_PlaybackScrubberDragStartProgress = m_PlaybackScrubberProgress;
-                if (scrubber.HasPointerCapture(evt.pointerId))
-                {
-                    scrubber.ReleasePointer(evt.pointerId);
-                }
-            });
-
-            UpdatePlaybackScrubber(0f, enabled: false);
-            return scrubber;
         }
 
         private VisualElement BuildStatusRow()
@@ -795,68 +680,26 @@ namespace XAnimationEditor
 
         private VisualElement BuildFreeformBlendGraphOverlay()
         {
-            VisualElement overlay = new VisualElement();
+            XAnimationBlendGraphHudFrame frame = new();
+            VisualElement overlay = frame.Root;
             overlay.style.position = Position.Absolute;
             overlay.style.left = m_FreeformBlendGraphOverlayPosition.x;
             overlay.style.bottom = m_FreeformBlendGraphOverlayPosition.y;
             overlay.style.width = FreeformBlendGraphOverlayWidth;
-            overlay.style.paddingLeft = 6;
-            overlay.style.paddingRight = 6;
-            overlay.style.paddingTop = 6;
-            overlay.style.paddingBottom = 6;
-            overlay.style.backgroundColor = new Color(0.10f, 0.10f, 0.12f, 0.92f);
-            overlay.style.borderTopLeftRadius = 6;
-            overlay.style.borderTopRightRadius = 6;
-            overlay.style.borderBottomLeftRadius = 6;
-            overlay.style.borderBottomRightRadius = 6;
-            overlay.style.borderTopWidth = 1;
-            overlay.style.borderBottomWidth = 1;
-            overlay.style.borderLeftWidth = 1;
-            overlay.style.borderRightWidth = 1;
-            overlay.style.borderTopColor = PaneBorder;
-            overlay.style.borderBottomColor = PaneBorder;
-            overlay.style.borderLeftColor = PaneBorder;
-            overlay.style.borderRightColor = PaneBorder;
             overlay.style.display = DisplayStyle.None;
 
-            VisualElement headerRow = new VisualElement();
-            headerRow.style.flexDirection = FlexDirection.Row;
-            headerRow.style.alignItems = Align.Center;
-            headerRow.style.marginBottom = BlendGraphOverlayHeaderMarginBottomExpanded;
-            headerRow.AddToClassList("xanim-freeform-graph-overlay-drag-handle");
-            headerRow.tooltip = "拖拽标题栏可以移动这个 Blend Graph HUD，点击标题栏可展开或收起。";
-            overlay.Add(headerRow);
-            m_FreeformBlendGraphOverlayHeader = headerRow;
-
-            m_FreeformBlendGraphTitleLabel = new Label();
-            m_FreeformBlendGraphTitleLabel.style.color = TextNormal;
-            m_FreeformBlendGraphTitleLabel.style.fontSize = BodyFontSize;
-            m_FreeformBlendGraphTitleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            m_FreeformBlendGraphTitleLabel.style.flexGrow = 1f;
-            headerRow.Add(m_FreeformBlendGraphTitleLabel);
-
-            m_FreeformBlendGraphOverlayContent = new VisualElement();
-            m_FreeformBlendGraphOverlayContent.style.flexDirection = FlexDirection.Column;
-            overlay.Add(m_FreeformBlendGraphOverlayContent);
-
-            m_FreeformBlendGraphElement = new XAnimationDirectionalBlendGraphElement();
+            frame.Header.style.marginBottom = BlendGraphOverlayHeaderMarginBottomExpanded;
+            frame.Header.tooltip = "拖拽标题栏可以移动这个 Blend Graph HUD，点击标题栏可展开或收起。";
+            m_FreeformBlendGraphOverlayHeader = frame.Header;
+            m_FreeformBlendGraphTitleLabel = frame.TitleLabel;
+            m_FreeformBlendGraphOverlayContent = frame.Content;
+            m_FreeformBlendGraphElement = frame.DirectionalGraph;
             m_FreeformBlendGraphElement.tooltip = "蓝点是 sample，红点是当前 2D 参数值，圆圈大小表示实时 weight。拖动红点可预览 freeform directional blend。";
-            m_FreeformBlendGraphElement.style.display = DisplayStyle.None;
-            m_FreeformBlendGraphOverlayContent.Add(m_FreeformBlendGraphElement);
-
-            m_Blend1DGraphElement = new XAnimationBlend1DGraphElement();
+            m_Blend1DGraphElement = frame.Blend1DGraph;
             m_Blend1DGraphElement.tooltip = "蓝色包络表示 Blend1D sample weight，红线与红点表示当前参数值。拖动红点可预览 Blend1D。";
-            m_Blend1DGraphElement.style.display = DisplayStyle.None;
-            m_FreeformBlendGraphOverlayContent.Add(m_Blend1DGraphElement);
+            m_FreeformBlendGraphHintLabel = frame.HintLabel;
 
-            m_FreeformBlendGraphHintLabel = new Label();
-            m_FreeformBlendGraphHintLabel.style.color = TextMuted;
-            m_FreeformBlendGraphHintLabel.style.fontSize = BodyFontSize;
-            m_FreeformBlendGraphHintLabel.style.whiteSpace = WhiteSpace.Normal;
-            m_FreeformBlendGraphHintLabel.style.display = DisplayStyle.None;
-            m_FreeformBlendGraphOverlayContent.Add(m_FreeformBlendGraphHintLabel);
-
-            RegisterFreeformBlendGraphOverlayDrag(overlay, headerRow, () => SetBlendGraphOverlayExpanded(!m_FreeformBlendGraphOverlayExpanded));
+            RegisterFreeformBlendGraphOverlayDrag(overlay, frame.Header, () => SetBlendGraphOverlayExpanded(!m_FreeformBlendGraphOverlayExpanded));
             SetBlendGraphOverlayExpanded(m_FreeformBlendGraphOverlayExpanded);
 
             return overlay;
@@ -864,205 +707,8 @@ namespace XAnimationEditor
 
         private VisualElement BuildPlaybackSettingsCard()
         {
-            VisualElement playbackActions = new VisualElement();
-            playbackActions.style.flexDirection = FlexDirection.Row;
-            playbackActions.style.alignItems = Align.Center;
-            playbackActions.style.flexWrap = Wrap.NoWrap;
-            playbackActions.style.minWidth = 0;
-
-            m_PlaybackScrubber = CreatePlaybackScrubber();
-            playbackActions.Add(m_PlaybackScrubber);
-
-            VisualElement speedControls = new VisualElement();
-            speedControls.style.flexDirection = FlexDirection.Row;
-            speedControls.style.alignItems = Align.Center;
-            speedControls.style.width = PlaybackSpeedControlWidth;
-            speedControls.style.flexShrink = 0;
-            speedControls.style.marginLeft = 6;
-            speedControls.tooltip = "本次预览播放使用的时间缩放倍率。";
-
-            m_PlaySpeedSlider = new Slider(PlaybackSpeedMin, PlaybackSpeedMax)
-            {
-                value = m_PlaybackPrefsLoaded ? ClampPlaybackSpeed(GetPlaybackSpeed()) : 1f
-            };
-            m_PlaySpeedSlider.style.flexGrow = 1;
-            m_PlaySpeedSlider.style.flexShrink = 1;
-            m_PlaySpeedSlider.style.minWidth = 56;
-            m_PlaySpeedSlider.tooltip = "拖动调整 request.speed，只影响当前预览请求。";
-            m_PlaySpeedSlider.RegisterValueChangedCallback(evt => SetPlaybackSpeed(evt.newValue));
-            speedControls.Add(m_PlaySpeedSlider);
-
-            m_PlaySpeedValueLabel = new Label();
-            m_PlaySpeedValueLabel.style.width = 34;
-            m_PlaySpeedValueLabel.style.minWidth = 34;
-            m_PlaySpeedValueLabel.style.unityTextAlign = TextAnchor.MiddleRight;
-            m_PlaySpeedValueLabel.style.color = TextNormal;
-            m_PlaySpeedValueLabel.style.fontSize = BodyFontSize;
-            m_PlaySpeedValueLabel.style.marginLeft = 4;
-            speedControls.Add(m_PlaySpeedValueLabel);
-
-            SetPlaybackSpeed(m_PlaybackPrefsLoaded ? GetPlaybackSpeed() : 1f, savePrefs: false, updateSession: false);
-            playbackActions.Add(speedControls);
-
-            m_PauseButton = CreateStyledButton("Ⅱ", TogglePause, AccentColor);
-            SetPauseButtonState(false, false);
-            ConfigurePlaybackToolbarButton(m_PauseButton, 6f);
-            playbackActions.Add(m_PauseButton);
-
-            m_StepForwardButton = CreateStyledButton("▸|", StepForward, AccentColor);
-            SetStepForwardButtonEnabled(false);
-            ConfigurePlaybackToolbarButton(m_StepForwardButton, 4f);
-            playbackActions.Add(m_StepForwardButton);
-
-            m_StopAllButton = CreateStyledButton("■", StopAllClips, DangerColor);
-            SetStopAllButtonEnabled(false);
-            ConfigurePlaybackToolbarButton(m_StopAllButton, 4f);
-            playbackActions.Add(m_StopAllButton);
-
-            FoldoutCard playbackCard = CreateFoldoutCard(string.Empty, m_PlaybackSectionExpanded, value =>
-            {
-                m_PlaybackSectionExpanded = value;
-                SavePlaybackPrefs();
-            }, playbackActions);
-            RegisterPlaybackOverlayDrag(playbackCard.Root, () => playbackCard.SetExpanded?.Invoke(!m_PlaybackSectionExpanded));
-
-            VisualElement playbackFields = new VisualElement();
-            playbackFields.style.flexDirection = FlexDirection.Column;
-            playbackFields.style.alignItems = Align.Stretch;
-
-            m_PlayTargetChannelField = CreateChannelDropdown(string.Empty, m_PlayTargetChannelName);
-            m_PlayTargetChannelField.tooltip = "clip 调试播放使用的 channelName。state 播放始终使用 state 自己配置的 channel。";
-            m_PlayTargetChannelField.style.flexGrow = 1;
-            m_PlayTargetChannelField.style.minWidth = 0;
-            AttachDropdownInspectorButton(
-                m_PlayTargetChannelField,
-                () => m_PlayTargetChannelField?.value ?? m_PlayTargetChannelName,
-                () => HasChannel(m_PlayTargetChannelField?.value ?? m_PlayTargetChannelName),
-                () => FocusChannelInInspector(m_PlayTargetChannelField?.value ?? m_PlayTargetChannelName),
-                "定位到 Channels 面板里当前 channel 对应的条目。");
-            m_PlayTargetChannelField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayTargetChannelName = evt.newValue ?? string.Empty;
-                SavePlaybackPrefs();
-            });
-
-            m_RootMotionToggle = new Toggle { value = m_PreviewRootMotionEnabled };
-            m_RootMotionToggle.tooltip = "临时覆盖当前预览 session 是否应用 Root Motion，不保存到 XAnimation 资源。关闭后会将预览实例复位到初始位置。";
-            m_RootMotionToggle.RegisterValueChangedCallback(evt =>
-            {
-                m_PreviewRootMotionEnabled = evt.newValue;
-                if (m_Session != null && m_Session.IsLoaded)
-                {
-                    m_Session.SetRootMotionEnabled(evt.newValue);
-                    RenderPreview();
-                }
-            });
-            VisualElement channelAndRootMotionRow = CreatePlaybackFieldPairRow(
-                "channelName",
-                m_PlayTargetChannelField,
-                "rootMotion",
-                m_RootMotionToggle,
-                PlaybackMainFieldLabelWidth,
-                PlaybackMainFieldValueWidth);
-            channelAndRootMotionRow.tooltip = "channelName 用于 clip 调试播放；rootMotion 是当前预览窗口的临时覆盖。";
-            VisualElement channelAndRootMotionBox = CreateSubBox();
-            channelAndRootMotionBox.tooltip = channelAndRootMotionRow.tooltip;
-            channelAndRootMotionBox.Add(channelAndRootMotionRow);
-            playbackFields.Add(channelAndRootMotionBox);
-
-            playbackCard.Content.Add(playbackFields);
-
-            m_ApplyTransitionRequestToggle = CreateHeaderApplyToggle(m_ApplyTransitionRequestOverrides, "是否应用 Transition 覆盖。关闭时本分区会自动收起。");
-            FoldoutCard transitionCard = CreateSectionFoldoutCard("Transition", m_PlayTransitionSectionExpanded, value =>
-            {
-                m_PlayTransitionSectionExpanded = value;
-                SavePlaybackPrefs();
-            }, m_ApplyTransitionRequestToggle, () => m_ApplyTransitionRequestOverrides);
-            transitionCard.Root.style.marginTop = 4;
-
-            m_ApplyTransitionRequestToggle.tooltip = "只应用 fadeIn / fadeOut / priority / enterTime 覆盖。";
-            m_ApplyTransitionRequestToggle.RegisterValueChangedCallback(evt =>
-            {
-                m_ApplyTransitionRequestOverrides = evt.newValue;
-                if (!evt.newValue)
-                {
-                    transitionCard.SetExpanded?.Invoke(false);
-                }
-                transitionCard.RefreshState?.Invoke();
-                SavePlaybackPrefs();
-            });
-
-            m_PlayFadeInField = new FloatField { value = m_PlayFadeInOverride };
-            m_PlayFadeInField.tooltip = "0 表示使用 channel 默认值；大于 0 时写入 request.fadeIn。";
-            ConfigureCompactPlaybackField(m_PlayFadeInField, "fadeIn", TransitionFieldValueWidth);
-            m_PlayFadeInField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayFadeInOverride = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(m_PlayFadeInOverride, evt.newValue))
-                {
-                    m_PlayFadeInField.SetValueWithoutNotify(m_PlayFadeInOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-
-            m_PlayFadeOutField = new FloatField { value = m_PlayFadeOutOverride };
-            m_PlayFadeOutField.tooltip = "0 表示使用 channel 默认值；大于 0 时写入 request.fadeOut。";
-            ConfigureCompactPlaybackField(m_PlayFadeOutField, "fadeOut", TransitionFieldValueWidth);
-            m_PlayFadeOutField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayFadeOutOverride = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(m_PlayFadeOutOverride, evt.newValue))
-                {
-                    m_PlayFadeOutField.SetValueWithoutNotify(m_PlayFadeOutOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-
-            m_PlayPriorityField = new IntegerField { value = m_PlayPriorityOverride };
-            m_PlayPriorityField.tooltip = "request.priority。";
-            ConfigureCompactPlaybackElement(m_PlayPriorityField, TransitionFieldValueWidth);
-            m_PlayPriorityField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayPriorityOverride = evt.newValue;
-                SavePlaybackPrefs();
-            });
-
-            m_PlayEnterTimeField = new FloatField { value = m_PlayEnterTimeOverride };
-            m_PlayEnterTimeField.tooltip = "transition.enterTime，会被夹到 [0, 1]。";
-            ConfigureCompactPlaybackField(m_PlayEnterTimeField, "enterTime", TransitionFieldValueWidth);
-            m_PlayEnterTimeField.RegisterValueChangedCallback(evt =>
-            {
-                m_PlayEnterTimeOverride = Mathf.Clamp01(evt.newValue);
-                if (!Mathf.Approximately(m_PlayEnterTimeOverride, evt.newValue))
-                {
-                    m_PlayEnterTimeField.SetValueWithoutNotify(m_PlayEnterTimeOverride);
-                }
-
-                SavePlaybackPrefs();
-            });
-            VisualElement fadeRow = CreatePlaybackFieldPairRow(
-                "fadeIn",
-                m_PlayFadeInField,
-                "fadeOut",
-                m_PlayFadeOutField,
-                TransitionFieldLabelWidth,
-                TransitionFieldValueWidth);
-            fadeRow.tooltip = "fadeIn / fadeOut 覆盖。0 表示继续使用 channel 默认值。";
-            transitionCard.Content.Add(fadeRow);
-
-            VisualElement timingRow = CreatePlaybackFieldPairRow(
-                "enterTime",
-                m_PlayEnterTimeField,
-                "priority",
-                m_PlayPriorityField,
-                TransitionFieldLabelWidth,
-                TransitionFieldValueWidth);
-            timingRow.tooltip = "enterTime / priority 覆盖。";
-            transitionCard.Content.Add(timingRow);
-
-            playbackCard.Content.Add(transitionCard.Root);
+            m_PlaybackHudView = new XAnimationPlaybackHudView(new PreviewPlaybackHudHost(this), includeStatus: false);
+            RegisterPlaybackOverlayDrag(m_PlaybackHudView.Root, () => m_PlaybackHudView.TogglePlaybackExpanded());
 
             FoldoutCard previewParametersCard = CreateSectionFoldoutCard("Preview Parameters", m_PreviewParametersSectionExpanded, value =>
             {
@@ -1071,9 +717,9 @@ namespace XAnimationEditor
             previewParametersCard.Root.style.marginTop = 4;
             m_MainParameterPreviewView = new VisualElement();
             previewParametersCard.Content.Add(m_MainParameterPreviewView);
-            playbackCard.Content.Add(previewParametersCard.Root);
+            m_PlaybackHudView.Content?.Add(previewParametersCard.Root);
 
-            return playbackCard.Root;
+            return m_PlaybackHudView.Root;
         }
 
         private void RegisterPlaybackOverlayDrag(VisualElement card, Action toggleExpanded)

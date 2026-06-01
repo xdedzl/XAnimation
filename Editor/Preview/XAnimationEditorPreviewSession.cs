@@ -3405,10 +3405,10 @@ namespace XAnimationEditor
             m_GridSpacing = CloseGridSpacing;
 
             // Create material from URP grid shader
-            Shader shader = Shader.Find("Hidden/XFramework/AnimationPreviewGrid");
+            Shader shader = Shader.Find("Hidden/XAnimation/AnimationPreviewGrid");
             if (shader == null)
             {
-                Debug.LogWarning("XAnimation preview grid shader not found (Hidden/XFramework/AnimationPreviewGrid).");
+                Debug.LogWarning("XAnimation preview grid shader not found (Hidden/XAnimation/AnimationPreviewGrid).");
                 return;
             }
 

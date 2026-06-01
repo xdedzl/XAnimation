@@ -1109,11 +1109,6 @@ namespace XAnimationEditor
 
         private void RefreshPlayTargetChannelChoices()
         {
-            if (m_PlayTargetChannelField == null)
-            {
-                return;
-            }
-
             List<string> choices = new();
             if (m_Session != null && m_Session.IsLoaded)
             {
@@ -1126,14 +1121,12 @@ namespace XAnimationEditor
 
             string selected = !string.IsNullOrWhiteSpace(m_PlayTargetChannelName) && choices.Contains(m_PlayTargetChannelName)
                 ? m_PlayTargetChannelName
-                : choices.Count > 0
-                    ? choices[0]
-                    : string.Empty;
+                    : choices.Count > 0
+                        ? choices[0]
+                        : string.Empty;
 
-            m_PlayTargetChannelField.choices = choices;
-            m_PlayTargetChannelField.SetValueWithoutNotify(selected);
-            m_PlayTargetChannelField.SetEnabled(choices.Count > 0);
             m_PlayTargetChannelName = selected;
+            m_PlaybackHudView?.Refresh();
         }
 
         private XAnimationTransitionOptions BuildPreviewTransitionOptions()

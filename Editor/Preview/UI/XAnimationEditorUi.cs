@@ -94,15 +94,10 @@ namespace XAnimationEditor
             }
             else
             {
-                VisualElement titleContent = Row();
-                titleContent.style.flexGrow = 1;
-                titleContent.style.minWidth = 0;
-                label.style.flexGrow = 1;
-                titleContent.Add(label);
                 titleAction.style.flexShrink = 0;
-                titleAction.style.marginLeft = 4;
-                titleContent.Add(titleAction);
-                titleRow.Add(titleContent);
+                titleAction.style.marginLeft = 0;
+                titleRow.Add(label);
+                titleRow.Add(titleAction);
             }
 
             card.Add(titleRow);
@@ -496,6 +491,13 @@ namespace XAnimationEditor
             label.style.whiteSpace = WhiteSpace.NoWrap;
             label.style.marginRight = 6;
             container.Add(label);
+            if (field is DropdownField)
+            {
+                field.style.flexGrow = 1;
+                field.style.flexShrink = 1;
+                field.style.minWidth = 0;
+                field.style.maxWidth = StyleKeyword.None;
+            }
             container.Add(field);
             return container;
         }
@@ -737,7 +739,7 @@ namespace XAnimationEditor
             element.style.maxHeight = height;
         }
 
-        private static VisualElement Row()
+        public static VisualElement Row()
         {
             VisualElement row = new();
             row.style.flexDirection = FlexDirection.Row;
