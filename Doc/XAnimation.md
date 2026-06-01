@@ -400,8 +400,9 @@ public sealed class HeroAnimationController : MonoBehaviour
 
 常用控制接口：
 
-- `PlayState(string stateKey, XAnimationTransitionOptions transition = default)`：按 state key 播放，始终使用 state 自己配置的 channel，推荐业务层统一使用；`transition` 仅描述过渡参数。
+- `PlayState(string stateKey, XAnimationTransitionOptions transition = default)`：按 state key 播放，始终使用 state 自己配置的 channel，推荐业务层统一使用；`transition` 中的 `fadeIn` / `fadeOut` / `enterTime` 描述本次过渡时序，`priority` / `interruptible` 是本次播放请求携带的打断仲裁参数，播放成功后会成为新 current playback 的运行时属性。
 - `PlayState(string stateKey, bool force)` / `PlayState(string stateKey, XAnimationTransitionOptions transition, bool force)`：`XAnimationActor` / `XAnimationDriver` 提供的强制切换重载；`force = true` 时会忽略门禁、`allowInterrupt`、`interruptible` 与 `priority`。
+- `PlayAction(string stateKey, XAnimationActionOptions options = default)`：播放一个带生命周期的 gameplay action。底层仍是 `PlayState`，但会记录同 channel 的 previous state，支持按 `cancelableAfter` 取消，并在完成或取消后按 `returnMode` 回到 previous / 指定 state / 不返回。
 - `PlayClip(string clipKey, string channelName, XAnimationTransitionOptions transition = default)`：底层/调试接口，按配置中的 clip key 直接播放；必须显式提供 `channelName`。
 - `PlayClip(AnimationClip clip, string channelName, XAnimationTransitionOptions transition = default)`：直接播放外部传入的 `AnimationClip` 引用，不要求写入 `.xanimation` 配置；它会创建临时 state，使用目标 channel 的默认淡入淡出，不触发 `.xanimation` cue。Clip 自带的 Unity `AnimationEvent` 是否触发由 `UnityAnimationEventsEnabled` 决定，默认不触发。
 - `PreloadState(string stateKey)`：同步预加载指定 state 会用到的 clip，`Single` 加载单个 clip，Blend state 会加载全部采样 clip，适合在角色入场或技能释放前主动预热。
@@ -418,7 +419,43 @@ public sealed class HeroAnimationController : MonoBehaviour
 - `SetRootMotionEnabled(enabled)`：全局启停 Root Motion 输出；运行时和 `XAnimation Preview` 都直接切换 Unity 原生 `Animator.applyRootMotion`。
 - `GetChannelState(channelName)`：查询当前播放 clip、归一化时间、权重、速度、优先级，以及当前是否处于 transition、previous state、transition 来源、最近一次拒绝原因等调试信息。
 
-### 4.1 更省事的组件封装：XAnimationActor
+### 4.1 Action Playback
+
+`PlayAction` 是对现有 `PlayState` 的 gameplay 封装，不是新状态机。它适合攻击、受击、技能、交互等 one-shot 动作：动作启动前会记录当前 channel 的非临时 state，动作完成或主动取消后，可按规则回到原 state 或指定 state。
+
+```csharp
+XAnimationActionHandle handle = actor.PlayAction("attack_01", new XAnimationActionOptions
+{
+    transition = new XAnimationTransitionOptions
+    {
+        fadeIn = 0.05f,
+        fadeOut = 0.1f,
+        priority = 10,
+        interruptible = false
+    },
+    cancelableAfter = 0.35f,
+    returnMode = XAnimationActionReturnMode.PreviousState
+});
+
+handle.OnExit(result =>
+{
+    Debug.Log($"Action {result.StateKey} => {result.Status}, return = {result.ReturnStarted}");
+});
+```
+
+`default(XAnimationActionOptions)` 表示使用普通 transition 解析、非强制播放、可立即取消、取消时使用 channel 默认 fadeOut、完成后回到 previous state。`returnMode = State` 时需要填写 `returnStateKey`；`returnMode = None` 时动作结束后不主动返回。
+
+几个边界：
+
+- Action 只接受已有 state key；第一版不支持直接播放 clip。
+- Action 应优先用于非循环 state；循环 state 需要业务调用 `Cancel()`、`Stop()` 或由其他更高优先级播放请求打断。
+- 循环 state 不会自然触发 `Completed`，因此默认的 `returnMode = PreviousState` 也不会自动执行；这种 action 更适合表示持续施法、蓄力、举盾、持续交互等“进入后由业务决定何时退出”的动作。
+- 即使是循环 state，`XAnimationActionHandle.OnExit(...)` 仍然可以监听它最终是被 `Canceled`、`Interrupted`、`Stopped` 还是 `Disposed` 退出。
+- Action 被其他播放请求打断时状态为 `Interrupted`，不会自动返回，避免旧 action 抢回动画控制权。
+- Action state 自己触发 `autoTransitions` 时，第一版按被后续播放打断处理，不再额外执行 action return。
+- 编辑器预览窗口的 `Playback` HUD 中提供 `Action Debug` 折叠区，可选择 state、return mode、cancel 参数并观察当前 action handle 状态。
+
+### 4.2 更省事的组件封装：XAnimationActor
 
 如果业务不想自己维护 `XAnimationDriver` 生命周期，可以直接挂 `XAnimationActor`：
 
@@ -436,14 +473,14 @@ MonoBehaviour(Update)
       -> PlayableGraph / Animator
 ```
 
-### 4.2 更新模式
+### 4.3 更新模式
 
 - `Manual` 是默认模式，兼容旧行为。XAnimation 每帧推进自身逻辑并调用 `PlayableGraph.Evaluate(deltaTime)`，支持 Cue、`Step(deltaTime)`、`SyncFrame()`、Seek 与预览调试。
 - `GameTime` 是性能优先模式。XAnimation 每帧仍同步状态、淡入淡出、Blend 参数、通道权重和自动转场，但不手动调用 `PlayableGraph.Evaluate(deltaTime)`，图由 Unity 按 `DirectorUpdateMode.GameTime` 推进。
 - XAnimation Cue 在 `Manual` 与 `GameTime` 下都由内部 `PlayableBehaviour` 跟随 `PlayableGraph` 采集；`SupportsCue` 为 `true`。`Step(deltaTime)` 与 `SyncFrame()` 仍只支持 `Manual`，非 Manual 调用会抛出异常。
 - `XAnimation Preview` 永远固定 `Manual`，不会跟随运行时 Actor 的 `UpdateMode`。
 
-### 4.3 特定帧暂停
+### 4.4 特定帧暂停
 
 特定帧暂停的核心是先把帧号换算成归一化时间：
 
@@ -493,7 +530,7 @@ driver.SetGlobalSpeed(1f);
 
 注意：`XAnimationActor` 目前只封装了部分 `XAnimationDriver` 接口。通过 Actor 做 `GameTime` 首帧进入并冻结时，可以使用 `UpdateMode`、`PlayState(... enterTime ...)` 和 `GlobalSpeed = 0f`；如果业务需要直接调用 `SeekChannel()` 或 `SyncFrame()`，应持有 `XAnimationDriver`，或按项目需要在 Actor 上补转发方法。
 
-### 4.4 Unity AnimationEvent
+### 4.5 Unity AnimationEvent
 
 - XAnimation 默认关闭 Unity 原生 `AnimationEvent`，内部通过 `Animator.fireEvents = false` 实现，不修改也不复制原始 `AnimationClip`。
 - 关闭 Unity 原生 `AnimationEvent` 只影响 Unity 对目标 GameObject 的函数回调，不影响 XAnimation 从 `AnimationClip.events` 读取数据并派生 Cue。
@@ -513,8 +550,9 @@ driver.SetGlobalSpeed(1f);
   - 当前 state 的 `allowedNextStateKeys` 非空时，目标 state 必须在其中。
   - 目标 state 的 `allowedPreviousStateKeys` 非空时，当前 state 必须在其中。
   - 两边都配置时，两边都要满足。
-- `interruptible` 只约束“当前播放是否允许被打断”，不是“这个新请求将来一定不可被打断”。
-- 新请求只有在 `priority >= 当前播放 priority` 时才能打断。
+- `priority` / `interruptible` 虽然写在 `XAnimationTransitionOptions` 里，但它们不是过渡匹配优先级，也不影响混合权重；它们是播放请求携带的打断仲裁参数，播放成功后会落到新 current playback 上。
+- 对本次仲裁来说，`request.priority` 用来和当前播放的 `priority` 比较；新请求只有在 `priority >= 当前播放 priority` 时才能打断。
+- 对本次仲裁来说，`request.interruptible` 不决定它能不能打断当前播放；只有当前播放自己的 `interruptible` 会被检查。请求播放成功后，这个值才会决定新 current playback 之后是否允许被普通请求打断。
 - 被挡住的新请求会立即失败，不会排队，也不会挂起等待下一帧自动执行。
 - `defaultTransitions` 与 `autoTransitions` 生成的请求，和业务层显式 `PlayState / PlayClip` 一样，都会走同一套仲裁规则。
 - `PlayClip` 本身不读取 state 门禁，但它创建出来的临时 state 一旦成为当前播放，后续再切到别的真实 state 时，会像普通 state 一样参与 `allowedNextStateKeys / allowedPreviousStateKeys` 判定。
@@ -581,8 +619,11 @@ driver.SetGlobalSpeed(1f);
 ### 5.5 TODO
 
 - 完善过渡语义的手工验证与调试观测，覆盖显式播放、`defaultTransitions`、`autoTransitions`、拒绝原因与重叠期事件行为。
-- 增加相位同步能力，让同类循环动作在共享相位下混合与切换。
-- 增加步态同步能力，支持 `idle / walk / run`、8 向移动、上半身 locomotion 覆盖等同族动作保持统一节奏。
+- 后续再考虑相位同步能力；当前先不做。目标是让同类循环 state 在跨 state 切换时可选择继承当前 `normalizedTime % 1`，Blend state 内部仍优先依赖制作规范保持样本相位一致。
+- 后续再考虑步态同步能力；当前先不做。目标是支持 `idle / walk / run`、8 向移动、上半身 locomotion 覆盖等同族动作按脚步节奏保持统一，而不是只按 normalized time 对齐。
+- 后续再考虑运行时 Clip Override；目标是在不替换整套 `.xanimation` 状态/通道/转场结构的前提下，按武器、皮肤或职业临时替换指定 clip。
+- 后续再考虑异步预加载；目标是在角色入场、技能释放或阶段切换前异步加载指定 state / 全部 clip，避免首次播放时同步加载产生尖峰。
+- 后续再考虑 Motion Warping / Root Motion 目标对齐；目标是在近战、处决、跳跃落点、交互动作等场景中，把动作位移在指定时间窗内对齐到业务目标。
 - 增加镜像语义，支持状态级或样本级复用左右对称动作。
 - 增加速度驱动语义，支持按参数驱动播放速度而不是只依赖固定 `state.speed`。
 - 增加曲线修正速度能力，支持在动作周期内按曲线调整播放节奏。

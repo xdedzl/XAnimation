@@ -13,14 +13,16 @@ namespace XAnimationEngine
 #endif
 
         private readonly XAnimationRuntime m_Runtime;
+        private readonly Action m_AfterFrame;
 
         private bool m_IsStepping;
         private bool m_IsRegisteredForAutomaticUpdate;
         private bool m_HasPreparedFrame;
 
-        internal XAnimationDriverScheduler(XAnimationRuntime runtime)
+        internal XAnimationDriverScheduler(XAnimationRuntime runtime, Action afterFrame = null)
         {
             m_Runtime = runtime ?? throw new ArgumentNullException(nameof(runtime));
+            m_AfterFrame = afterFrame;
         }
 
         internal bool IsRegisteredForAutomaticUpdate => m_IsRegisteredForAutomaticUpdate && m_Runtime.IsInitialized;
@@ -32,6 +34,7 @@ namespace XAnimationEngine
             try
             {
                 m_Runtime.RunManualFrame(deltaTime);
+                m_AfterFrame?.Invoke();
             }
             finally
             {
@@ -61,6 +64,7 @@ namespace XAnimationEngine
 
             m_HasPreparedFrame = false;
             m_Runtime.FinalizeFromScheduler();
+            m_AfterFrame?.Invoke();
         }
 
         internal void RegisterForAutomaticUpdate()

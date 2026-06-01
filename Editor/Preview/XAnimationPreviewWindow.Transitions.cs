@@ -621,7 +621,9 @@ namespace XAnimationEditor
             headerActions.style.flexDirection = FlexDirection.Row;
             headerActions.style.alignItems = Align.Center;
             headerActions.style.flexGrow = 1;
+            headerActions.style.flexShrink = 1;
             headerActions.style.minWidth = 0;
+            headerActions.style.maxWidth = Length.Percent(100f);
 
             VisualElement summaryRow = new();
             summaryRow.style.flexDirection = FlexDirection.Row;
@@ -645,6 +647,7 @@ namespace XAnimationEditor
             actionsRow.style.alignItems = Align.Center;
             actionsRow.style.justifyContent = Justify.FlexEnd;
             actionsRow.style.flexShrink = 0;
+            actionsRow.style.flexGrow = 0;
             actionsRow.style.marginLeft = 6;
             headerActions.Add(actionsRow);
             playButton.style.flexShrink = 0;
@@ -1284,6 +1287,7 @@ namespace XAnimationEditor
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
             row.style.marginTop = 4;
+            row.style.minWidth = 0;
 
             label = new(labelText);
             label.style.width = 56;
@@ -1303,6 +1307,8 @@ namespace XAnimationEditor
             track = new VisualElement();
             track.style.position = Position.Relative;
             track.style.flexGrow = 1;
+            track.style.flexShrink = 1;
+            track.style.minWidth = 0;
             track.style.height = 16;
             track.style.backgroundColor = new Color(0.10f, 0.10f, 0.11f, 1f);
             track.style.borderTopWidth = 1;
@@ -1327,13 +1333,17 @@ namespace XAnimationEditor
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
             row.style.marginTop = 4;
+            row.style.minWidth = 0;
 
             field.style.width = 170;
             field.style.minWidth = 170;
             field.style.maxWidth = 170;
+            field.style.flexShrink = 0;
             row.Add(field);
 
             slider.style.flexGrow = 1;
+            slider.style.flexShrink = 1;
+            slider.style.minWidth = 0;
             slider.style.marginLeft = 8;
             row.Add(slider);
             return row;

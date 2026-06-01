@@ -209,6 +209,11 @@ namespace XAnimationEngine
             return m_Driver.PlayState(stateName, transition, force);
         }
 
+        public XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options = default)
+        {
+            return m_Driver.PlayAction(stateKey, options);
+        }
+
         public void Stop(string channelName, float fadeOut = 0)
         {
             m_Driver.Stop(channelName, fadeOut);

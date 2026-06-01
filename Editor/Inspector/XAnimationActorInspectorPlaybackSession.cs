@@ -10,15 +10,12 @@ namespace XAnimationEditor
     internal sealed class XAnimationActorInspectorPlaybackSession : IDisposable
     {
         private readonly XAnimationAssetLoader m_AssetLoader = new(new XAnimationEditorAssetResolver());
-        private readonly Dictionary<string, float> m_FloatParameters = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> m_IntParameters = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, bool> m_BoolParameters = new(StringComparer.Ordinal);
+        private readonly XAnimationEditorActor m_EditorActor = new();
         private readonly List<TransformSnapshot> m_TransformSnapshots = new();
 
         private XAnimationActor m_Actor;
         private Animator m_Animator;
         private TextAsset m_AnimationAsset;
-        private XAnimationDriver m_Driver;
         private int m_ActorInstanceId;
         private int m_AnimatorInstanceId;
         private int m_AnimationAssetInstanceId;
@@ -28,9 +25,9 @@ namespace XAnimationEditor
         private bool m_AnimatorApplyRootMotion;
         private AnimatorCullingMode m_AnimatorCullingMode;
 
-        public bool IsLoaded => m_Driver != null && m_Actor != null && m_Animator != null;
-        public bool IsPaused => m_Driver != null && m_Driver.IsPaused;
-        public float GlobalSpeed => m_Driver != null ? m_Driver.GlobalSpeed : 1f;
+        public bool IsLoaded => m_EditorActor.IsLoaded && m_Actor != null && m_Animator != null;
+        public bool IsPaused => m_EditorActor.IsPaused;
+        public float GlobalSpeed => m_EditorActor.GlobalSpeed;
         public XAnimationActor Actor => m_Actor;
 
         public bool Matches(XAnimationActor actor)
@@ -101,27 +98,25 @@ namespace XAnimationEditor
             ConfigureAnimatorForPreview();
 
             XAnimationCompiledAsset compiledAsset = m_AssetLoader.Load(m_AnimationAsset);
-            m_Driver = new XAnimationDriver();
-            m_Driver.Initialize(compiledAsset, m_Animator);
-            m_Driver.SetUpdateMode(XAnimationUpdateMode.Manual);
-            m_Driver.SetUnityAnimationEventsEnabled(false);
-            m_Driver.SetGlobalSpeed(1f);
-            m_Driver.SetRootMotionEnabled(false);
-            RestoreParameters();
+            m_EditorActor.Initialize(compiledAsset, m_Animator);
         }
 
         public void PlayState(XAnimationActor actor, string stateKey, XAnimationTransitionOptions transition)
         {
             EnsureLoaded(actor);
-            m_Driver.SetPaused(false);
-            m_Driver.PlayState(stateKey, transition);
+            m_EditorActor.PlayState(stateKey, transition);
         }
 
         public void PlayClip(XAnimationActor actor, string clipKey, string channelName, XAnimationTransitionOptions transition)
         {
             EnsureLoaded(actor);
-            m_Driver.SetPaused(false);
-            m_Driver.PlayClip(clipKey, channelName, transition);
+            m_EditorActor.PlayClip(clipKey, channelName, transition);
+        }
+
+        public XAnimationActionHandle PlayAction(XAnimationActor actor, string stateKey, XAnimationActionOptions options = default)
+        {
+            EnsureLoaded(actor);
+            return m_EditorActor.PlayAction(stateKey, options);
         }
 
         public void StopAll(bool restorePose)
@@ -132,156 +127,97 @@ namespace XAnimationEditor
                 return;
             }
 
-            if (m_Driver != null)
-            {
-                m_Driver.StopAll();
-                m_Driver.SetPaused(false);
-            }
+            m_EditorActor.StopAllAndResume();
         }
 
         public void Pause()
         {
-            m_Driver?.Pause();
+            m_EditorActor.Pause();
         }
 
         public void Resume()
         {
-            m_Driver?.Resume();
+            m_EditorActor.Resume();
         }
 
         public void SetPaused(bool paused)
         {
-            m_Driver?.SetPaused(paused);
+            m_EditorActor.SetPaused(paused);
         }
 
         public void SetGlobalSpeed(float speed)
         {
-            m_Driver?.SetGlobalSpeed(speed);
+            m_EditorActor.SetGlobalSpeed(speed);
         }
 
         public void SetRootMotionEnabled(bool enabled)
         {
-            m_Driver?.SetRootMotionEnabled(enabled);
+            m_EditorActor.SetRootMotionEnabled(enabled);
         }
 
         public bool GetRootMotionEnabled()
         {
-            return m_Driver != null && m_Driver.ShouldApplyNativeRootMotion();
+            return m_EditorActor.GetRootMotionEnabled();
         }
 
         public void Step(float deltaTime)
         {
-            if (m_Driver == null)
-            {
-                return;
-            }
-
-            m_Driver.SetPaused(true);
-            m_Driver.Step(deltaTime);
+            m_EditorActor.StepPaused(deltaTime);
         }
 
         public bool SeekChannel(string channelName, float normalizedTime)
         {
-            if (m_Driver == null)
-            {
-                return false;
-            }
-
-            bool result = m_Driver.SeekChannel(channelName, normalizedTime);
-            if (result)
-            {
-                m_Driver.SyncFrame();
-            }
-
-            return result;
+            return m_EditorActor.SeekChannelAndSync(channelName, normalizedTime);
         }
 
         public XAnimationChannelState GetChannelState(string channelName)
         {
-            return m_Driver != null && !string.IsNullOrWhiteSpace(channelName)
-                ? m_Driver.GetChannelState(channelName)
-                : null;
+            return m_EditorActor.GetChannelState(channelName);
         }
 
         public void SetParameter(string key, float value)
         {
-            m_FloatParameters[key] = value;
-            m_Driver?.SetParameter(key, value);
+            m_EditorActor.SetParameter(key, value);
         }
 
         public void SetParameter(string key, int value)
         {
-            m_IntParameters[key] = value;
-            m_Driver?.SetParameter(key, value);
+            m_EditorActor.SetParameter(key, value);
         }
 
         public void SetParameter(string key, bool value)
         {
-            m_BoolParameters[key] = value;
-            m_Driver?.SetParameter(key, value);
+            m_EditorActor.SetParameter(key, value);
         }
 
         public void SetTrigger(string key)
         {
-            m_Driver?.SetTrigger(key);
+            m_EditorActor.SetTrigger(key);
         }
 
         public void ClearParameterOverrides()
         {
-            m_FloatParameters.Clear();
-            m_IntParameters.Clear();
-            m_BoolParameters.Clear();
+            m_EditorActor.ClearParameterOverrides();
         }
 
         public bool TryGetParameter(string key, out float value)
         {
-            if (m_Driver != null && m_Driver.TryGetParameter(key, out value))
-            {
-                m_FloatParameters[key] = value;
-                return true;
-            }
-
-            return m_FloatParameters.TryGetValue(key, out value);
+            return m_EditorActor.TryGetParameter(key, out value);
         }
 
         public bool TryGetParameter(string key, out int value)
         {
-            if (m_Driver != null && m_Driver.TryGetParameter(key, out value))
-            {
-                m_IntParameters[key] = value;
-                return true;
-            }
-
-            return m_IntParameters.TryGetValue(key, out value);
+            return m_EditorActor.TryGetParameter(key, out value);
         }
 
         public bool TryGetParameter(string key, out bool value)
         {
-            if (m_Driver != null && m_Driver.TryGetParameter(key, out value))
-            {
-                m_BoolParameters[key] = value;
-                return true;
-            }
-
-            return m_BoolParameters.TryGetValue(key, out value);
+            return m_EditorActor.TryGetParameter(key, out value);
         }
 
         public void Dispose()
         {
-            if (m_Driver != null)
-            {
-                try
-                {
-                    m_Driver.StopAll();
-                }
-                catch (Exception)
-                {
-                    // The editor can tear down playables during domain or mode changes.
-                }
-
-                m_Driver.Dispose();
-                m_Driver = null;
-            }
+            m_EditorActor.Dispose();
 
             RestoreAnimatorState();
             RestorePose();
@@ -291,24 +227,6 @@ namespace XAnimationEditor
             m_ActorInstanceId = 0;
             m_AnimatorInstanceId = 0;
             m_AnimationAssetInstanceId = 0;
-        }
-
-        private void RestoreParameters()
-        {
-            foreach (KeyValuePair<string, float> kvp in m_FloatParameters)
-            {
-                m_Driver.SetParameter(kvp.Key, kvp.Value);
-            }
-
-            foreach (KeyValuePair<string, int> kvp in m_IntParameters)
-            {
-                m_Driver.SetParameter(kvp.Key, kvp.Value);
-            }
-
-            foreach (KeyValuePair<string, bool> kvp in m_BoolParameters)
-            {
-                m_Driver.SetParameter(kvp.Key, kvp.Value);
-            }
         }
 
         private void CachePose()

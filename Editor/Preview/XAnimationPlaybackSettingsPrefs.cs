@@ -7,6 +7,7 @@ namespace XAnimationEditor
     {
         public bool PlaybackSectionExpanded = true;
         public bool TransitionSectionExpanded;
+        public bool ActionDebugSectionExpanded;
         public string ChannelName = string.Empty;
         public float Speed = 1f;
         public bool ApplyTransition;
@@ -27,6 +28,7 @@ namespace XAnimationEditor
             {
                 PlaybackSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.PlaybackSectionExpanded), true),
                 TransitionSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.TransitionSectionExpanded), false),
+                ActionDebugSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.ActionDebugSectionExpanded), false),
                 ChannelName = EditorPrefs.GetString(Prefix + nameof(XAnimationPlaybackSettings.ChannelName), string.Empty),
                 Speed = EditorPrefs.GetFloat(Prefix + nameof(XAnimationPlaybackSettings.Speed), 1f),
                 ApplyTransition = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.ApplyTransition), false),
@@ -47,6 +49,7 @@ namespace XAnimationEditor
 
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.PlaybackSectionExpanded), settings.PlaybackSectionExpanded);
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.TransitionSectionExpanded), settings.TransitionSectionExpanded);
+            EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.ActionDebugSectionExpanded), settings.ActionDebugSectionExpanded);
             EditorPrefs.SetString(Prefix + nameof(XAnimationPlaybackSettings.ChannelName), settings.ChannelName ?? string.Empty);
             EditorPrefs.SetFloat(Prefix + nameof(XAnimationPlaybackSettings.Speed), settings.Speed);
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.ApplyTransition), settings.ApplyTransition);

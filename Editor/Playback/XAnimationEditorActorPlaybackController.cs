@@ -7,12 +7,14 @@ using XAnimationEngine;
 
 namespace XAnimationEditor
 {
-    internal sealed class XAnimationEditorActorPlaybackController : IXAnimationPlaybackHudHost, IDisposable
+    internal sealed class XAnimationEditorActorPlaybackController : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost, IDisposable
     {
         private const float StepDeltaTime = 1f / 60f;
 
         private readonly XAnimationActorInspectorPlaybackSession m_EditModeSession = new();
         private XAnimationPlaybackSettings m_Settings;
+        private readonly List<string> m_ActionStateChoices = new();
+        private readonly List<string> m_ActionReturnStateChoices = new();
         private XAnimationActor m_Actor;
         private XAnimationAsset m_Asset;
         private int m_AssetInstanceId;
@@ -20,6 +22,14 @@ namespace XAnimationEditor
         private string m_StatusText = "请选择一个 XAnimationActor。";
         private bool m_StatusIsError;
         private bool m_RootMotionEnabled;
+        private string m_ActionStateKey;
+        private string m_ActionReturnStateKey;
+        private XAnimationActionReturnMode m_ActionReturnMode;
+        private float m_ActionCancelableAfter;
+        private float m_ActionCancelFadeOut;
+        private bool m_ActionForce;
+        private XAnimationActionHandle m_ActionHandle;
+        private XAnimationActionExitResult m_LastActionExitResult;
 
         public XAnimationEditorActorPlaybackController()
         {
@@ -40,6 +50,12 @@ namespace XAnimationEditor
             set => m_Settings.TransitionSectionExpanded = value;
         }
 
+        public bool ActionDebugExpanded
+        {
+            get => m_Settings.ActionDebugSectionExpanded;
+            set => m_Settings.ActionDebugSectionExpanded = value;
+        }
+
         public bool ShowRootMotion => true;
         public bool RootMotionEnabled
         {
@@ -58,6 +74,42 @@ namespace XAnimationEditor
         public bool CanSeek => TryGetDominantPlaybackState(out _);
         public float NormalizedTime => TryGetDominantPlaybackState(out XAnimationChannelState state) ? Mathf.Clamp01(state.normalizedTime) : 0f;
         public IReadOnlyList<string> ChannelChoices => m_ChannelChoices;
+        public IReadOnlyList<string> ActionStateChoices => GetActionStateChoices(m_ActionStateChoices);
+        public string ActionStateKey
+        {
+            get => m_ActionStateKey;
+            set => m_ActionStateKey = value ?? string.Empty;
+        }
+        public XAnimationActionReturnMode ActionReturnMode
+        {
+            get => m_ActionReturnMode;
+            set => m_ActionReturnMode = value;
+        }
+        public IReadOnlyList<string> ActionReturnStateChoices => GetActionStateChoices(m_ActionReturnStateChoices);
+        public string ActionReturnStateKey
+        {
+            get => m_ActionReturnStateKey;
+            set => m_ActionReturnStateKey = value ?? string.Empty;
+        }
+        public float ActionCancelableAfter
+        {
+            get => m_ActionCancelableAfter;
+            set => m_ActionCancelableAfter = Mathf.Max(0f, value);
+        }
+        public float ActionCancelFadeOut
+        {
+            get => m_ActionCancelFadeOut;
+            set => m_ActionCancelFadeOut = Mathf.Max(0f, value);
+        }
+        public bool ActionForce
+        {
+            get => m_ActionForce;
+            set => m_ActionForce = value;
+        }
+        public bool CanPlayAction => m_Actor != null && m_Asset?.states != null && !string.IsNullOrWhiteSpace(m_ActionStateKey);
+        public bool CanCancelAction => m_ActionHandle != null && m_ActionHandle.CanCancel;
+        public string ActionStatusText => BuildActionStatusText();
+        public bool ActionStatusIsError => m_ActionHandle != null && m_ActionHandle.Status == XAnimationActionStatus.Rejected;
         public XAnimationActor Actor => m_Actor;
         public XAnimationAsset Asset => m_Asset;
         public bool EditModeSessionLoaded => !Application.isPlaying && m_EditModeSession.IsLoaded;
@@ -69,6 +121,7 @@ namespace XAnimationEditor
             {
                 ReleaseEditModeSession();
                 m_EditModeSession.ClearParameterOverrides();
+                ClearActionDebugRuntimeState();
                 m_Actor = actor;
                 m_Asset = null;
                 m_AssetInstanceId = 0;
@@ -296,6 +349,90 @@ namespace XAnimationEditor
                 Debug.LogException(ex, m_Actor);
                 SetStatus(ex.Message, true);
             }
+        }
+
+        public void PlayAction()
+        {
+            RefreshSelection();
+            EnsureActionStateSelection();
+            if (string.IsNullOrWhiteSpace(m_ActionStateKey))
+            {
+                SetStatus("请选择 Action state。", true);
+                return;
+            }
+
+            if (m_ActionReturnMode == XAnimationActionReturnMode.State)
+            {
+                EnsureActionReturnStateSelection();
+                if (string.IsNullOrWhiteSpace(m_ActionReturnStateKey))
+                {
+                    SetStatus("returnMode = State 时需要选择 returnState。", true);
+                    return;
+                }
+            }
+
+            XAnimationActionOptions options = new()
+            {
+                transition = BuildTransitionOptions(),
+                force = m_ActionForce,
+                cancelableAfter = Mathf.Max(0f, m_ActionCancelableAfter),
+                cancelFadeOut = Mathf.Max(0f, m_ActionCancelFadeOut),
+                returnMode = m_ActionReturnMode,
+                returnStateKey = m_ActionReturnMode == XAnimationActionReturnMode.State ? m_ActionReturnStateKey : null,
+                returnTransition = null,
+            };
+
+            try
+            {
+                m_LastActionExitResult = null;
+                if (Application.isPlaying)
+                {
+                    if (m_Actor == null)
+                    {
+                        SetStatus("请选择一个 XAnimationActor。", true);
+                        return;
+                    }
+
+                    m_Actor.GlobalSpeed = m_Settings.Speed;
+                    m_ActionHandle = m_Actor.PlayAction(m_ActionStateKey, options);
+                }
+                else
+                {
+                    m_EditModeSession.EnsureLoaded(m_Actor);
+                    m_EditModeSession.SetGlobalSpeed(m_Settings.Speed);
+                    m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
+                    m_ActionHandle = m_EditModeSession.PlayAction(m_Actor, m_ActionStateKey, options);
+                }
+
+                m_ActionHandle.OnExit(result =>
+                {
+                    m_LastActionExitResult = result;
+                    XAnimationSceneOverlaySelection.RequestRepaint();
+                });
+
+                SetStatus(m_ActionHandle.IsValid
+                    ? $"正在 PlayAction {m_ActionStateKey}。"
+                    : $"PlayAction {m_ActionStateKey} 被拒绝。", !m_ActionHandle.IsValid);
+                XAnimationSceneOverlaySelection.RequestRepaint();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, m_Actor);
+                SetStatus(ex.Message, true);
+            }
+        }
+
+        public void CancelAction()
+        {
+            if (m_ActionHandle == null || !m_ActionHandle.IsValid)
+            {
+                SetStatus("当前没有有效的 Action handle。", true);
+                return;
+            }
+
+            bool canceled = m_ActionHandle.Cancel();
+            SetStatus(canceled ? "已请求取消 Action。" : "当前 Action 尚不可取消。", !canceled);
+            XAnimationSceneOverlaySelection.RequestRepaint();
         }
 
         public bool TrySetParameter(string key, float value)
@@ -667,6 +804,90 @@ namespace XAnimationEditor
         public void Dispose()
         {
             ReleaseEditModeSession();
+        }
+
+        private IReadOnlyList<string> GetActionStateChoices(List<string> choices)
+        {
+            choices.Clear();
+            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(states[i]?.key))
+                {
+                    choices.Add(states[i].key);
+                }
+            }
+
+            return choices;
+        }
+
+        private void EnsureActionStateSelection()
+        {
+            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (states[i] != null && string.Equals(states[i].key, m_ActionStateKey, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            m_ActionStateKey = FindFirstActionStateKey(states);
+        }
+
+        private void EnsureActionReturnStateSelection()
+        {
+            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (states[i] != null && string.Equals(states[i].key, m_ActionReturnStateKey, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            m_ActionReturnStateKey = FindFirstActionStateKey(states);
+        }
+
+        private static string FindFirstActionStateKey(XAnimationStateConfig[] states)
+        {
+            for (int i = 0; i < states.Length; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(states[i]?.key))
+                {
+                    return states[i].key;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private void ClearActionDebugRuntimeState()
+        {
+            m_ActionHandle = null;
+            m_LastActionExitResult = null;
+        }
+
+        private string BuildActionStatusText()
+        {
+            if (m_ActionHandle == null)
+            {
+                return "Status: no action";
+            }
+
+            string channelName = string.IsNullOrWhiteSpace(m_ActionHandle.ChannelName)
+                ? "-"
+                : m_ActionHandle.ChannelName;
+            string stateKey = string.IsNullOrWhiteSpace(m_ActionHandle.StateKey)
+                ? "-"
+                : m_ActionHandle.StateKey;
+            string statusText = $"Status: {m_ActionHandle.Status} | State: {stateKey} | Channel: {channelName} | CanCancel: {m_ActionHandle.CanCancel}";
+            if (m_LastActionExitResult != null)
+            {
+                statusText += $" | Return: {m_LastActionExitResult.ReturnStarted}";
+            }
+
+            return statusText;
         }
 
         private bool TryPlayDefaultState()

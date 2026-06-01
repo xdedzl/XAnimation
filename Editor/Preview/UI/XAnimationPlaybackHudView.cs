@@ -41,6 +41,26 @@ namespace XAnimationEditor
         void Seek(float normalizedTime);
     }
 
+    internal interface IXAnimationActionDebugHudHost
+    {
+        bool ActionDebugExpanded { get; set; }
+        IReadOnlyList<string> ActionStateChoices { get; }
+        string ActionStateKey { get; set; }
+        XAnimationActionReturnMode ActionReturnMode { get; set; }
+        IReadOnlyList<string> ActionReturnStateChoices { get; }
+        string ActionReturnStateKey { get; set; }
+        float ActionCancelableAfter { get; set; }
+        float ActionCancelFadeOut { get; set; }
+        bool ActionForce { get; set; }
+        bool CanPlayAction { get; }
+        bool CanCancelAction { get; }
+        string ActionStatusText { get; }
+        bool ActionStatusIsError { get; }
+
+        void PlayAction();
+        void CancelAction();
+    }
+
     internal sealed class XAnimationPlaybackHudView
     {
         public const float SpeedMin = 0.1f;
@@ -54,6 +74,7 @@ namespace XAnimationEditor
         public const float TransitionFieldValueWidth = 64f;
 
         private readonly IXAnimationPlaybackHudHost m_Host;
+        private readonly IXAnimationActionDebugHudHost m_ActionHost;
         private readonly bool m_IncludeStatus;
         private bool m_IsScrubbing;
 
@@ -74,12 +95,23 @@ namespace XAnimationEditor
         private IntegerField m_PriorityField;
         private FoldoutCard m_PlaybackCard;
         private FoldoutCard m_TransitionCard;
+        private DropdownField m_ActionStateField;
+        private DropdownField m_ActionReturnModeField;
+        private DropdownField m_ActionReturnStateField;
+        private FloatField m_ActionCancelableAfterField;
+        private FloatField m_ActionCancelFadeOutField;
+        private Toggle m_ActionForceToggle;
+        private Button m_ActionPlayButton;
+        private Button m_ActionCancelButton;
+        private Label m_ActionStatusLabel;
+        private FoldoutCard m_ActionDebugCard;
 
-        public XAnimationPlaybackHudView(IXAnimationPlaybackHudHost host, bool includeStatus = true)
+        public XAnimationPlaybackHudView(IXAnimationPlaybackHudHost host, bool includeStatus = true, string titleText = "")
         {
             m_Host = host ?? throw new ArgumentNullException(nameof(host));
+            m_ActionHost = host as IXAnimationActionDebugHudHost;
             m_IncludeStatus = includeStatus;
-            Root = Build();
+            Root = Build(titleText);
             Refresh();
         }
 
@@ -126,9 +158,10 @@ namespace XAnimationEditor
             SetButtonEnabled(m_StopButton, m_Host.CanStop);
             UpdateScrubber(m_Host.NormalizedTime, m_Host.CanSeek);
             m_TransitionCard?.RefreshState?.Invoke();
+            RefreshActionDebug();
         }
 
-        private VisualElement Build()
+        private VisualElement Build(string titleText)
         {
             VisualElement playbackActions = Row();
             playbackActions.style.flexWrap = Wrap.NoWrap;
@@ -175,7 +208,7 @@ namespace XAnimationEditor
             m_StopButton = CreateHudButton("■", m_Host.StopAll, DangerColor, 4f);
             playbackActions.Add(m_StopButton);
 
-            m_PlaybackCard = CreateFoldoutCard(string.Empty, m_Host.PlaybackExpanded, value =>
+            m_PlaybackCard = CreateFoldoutCard(titleText, m_Host.PlaybackExpanded, value =>
             {
                 m_Host.PlaybackExpanded = value;
                 m_Host.SaveSettings();
@@ -272,7 +305,122 @@ namespace XAnimationEditor
                 TransitionFieldValueWidth));
 
             m_PlaybackCard.Content.Add(m_TransitionCard.Root);
+            if (m_ActionHost != null)
+            {
+                m_PlaybackCard.Content.Add(CreateActionDebugSection().Root);
+            }
+
             return m_PlaybackCard.Root;
+        }
+
+        private FoldoutCard CreateActionDebugSection()
+        {
+            m_ActionPlayButton = CreateTextButton("Play Action", () =>
+            {
+                m_ActionHost.PlayAction();
+                Refresh();
+            }, AccentColor);
+            m_ActionPlayButton.tooltip = "用当前 Action Debug 配置调用 PlayAction。";
+            m_ActionCancelButton = CreateTextButton("Cancel", () =>
+            {
+                m_ActionHost.CancelAction();
+                Refresh();
+            }, DangerColor, 4f);
+            m_ActionCancelButton.tooltip = "调用当前 action handle 的 Cancel()。";
+
+            VisualElement actions = Row();
+            actions.style.flexWrap = Wrap.NoWrap;
+            actions.Add(m_ActionPlayButton);
+            actions.Add(m_ActionCancelButton);
+
+            m_ActionDebugCard = CreateSectionFoldoutCard("Action Debug", m_ActionHost.ActionDebugExpanded, value =>
+            {
+                m_ActionHost.ActionDebugExpanded = value;
+                m_Host.SaveSettings();
+            }, actions);
+            m_ActionDebugCard.Root.style.marginTop = 4;
+
+            VisualElement mainFields = CreateSubBox();
+            m_ActionStateField = new DropdownField();
+            m_ActionStateField.tooltip = "PlayAction 目标 state。Action 只接受已有 state key。";
+            ApplyDropdownFieldStyle(m_ActionStateField);
+            m_ActionStateField.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionStateKey = evt.newValue ?? string.Empty;
+                Refresh();
+            });
+            mainFields.Add(CreatePlaybackFieldContainer("state", m_ActionStateField, 78f));
+
+            m_ActionReturnModeField = new DropdownField(
+                new List<string>
+                {
+                    nameof(XAnimationActionReturnMode.PreviousState),
+                    nameof(XAnimationActionReturnMode.None),
+                    nameof(XAnimationActionReturnMode.State),
+                },
+                ActionReturnModeToString(m_ActionHost.ActionReturnMode));
+            m_ActionReturnModeField.tooltip = "Action 完成或取消后的返回规则。";
+            ApplyDropdownFieldStyle(m_ActionReturnModeField);
+            m_ActionReturnModeField.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionReturnMode = ParseActionReturnMode(evt.newValue);
+                Refresh();
+            });
+            mainFields.Add(CreatePlaybackFieldContainer("returnMode", m_ActionReturnModeField, 78f));
+
+            m_ActionReturnStateField = new DropdownField();
+            m_ActionReturnStateField.tooltip = "returnMode = State 时返回的目标 state。";
+            ApplyDropdownFieldStyle(m_ActionReturnStateField);
+            m_ActionReturnStateField.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionReturnStateKey = evt.newValue ?? string.Empty;
+                Refresh();
+            });
+            mainFields.Add(CreatePlaybackFieldContainer("returnState", m_ActionReturnStateField, 78f));
+
+            m_ActionCancelableAfterField = new FloatField { value = Mathf.Max(0f, m_ActionHost.ActionCancelableAfter) };
+            m_ActionCancelableAfterField.tooltip = "当前 action normalizedTime 达到该值后才允许 Cancel。";
+            ConfigureCompactPlaybackField(m_ActionCancelableAfterField, TransitionFieldValueWidth);
+            m_ActionCancelableAfterField.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionCancelableAfter = Mathf.Max(0f, evt.newValue);
+                Refresh();
+            });
+
+            m_ActionCancelFadeOutField = new FloatField { value = Mathf.Max(0f, m_ActionHost.ActionCancelFadeOut) };
+            m_ActionCancelFadeOutField.tooltip = "Cancel 成功后 Stop 当前 action channel 使用的 fadeOut。0 表示使用 channel 默认 fadeOut。";
+            ConfigureCompactPlaybackField(m_ActionCancelFadeOutField, TransitionFieldValueWidth);
+            m_ActionCancelFadeOutField.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionCancelFadeOut = Mathf.Max(0f, evt.newValue);
+                Refresh();
+            });
+            mainFields.Add(CreatePlaybackFieldPairRow(
+                "cancelAt",
+                m_ActionCancelableAfterField,
+                "cancelOut",
+                m_ActionCancelFadeOutField,
+                TransitionFieldLabelWidth,
+                TransitionFieldValueWidth));
+
+            m_ActionForceToggle = new Toggle();
+            m_ActionForceToggle.tooltip = "启用后 PlayAction 底层 PlayState 使用 force=true。";
+            m_ActionForceToggle.RegisterValueChangedCallback(evt =>
+            {
+                m_ActionHost.ActionForce = evt.newValue;
+                Refresh();
+            });
+            mainFields.Add(CreatePlaybackToggleRow("force", m_ActionForceToggle, 78f));
+
+            m_ActionStatusLabel = new Label();
+            m_ActionStatusLabel.style.marginTop = 4;
+            m_ActionStatusLabel.style.fontSize = BodyFontSize;
+            m_ActionStatusLabel.style.whiteSpace = WhiteSpace.Normal;
+            m_ActionStatusLabel.style.color = TextMuted;
+            mainFields.Add(m_ActionStatusLabel);
+
+            m_ActionDebugCard.Content.Add(mainFields);
+            return m_ActionDebugCard;
         }
 
         private VisualElement CreateScrubber()
@@ -381,6 +529,24 @@ namespace XAnimationEditor
             return button;
         }
 
+        private static Button CreateTextButton(string label, Action action, Color bgColor, float marginLeft = 0f)
+        {
+            Button button = new(action)
+            {
+                text = label
+            };
+            button.style.backgroundColor = bgColor;
+            button.style.color = Color.white;
+            button.style.fontSize = BodyFontSize;
+            button.style.height = ToolbarButtonSize;
+            button.style.minHeight = ToolbarButtonSize;
+            button.style.marginLeft = marginLeft;
+            button.style.flexShrink = 0;
+            SetBorder(button, Color.clear, 0, 3);
+            SetPadding(button, 0, 4);
+            return button;
+        }
+
         private FloatField CreateFloatField(float value, Action<float> onChanged)
         {
             FloatField field = new() { value = value };
@@ -419,6 +585,86 @@ namespace XAnimationEditor
             m_ChannelField.choices = choices;
             m_ChannelField.SetValueWithoutNotify(selected);
             m_ChannelField.SetEnabled(choices.Count > 0);
+        }
+
+        private void RefreshActionDebug()
+        {
+            if (m_ActionHost == null)
+            {
+                return;
+            }
+
+            RefreshDropdown(m_ActionStateField, m_ActionHost.ActionStateChoices, m_ActionHost.ActionStateKey, value => m_ActionHost.ActionStateKey = value);
+            RefreshDropdown(m_ActionReturnStateField, m_ActionHost.ActionReturnStateChoices, m_ActionHost.ActionReturnStateKey, value => m_ActionHost.ActionReturnStateKey = value);
+            m_ActionReturnModeField?.SetValueWithoutNotify(ActionReturnModeToString(m_ActionHost.ActionReturnMode));
+            m_ActionReturnStateField?.SetEnabled(m_ActionHost.ActionReturnMode == XAnimationActionReturnMode.State &&
+                                                 m_ActionHost.ActionReturnStateChoices != null &&
+                                                 m_ActionHost.ActionReturnStateChoices.Count > 0);
+            m_ActionCancelableAfterField?.SetValueWithoutNotify(Mathf.Max(0f, m_ActionHost.ActionCancelableAfter));
+            m_ActionCancelFadeOutField?.SetValueWithoutNotify(Mathf.Max(0f, m_ActionHost.ActionCancelFadeOut));
+            m_ActionForceToggle?.SetValueWithoutNotify(m_ActionHost.ActionForce);
+            SetButtonEnabled(m_ActionPlayButton, m_ActionHost.CanPlayAction);
+            SetButtonEnabled(m_ActionCancelButton, m_ActionHost.CanCancelAction);
+
+            if (m_ActionStatusLabel != null)
+            {
+                m_ActionStatusLabel.text = m_ActionHost.ActionStatusText;
+                m_ActionStatusLabel.style.color = m_ActionHost.ActionStatusIsError ? DangerColor : TextMuted;
+            }
+
+            m_ActionDebugCard?.RefreshState?.Invoke();
+        }
+
+        private static void RefreshDropdown(DropdownField field, IReadOnlyList<string> source, string selectedValue, Action<string> setSelected)
+        {
+            if (field == null)
+            {
+                return;
+            }
+
+            List<string> choices = new();
+            if (source != null)
+            {
+                for (int i = 0; i < source.Count; i++)
+                {
+                    if (!string.IsNullOrWhiteSpace(source[i]) && !choices.Contains(source[i]))
+                    {
+                        choices.Add(source[i]);
+                    }
+                }
+            }
+
+            string selected = !string.IsNullOrWhiteSpace(selectedValue) && choices.Contains(selectedValue)
+                ? selectedValue
+                : choices.Count > 0 ? choices[0] : string.Empty;
+            if (!string.Equals(selectedValue, selected, StringComparison.Ordinal))
+            {
+                setSelected?.Invoke(selected);
+            }
+
+            field.choices = choices;
+            field.SetValueWithoutNotify(selected);
+            field.SetEnabled(choices.Count > 0);
+        }
+
+        private static string ActionReturnModeToString(XAnimationActionReturnMode mode)
+        {
+            return mode switch
+            {
+                XAnimationActionReturnMode.None => nameof(XAnimationActionReturnMode.None),
+                XAnimationActionReturnMode.State => nameof(XAnimationActionReturnMode.State),
+                _ => nameof(XAnimationActionReturnMode.PreviousState),
+            };
+        }
+
+        private static XAnimationActionReturnMode ParseActionReturnMode(string value)
+        {
+            return value switch
+            {
+                nameof(XAnimationActionReturnMode.None) => XAnimationActionReturnMode.None,
+                nameof(XAnimationActionReturnMode.State) => XAnimationActionReturnMode.State,
+                _ => XAnimationActionReturnMode.PreviousState,
+            };
         }
 
         private void SeekFromPointer(float localX)

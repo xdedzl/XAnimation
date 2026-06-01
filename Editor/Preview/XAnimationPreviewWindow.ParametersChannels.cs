@@ -51,7 +51,7 @@ namespace XAnimationEditor
             toggleRow.style.marginTop = 2;
 
             Toggle interruptField = new("allowInterrupt") { value = config.allowInterrupt };
-            interruptField.tooltip = "当前 channel 上的播放是否允许被新的播放请求打断。会保存到 XAnimation 文件。";
+            interruptField.tooltip = "当前 channel 上的播放是否允许被新的播放请求打断。会标记为未保存修改。";
             interruptField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -67,7 +67,7 @@ namespace XAnimationEditor
                 layerTypeNames,
                 Mathf.Max(0, layerTypeNames.IndexOf(config.layerType.ToString())));
             ApplyDropdownFieldStyle(layerTypeField);
-            layerTypeField.tooltip = "channel 混合层类型。会保存到 XAnimation 文件。";
+            layerTypeField.tooltip = "channel 混合层类型。会标记为未保存修改。";
             layerTypeField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -87,7 +87,7 @@ namespace XAnimationEditor
                     ? null
                     : AssetDatabase.LoadAssetAtPath<AvatarMask>(config.maskPath)
             };
-            maskField.tooltip = "该 channel 使用的 AvatarMask。为空表示不使用 mask。会保存到 XAnimation 文件。";
+            maskField.tooltip = "该 channel 使用的 AvatarMask。为空表示不使用 mask。会标记为未保存修改。";
             maskField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -99,7 +99,7 @@ namespace XAnimationEditor
             editor.Add(maskField);
 
             FloatField defaultWeightField = new("defaultWeight") { value = config.defaultWeight };
-            defaultWeightField.tooltip = "该 channel 默认混合权重。会延迟保存到 XAnimation 文件，并立即影响当前预览。";
+            defaultWeightField.tooltip = "该 channel 默认混合权重。会标记为未保存修改，并立即影响当前预览。";
             defaultWeightField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -123,7 +123,7 @@ namespace XAnimationEditor
             fadeRow.style.marginTop = 2;
 
             FloatField fadeInField = new("defaultFadeIn") { value = config.defaultFadeIn };
-            fadeInField.tooltip = "该 channel 默认淡入时间。会延迟保存到 XAnimation 文件。";
+            fadeInField.tooltip = "该 channel 默认淡入时间。会标记为未保存修改。";
             fadeInField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -141,7 +141,7 @@ namespace XAnimationEditor
             fadeRow.Add(fadeInField);
 
             FloatField fadeOutField = new("defaultFadeOut") { value = config.defaultFadeOut };
-            fadeOutField.tooltip = "该 channel 默认淡出时间。会延迟保存到 XAnimation 文件。";
+            fadeOutField.tooltip = "该 channel 默认淡出时间。会标记为未保存修改。";
             fadeOutField.RegisterValueChangedCallback(evt =>
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
@@ -627,6 +627,7 @@ namespace XAnimationEditor
             m_SelectedLogId = null;
             m_FollowLatestLog = true;
             m_IsPaused = false;
+            ClearActionDebugRuntimeState();
             SetPauseButtonState(false, false);
             SetStepForwardButtonEnabled(false);
             SetStopAllButtonEnabled(false);
@@ -644,6 +645,7 @@ namespace XAnimationEditor
                 return;
             }
 
+            m_Session.AssetChanged -= MarkAssetDirty;
             m_Session.Dispose();
             m_Session = null;
             if (m_PreviewImage != null)
@@ -654,6 +656,7 @@ namespace XAnimationEditor
             m_SelectedLogId = null;
             m_FollowLatestLog = true;
             m_PressedKeys.Clear();
+            ClearActionDebugRuntimeState();
             m_PlaybackHudView?.Refresh();
             double now = EditorApplication.timeSinceStartup;
             m_UpdateCoordinator.Reset(now);

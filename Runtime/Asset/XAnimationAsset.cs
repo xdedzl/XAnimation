@@ -60,7 +60,7 @@ namespace XAnimationEngine
             }
 
             System.IO.File.WriteAllText(path, json);
-            UnityEditor.AssetDatabase.Refresh();
+            UnityEditor.AssetDatabase.ImportAsset(path, UnityEditor.ImportAssetOptions.ForceUpdate);
         }
 #endif
     }

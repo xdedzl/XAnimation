@@ -16,6 +16,7 @@ namespace XAnimationEditor
         private const long RuntimeRefreshIntervalMs = 33;
         private const float PlaybackSpeedMin = 0.1f;
         private const float PlaybackSpeedMax = 2f;
+        private const string NullStateKeyDisplayName = "[NULL]";
 
         private sealed class StateGroupBucket
         {
@@ -23,7 +24,7 @@ namespace XAnimationEditor
             {
                 ChannelName = channelName ?? string.Empty;
                 GroupName = groupName ?? string.Empty;
-                States = new List<XAnimationStateConfig>();
+                States = new List<XAnimationStateConfig>(); 
             }
 
             public string ChannelName { get; }
@@ -119,15 +120,15 @@ namespace XAnimationEditor
             PropertyField animationAssetField = AddProperty(root, "m_AnimationAsset");
             AddProperty(root, "m_Animator");
             AddProperty(root, "m_InitializeOnAwake");
-            AddProperty(root, "m_PlayOnStart");
+            AddProperty(root, "m_GlobalSpeed");
+            AddProperty(root, "m_UpdateMode");
+            AddProperty(root, "m_UnityAnimationEventsEnabled");
 
+            PropertyField playOnStartField = AddProperty(root, "m_PlayOnStart");
             VisualElement startStateKeyContainer = new();
             root.Add(startStateKeyContainer);
             RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
 
-            AddProperty(root, "m_GlobalSpeed");
-            AddProperty(root, "m_UpdateMode");
-            AddProperty(root, "m_UnityAnimationEventsEnabled");
             root.Add(BuildRuntimeInspector());
 
             animationAssetField?.RegisterCallback<SerializedPropertyChangeEvent>(_ =>
@@ -136,6 +137,10 @@ namespace XAnimationEditor
                 RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
                 MarkRuntimeViewsDirty();
                 RefreshRuntimeViews();
+            });
+            playOnStartField?.RegisterCallback<SerializedPropertyChangeEvent>(_ =>
+            {
+                RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
             });
 
             root.RegisterCallback<AttachToPanelEvent>(_ => StartRefreshLoop());
@@ -524,7 +529,6 @@ namespace XAnimationEditor
                 return;
             }
 
-            Selection.activeObject = clipAsset;
             EditorGUIUtility.PingObject(clipAsset);
             SetStatus($"已定位动画资源: {clipAsset.name}。");
         }
@@ -1223,6 +1227,12 @@ namespace XAnimationEditor
                 return;
             }
 
+            SerializedProperty playOnStartProperty = serializedObject.FindProperty("m_PlayOnStart");
+            if (playOnStartProperty != null && !playOnStartProperty.boolValue)
+            {
+                return;
+            }
+
             List<string> stateKeys = new();
             XAnimationAsset asset = LoadCurrentAnimationAsset();
             if (asset?.states != null)
@@ -1237,18 +1247,24 @@ namespace XAnimationEditor
                 }
             }
 
-            if (stateKeys.Count == 0)
+            List<string> stateKeyOptions = new() { NullStateKeyDisplayName };
+            for (int i = 0; i < stateKeys.Count; i++)
             {
-                container.Add(new PropertyField(property, label));
-                return;
+                if (!stateKeyOptions.Contains(stateKeys[i]))
+                {
+                    stateKeyOptions.Add(stateKeys[i]);
+                }
             }
 
-            if (!stateKeys.Contains(property.stringValue))
+            string currentStateKey = property.stringValue ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(currentStateKey) && !stateKeyOptions.Contains(currentStateKey))
             {
-                stateKeys.Insert(0, property.stringValue);
+                stateKeyOptions.Insert(1, currentStateKey);
             }
 
-            PopupField<string> popup = new(label, stateKeys, Mathf.Max(0, stateKeys.IndexOf(property.stringValue)));
+            string selectedStateKey = string.IsNullOrWhiteSpace(currentStateKey) ? NullStateKeyDisplayName : currentStateKey;
+            PopupField<string> popup = new(label, stateKeyOptions, Mathf.Max(0, stateKeyOptions.IndexOf(selectedStateKey)));
+            ConfigureInspectorPopupField(popup);
             popup.RegisterValueChangedCallback(evt =>
             {
                 SerializedProperty targetProperty = serializedObject.FindProperty(propertyPath);
@@ -1257,10 +1273,29 @@ namespace XAnimationEditor
                     return;
                 }
 
-                targetProperty.stringValue = evt.newValue ?? string.Empty;
+                targetProperty.stringValue = evt.newValue == NullStateKeyDisplayName ? string.Empty : evt.newValue ?? string.Empty;
                 serializedObject.ApplyModifiedProperties();
             });
             container.Add(popup);
+        }
+
+        private static void ConfigureInspectorPopupField(PopupField<string> popup)
+        {
+            popup.AddToClassList(BaseField<string>.alignedFieldUssClassName);
+            popup.style.minWidth = 0;
+            popup.style.flexShrink = 1;
+
+            void ApplyInnerStyle()
+            {
+                VisualElement input = popup.Q<VisualElement>(className: "unity-base-field__input");
+                if (input != null)
+                {
+                    input.style.minWidth = 0;
+                }
+            }
+
+            ApplyInnerStyle();
+            popup.RegisterCallback<AttachToPanelEvent>(_ => ApplyInnerStyle());
         }
 
         private List<ChannelNameOption> GetChannelOptions()

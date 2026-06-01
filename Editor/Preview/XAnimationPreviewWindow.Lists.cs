@@ -1241,6 +1241,7 @@ namespace XAnimationEditor
             VisualElement topRow = new VisualElement();
             topRow.style.flexDirection = FlexDirection.Row;
             topRow.style.alignItems = Align.Center;
+            topRow.style.minWidth = 0;
             topRow.style.marginBottom = 2;
             row.Add(topRow);
 
@@ -1259,6 +1260,17 @@ namespace XAnimationEditor
             localTimeField.tooltip = "Cue 触发时间，范围是 clip normalized time [0, 1]。";
             localTimeField.SetEnabled(editable && !cue.IsReadOnlyDerived);
             localTimeField.style.flexGrow = 1;
+            localTimeField.style.flexShrink = 1;
+            localTimeField.style.flexBasis = 0;
+            localTimeField.style.minWidth = 0;
+            localTimeField.labelElement.style.width = 36;
+            localTimeField.labelElement.style.minWidth = 36;
+            localTimeField.labelElement.style.maxWidth = 36;
+            VisualElement localTimeInput = localTimeField.Q<VisualElement>(className: "unity-base-field__input");
+            if (localTimeInput != null)
+            {
+                localTimeInput.style.minWidth = 0;
+            }
             if (!cue.IsReadOnlyDerived)
             {
                 localTimeField.RegisterValueChangedCallback(evt => ChangeCueTime(cue.CueIndex, evt.newValue, localTimeField));

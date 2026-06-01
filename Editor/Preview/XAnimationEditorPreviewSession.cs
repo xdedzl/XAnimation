@@ -11,6 +11,8 @@ namespace XAnimationEditor
 {
     internal sealed class XAnimationEditorPreviewSession : IDisposable
     {
+        public event Action AssetChanged;
+
         public readonly struct PreviewLogEntry
         {
             public PreviewLogEntry(int id, string message)
@@ -31,10 +33,8 @@ namespace XAnimationEditor
         private const float PreviewFarClipPlane = 500f;
 
         private readonly XAnimationAssetLoader m_AssetLoader = new(new XAnimationEditorAssetResolver());
+        private readonly XAnimationEditorActor m_EditorActor = new();
         private readonly List<PreviewLogEntry> m_CueLogs = new();
-        private readonly Dictionary<string, float> m_PreviewFloatParameters = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, int> m_PreviewIntParameters = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, bool> m_PreviewBoolParameters = new(StringComparer.Ordinal);
 
         private PreviewRenderUtility m_PreviewUtility;
         private RenderTexture m_RenderTexture;
@@ -43,7 +43,6 @@ namespace XAnimationEditor
         private GameObject m_KeyLight;
         private GameObject m_FillLight;
         private GameObject m_RimLight;
-        private XAnimationDriver m_Driver;
         private XAnimationCompiledAsset m_CompiledAsset;
         private Vector2Int m_RenderTextureSize;
         private readonly Dictionary<string, string> m_OriginalClipPathByKey = new(StringComparer.Ordinal);
@@ -72,11 +71,19 @@ namespace XAnimationEditor
         public IReadOnlyList<PreviewLogEntry> CueLogs => m_CueLogs;
         public XAnimationCompiledAsset CompiledAsset => m_CompiledAsset;
         public Texture PreviewTexture => m_RenderTexture;
-        public bool IsLoaded => m_Driver != null && m_Animator != null;
+        public bool IsLoaded => m_EditorActor.IsLoaded && m_Animator != null;
         public bool IsOverrideAsset => m_IsOverrideAsset;
         public int LogVersion => m_LogVersion;
-        public bool IsPaused => m_Driver != null && m_Driver.IsPaused;
-        public float GlobalSpeed => m_Driver != null ? m_Driver.GlobalSpeed : 1f;
+        public bool IsPaused => m_EditorActor.IsPaused;
+        public float GlobalSpeed => m_EditorActor.GlobalSpeed;
+        private XAnimationEditorActor LoadedEditorActor { get { EnsureLoaded(); return m_EditorActor; } }
+
+        public XAnimationEditorPreviewSession()
+        {
+            m_EditorActor.CueTriggered += OnCueTriggered;
+            m_EditorActor.OnStateEnter += OnStateEnter;
+            m_EditorActor.OnStateExit += OnStateExit;
+        }
 
         public void Load(GameObject prefabAsset, string assetPath)
         {
@@ -128,15 +135,7 @@ namespace XAnimationEditor
             CacheInitialBounds();
             PrepareGrid();
 
-            m_Driver = new XAnimationDriver();
-            m_Driver.Initialize(m_CompiledAsset, m_Animator);
-            m_Driver.SetUpdateMode(XAnimationUpdateMode.Manual);
-            m_Driver.SetUnityAnimationEventsEnabled(false);
-            m_Driver.CueTriggered += OnCueTriggered;
-            m_Driver.OnStateEnter += OnStateEnter;
-            m_Driver.OnStateExit += OnStateExit;
-            RestorePreviewParameters();
-            SetRootMotionEnabled(m_RootMotionEnabled);
+            m_EditorActor.Initialize(m_CompiledAsset, m_Animator, m_RootMotionEnabled);
         }
 
         public void Render(Vector2 size)
@@ -164,7 +163,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.Pause();
+            m_EditorActor.Pause();
         }
 
         public void Resume()
@@ -174,7 +173,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.Resume();
+            m_EditorActor.Resume();
         }
 
         public void SetPaused(bool paused)
@@ -184,7 +183,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.SetPaused(paused);
+            m_EditorActor.SetPaused(paused);
         }
 
         public void SetGlobalSpeed(float speed)
@@ -194,7 +193,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.SetGlobalSpeed(speed);
+            m_EditorActor.SetGlobalSpeed(speed);
         }
 
         public void Step(float deltaTime)
@@ -206,7 +205,7 @@ namespace XAnimationEditor
                 throw new XAnimationException("XAnimation preview step deltaTime must be greater than 0.");
             }
 
-            m_Driver.Step(clampedDeltaTime);
+            m_EditorActor.Step(clampedDeltaTime);
         }
 
         public void SyncPreviewFrame()
@@ -216,31 +215,26 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.SyncFrame();
+            m_EditorActor.SyncFrame();
         }
 
         public void PlayClip(
             string clipKey,
             string channelName,
             XAnimationTransitionOptions transition = default)
-        {
-            EnsureLoaded();
-            m_Driver.PlayClip(clipKey, channelName, transition);
-        }
+            => LoadedEditorActor.PlayClip(clipKey, channelName, transition);
 
         public void PlayState(
             string stateKey,
             XAnimationTransitionOptions transition = default)
-        {
-            EnsureLoaded();
-            m_Driver.PlayState(stateKey, transition);
-        }
+            => LoadedEditorActor.PlayState(stateKey, transition);
 
-        public void PreloadAll()
-        {
-            EnsureLoaded();
-            m_Driver.PreloadAll();
-        }
+        public XAnimationActionHandle PlayAction(
+            string stateKey,
+            XAnimationActionOptions options = default)
+            => LoadedEditorActor.PlayAction(stateKey, options);
+
+        public void PreloadAll() => LoadedEditorActor.PreloadAll();
 
         public void StopAll()
         {
@@ -249,66 +243,24 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Driver.StopAll();
+            m_EditorActor.StopAll();
         }
 
-        public void StopChannel(string channelName, float fadeOut = default)
-        {
-            if (!IsLoaded)
-            {
-                return;
-            }
+        public void SetChannelWeight(string channelName, float weight) => LoadedEditorActor.SetChannelWeight(channelName, weight);
 
-            m_Driver.Stop(channelName, fadeOut);
-        }
+        public bool SeekChannel(string channelName, float normalizedTime) => LoadedEditorActor.SeekChannel(channelName, normalizedTime);
 
-        public void SetChannelWeight(string channelName, float weight)
-        {
-            EnsureLoaded();
-            m_Driver.SetChannelWeight(channelName, weight);
-        }
+        public void SetPreviewParameter(string key, float value) => LoadedEditorActor.SetParameter(key, value);
 
-        public bool SeekChannel(string channelName, float normalizedTime)
-        {
-            EnsureLoaded();
-            return m_Driver.SeekChannel(channelName, normalizedTime);
-        }
+        public void SetPreviewParameter(string key, bool value) => LoadedEditorActor.SetParameter(key, value);
 
-        public void SetPreviewParameter(string key, float value)
-        {
-            EnsureLoaded();
-            m_PreviewFloatParameters[key] = value;
-            m_Driver.SetParameter(key, value);
-        }
+        public void SetPreviewParameter(string key, int value) => LoadedEditorActor.SetParameter(key, value);
 
-        public void SetPreviewParameter(string key, bool value)
-        {
-            EnsureLoaded();
-            m_PreviewBoolParameters[key] = value;
-            m_Driver.SetParameter(key, value);
-        }
+        public bool TryGetPreviewParameter(string key, out float value) => m_EditorActor.TryGetParameter(key, out value);
 
-        public void SetPreviewParameter(string key, int value)
-        {
-            EnsureLoaded();
-            m_PreviewIntParameters[key] = value;
-            m_Driver.SetParameter(key, value);
-        }
+        public bool TryGetPreviewParameter(string key, out bool value) => m_EditorActor.TryGetParameter(key, out value);
 
-        public bool TryGetPreviewParameter(string key, out float value)
-        {
-            return m_PreviewFloatParameters.TryGetValue(key, out value);
-        }
-
-        public bool TryGetPreviewParameter(string key, out bool value)
-        {
-            return m_PreviewBoolParameters.TryGetValue(key, out value);
-        }
-
-        public bool TryGetPreviewParameter(string key, out int value)
-        {
-            return m_PreviewIntParameters.TryGetValue(key, out value);
-        }
+        public bool TryGetPreviewParameter(string key, out int value) => m_EditorActor.TryGetParameter(key, out value);
 
         public void ClearCueLogs()
         {
@@ -321,16 +273,12 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             string parameterName = CreateUniqueParameterName("NewParameter");
-            List<XAnimationParameterConfig> parameters = new(asset.parameters ?? Array.Empty<XAnimationParameterConfig>())
+            asset.parameters = AppendItem(asset.parameters, new XAnimationParameterConfig
             {
-                new XAnimationParameterConfig
-                {
-                    name = parameterName,
-                    type = XAnimationParameterType.Float,
-                    defaultValue = 0f,
-                }
-            };
-            asset.parameters = parameters.ToArray();
+                name = parameterName,
+                type = XAnimationParameterType.Float,
+                defaultValue = 0f,
+            });
             RebuildDriverAndSave();
             return parameterName;
         }
@@ -486,7 +434,7 @@ namespace XAnimationEditor
         {
             EnsureLoaded();
             m_CompiledAsset.GetChannel(channelName).Config.allowInterrupt = allowInterrupt;
-            SaveCompiledAsset();
+            SaveCompiledAssetIfNeeded(true);
         }
 
         public void SetChannelDefaultWeight(string channelName, float weight, bool save = true)
@@ -494,11 +442,8 @@ namespace XAnimationEditor
             EnsureLoaded();
             float defaultWeight = Mathf.Max(0f, weight);
             m_CompiledAsset.GetChannel(channelName).Config.defaultWeight = defaultWeight;
-            m_Driver.SetChannelWeight(channelName, defaultWeight);
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            m_EditorActor.SetChannelWeight(channelName, defaultWeight);
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetChannelFade(string channelName, float fadeIn, float fadeOut, bool save = true)
@@ -507,17 +452,14 @@ namespace XAnimationEditor
             XAnimationChannelConfig config = m_CompiledAsset.GetChannel(channelName).Config;
             config.defaultFadeIn = Mathf.Max(0f, fadeIn);
             config.defaultFadeOut = Mathf.Max(0f, fadeOut);
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetRootMotionEnabled(bool enabled)
         {
             EnsureLoaded();
             m_RootMotionEnabled = enabled;
-            m_Driver.SetRootMotionEnabled(enabled);
+            m_EditorActor.SetRootMotionEnabled(enabled);
             if (!enabled)
             {
                 ResetTransform();
@@ -526,7 +468,7 @@ namespace XAnimationEditor
 
         public bool GetRootMotionEnabled()
         {
-            return m_RootMotionEnabled;
+            return m_EditorActor.GetRootMotionEnabled();
         }
 
         public void SetGridVisible(bool visible)
@@ -540,11 +482,6 @@ namespace XAnimationEditor
             {
                 PrepareGrid();
             }
-        }
-
-        public bool GetGridVisible()
-        {
-            return m_GridVisible;
         }
 
         public void ResetTransform()
@@ -598,15 +535,12 @@ namespace XAnimationEditor
             m_CameraPosition = m_CameraPivot - rotation * Vector3.forward * m_CameraDistance;
         }
 
-        public XAnimationChannelState GetChannelState(string channelName)
-        {
-            return IsLoaded ? m_Driver.GetChannelState(channelName) : null;
-        }
+        public XAnimationChannelState GetChannelState(string channelName) => m_EditorActor.GetChannelState(channelName);
 
         public XAnimationDebugGraphSnapshot GetDebugGraphSnapshot()
         {
             return IsLoaded
-                ? m_Driver.GetDebugGraphSnapshot()
+                ? m_EditorActor.GetDebugGraphSnapshot()
                 : XAnimationDebugGraphSnapshot.Invalid("XAnimation preview session is not loaded.");
         }
 
@@ -615,8 +549,7 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             string channelName = CreateUniqueChannelName("NewChannel");
-            List<XAnimationChannelConfig> channels = new(asset.channels ?? Array.Empty<XAnimationChannelConfig>());
-            channels.Add(new XAnimationChannelConfig
+            asset.channels = AppendItem(asset.channels, new XAnimationChannelConfig
             {
                 name = channelName,
                 layerType = XAnimationChannelLayerType.Override,
@@ -625,7 +558,6 @@ namespace XAnimationEditor
                 defaultFadeIn = 0.15f,
                 defaultFadeOut = 0.15f,
             });
-            asset.channels = channels.ToArray();
             RebuildDriverAndSave();
             return channelName;
         }
@@ -684,16 +616,12 @@ namespace XAnimationEditor
             }
 
             string clipKey = CreateUniqueClipKey("NewClip");
-            List<XAnimationClipConfig> orderedClips = new(clips)
+            asset.clips = AppendItem(clips, new XAnimationClipConfig
             {
-                new XAnimationClipConfig
-                {
-                    key = clipKey,
-                    editorGroupName = NormalizeEditorGroupName(groupName),
-                    clipPath = clipPath,
-                }
-            };
-            asset.clips = orderedClips.ToArray();
+                key = clipKey,
+                editorGroupName = NormalizeEditorGroupName(groupName),
+                clipPath = clipPath,
+            });
             m_OriginalClipPathByKey[clipKey] = clipPath;
             RebuildDriverAndSave();
             return clipKey;
@@ -901,25 +829,21 @@ namespace XAnimationEditor
             }
 
             string stateKey = CreateUniqueStateKey("NewState");
-            List<XAnimationStateConfig> states = new(asset.states ?? Array.Empty<XAnimationStateConfig>())
+            asset.states = AppendItem(asset.states, new XAnimationStateConfig
             {
-                new XAnimationStateConfig
-                {
-                    key = stateKey,
-                    editorGroupName = NormalizeEditorGroupName(groupName),
-                    stateType = XAnimationStateType.Single,
-                    clipKey = clipKey,
-                    channelName = channelName,
-                    speed = 1f,
-                    loop = true,
-                    parameterName = string.Empty,
-                    parameterXName = string.Empty,
-                    parameterYName = string.Empty,
-                    samples = Array.Empty<XAnimationBlend1DSampleConfig>(),
-                    directionalSamples = Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>(),
-                }
-            };
-            asset.states = states.ToArray();
+                key = stateKey,
+                editorGroupName = NormalizeEditorGroupName(groupName),
+                stateType = XAnimationStateType.Single,
+                clipKey = clipKey,
+                channelName = channelName,
+                speed = 1f,
+                loop = true,
+                parameterName = string.Empty,
+                parameterXName = string.Empty,
+                parameterYName = string.Empty,
+                samples = Array.Empty<XAnimationBlend1DSampleConfig>(),
+                directionalSamples = Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>(),
+            });
             RebuildDriverAndSave();
             return stateKey;
         }
@@ -1281,20 +1205,14 @@ namespace XAnimationEditor
         {
             EnsureLoaded();
             m_CompiledAsset.GetState(stateKey).Config.loop = loop;
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetStateSpeed(string stateKey, float speed, bool save = true)
         {
             EnsureLoaded();
             m_CompiledAsset.GetState(stateKey).Config.speed = Mathf.Approximately(speed, 0f) ? 1f : speed;
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void AddStateAllowedNextState(string stateKey)
@@ -1345,12 +1263,11 @@ namespace XAnimationEditor
             List<XAnimationBlend1DSampleConfig> samples = new(config.samples ?? Array.Empty<XAnimationBlend1DSampleConfig>());
             string clipKey = FindTemplateClipKey(m_CompiledAsset.Asset.clips ?? Array.Empty<XAnimationClipConfig>());
             float threshold = samples.Count == 0 ? 0f : samples[^1].threshold + 1f;
-            samples.Add(new XAnimationBlend1DSampleConfig
+            config.samples = AppendItem(config.samples, new XAnimationBlend1DSampleConfig
             {
                 clipKey = clipKey,
                 threshold = threshold,
             });
-            config.samples = samples.ToArray();
             RebuildDriverAndSave();
         }
 
@@ -1367,13 +1284,12 @@ namespace XAnimationEditor
                 config.directionalSamples ?? Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>());
             string clipKey = FindTemplateClipKey(m_CompiledAsset.Asset.clips ?? Array.Empty<XAnimationClipConfig>());
             Vector2 samplePosition = FindNextDirectionalBlendSamplePosition(samples);
-            samples.Add(new XAnimationBlend2DSimpleDirectionalSampleConfig
+            config.directionalSamples = AppendItem(config.directionalSamples, new XAnimationBlend2DSimpleDirectionalSampleConfig
             {
                 clipKey = clipKey,
                 positionX = samplePosition.x,
                 positionY = samplePosition.y,
             });
-            config.directionalSamples = samples.ToArray();
             RebuildDriverAndSave();
         }
 
@@ -1392,16 +1308,7 @@ namespace XAnimationEditor
                 throw new XAnimationException("XAnimation Blend1D state must contain at least two samples.");
             }
 
-            List<XAnimationBlend1DSampleConfig> orderedSamples = new(samples.Length - 1);
-            for (int i = 0; i < samples.Length; i++)
-            {
-                if (i != sampleIndex)
-                {
-                    orderedSamples.Add(samples[i]);
-                }
-            }
-
-            config.samples = orderedSamples.ToArray();
+            config.samples = RemoveAt(samples, sampleIndex);
             RebuildDriverAndSave();
         }
 
@@ -1426,16 +1333,7 @@ namespace XAnimationEditor
                 throw new XAnimationException("XAnimation Blend2DFreeformDirectional state must keep exactly one idle sample at (0, 0).");
             }
 
-            List<XAnimationBlend2DSimpleDirectionalSampleConfig> orderedSamples = new(samples.Length - 1);
-            for (int i = 0; i < samples.Length; i++)
-            {
-                if (i != sampleIndex)
-                {
-                    orderedSamples.Add(samples[i]);
-                }
-            }
-
-            config.directionalSamples = orderedSamples.ToArray();
+            config.directionalSamples = RemoveAt(samples, sampleIndex);
             RebuildDriverAndSave();
         }
 
@@ -1510,18 +1408,13 @@ namespace XAnimationEditor
             m_CompiledAsset.GetClip(clipKey);
             XAnimationAsset asset = m_CompiledAsset.Asset;
             XAnimationCueConfig[] cues = asset.cues ?? Array.Empty<XAnimationCueConfig>();
-            List<XAnimationCueConfig> orderedCues = new(cues)
+            asset.cues = AppendItem(cues, new XAnimationCueConfig
             {
-                new XAnimationCueConfig
-                {
-                    clipKey = clipKey,
-                    time = Mathf.Clamp01(normalizedTime),
-                    eventKey = CreateUniqueCueEventKey("NewCue"),
-                    payload = string.Empty,
-                }
-            };
-
-            asset.cues = orderedCues.ToArray();
+                clipKey = clipKey,
+                time = Mathf.Clamp01(normalizedTime),
+                eventKey = CreateUniqueCueEventKey("NewCue"),
+                payload = string.Empty,
+            });
             RebuildDriverAndSave();
             return asset.cues.Length - 1;
         }
@@ -1536,16 +1429,7 @@ namespace XAnimationEditor
                 throw new XAnimationException($"XAnimation cue index '{cueIndex}' does not exist.");
             }
 
-            List<XAnimationCueConfig> orderedCues = new(cues.Length - 1);
-            for (int i = 0; i < cues.Length; i++)
-            {
-                if (i != cueIndex)
-                {
-                    orderedCues.Add(cues[i]);
-                }
-            }
-
-            asset.cues = orderedCues.ToArray();
+            asset.cues = RemoveAt(cues, cueIndex);
             RebuildDriverAndSave();
         }
 
@@ -1574,10 +1458,7 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationCueConfig cue = GetCueConfig(cueIndex);
             cue.time = Mathf.Clamp01(time);
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetCueEventKey(int cueIndex, string eventKey)
@@ -1591,7 +1472,7 @@ namespace XAnimationEditor
 
             XAnimationCueConfig cue = GetCueConfig(cueIndex);
             cue.eventKey = eventKey;
-            SaveCompiledAsset();
+            SaveCompiledAssetIfNeeded(true);
         }
 
         public void SetCuePayload(int cueIndex, string payload)
@@ -1599,7 +1480,7 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationCueConfig cue = GetCueConfig(cueIndex);
             cue.payload = payload ?? string.Empty;
-            SaveCompiledAsset();
+            SaveCompiledAssetIfNeeded(true);
         }
 
         private void SetOverrideClipPath(string clipKey, string clipPath)
@@ -1633,8 +1514,8 @@ namespace XAnimationEditor
             }
 
             m_OverrideAsset.clips = overrideClips.ToArray();
-            m_OverrideAsset.SaveAsset();
-            m_CompiledAsset = m_AssetLoader.Load(m_AssetPath);
+            m_CompiledAsset.GetClip(clipKey).Config.clipPath = clipPath;
+            AssetChanged?.Invoke();
             RebuildDriver();
         }
 
@@ -1666,6 +1547,34 @@ namespace XAnimationEditor
         {
             groupName = groupName?.Trim();
             return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
+        }
+
+        private static T[] AppendItem<T>(T[] items, T item)
+        {
+            List<T> list = new(items ?? Array.Empty<T>()) { item };
+            return list.ToArray();
+        }
+
+        private static T[] RemoveAt<T>(T[] items, int index)
+        {
+            List<T> list = new(items.Length - 1);
+            for (int i = 0; i < items.Length; i++)
+            {
+                if (i != index)
+                {
+                    list.Add(items[i]);
+                }
+            }
+
+            return list.ToArray();
+        }
+
+        private static void ReplaceIfEqual(ref string value, string oldValue, string newValue)
+        {
+            if (string.Equals(value, oldValue, StringComparison.Ordinal))
+            {
+                value = newValue;
+            }
         }
 
         private string CreateUniqueCueEventKey(string prefix)
@@ -2433,9 +2342,9 @@ namespace XAnimationEditor
             for (int i = 0; i < asset.states.Length; i++)
             {
                 XAnimationStateConfig state = asset.states[i];
-                if (state != null && string.Equals(state.channelName, oldName, StringComparison.Ordinal))
+                if (state != null)
                 {
-                    state.channelName = newName;
+                    ReplaceIfEqual(ref state.channelName, oldName, newName);
                 }
             }
         }
@@ -2455,18 +2364,15 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                if (string.Equals(state.clipKey, oldKey, StringComparison.Ordinal))
-                {
-                    state.clipKey = newKey;
-                }
+                ReplaceIfEqual(ref state.clipKey, oldKey, newKey);
 
                 XAnimationBlend1DSampleConfig[] samples = state.samples ?? Array.Empty<XAnimationBlend1DSampleConfig>();
                 for (int sampleIndex = 0; sampleIndex < samples.Length; sampleIndex++)
                 {
                     XAnimationBlend1DSampleConfig sample = samples[sampleIndex];
-                    if (sample != null && string.Equals(sample.clipKey, oldKey, StringComparison.Ordinal))
+                    if (sample != null)
                     {
-                        sample.clipKey = newKey;
+                        ReplaceIfEqual(ref sample.clipKey, oldKey, newKey);
                     }
                 }
 
@@ -2475,9 +2381,9 @@ namespace XAnimationEditor
                 for (int sampleIndex = 0; sampleIndex < directionalSamples.Length; sampleIndex++)
                 {
                     XAnimationBlend2DSimpleDirectionalSampleConfig sample = directionalSamples[sampleIndex];
-                    if (sample != null && string.Equals(sample.clipKey, oldKey, StringComparison.Ordinal))
+                    if (sample != null)
                     {
-                        sample.clipKey = newKey;
+                        ReplaceIfEqual(ref sample.clipKey, oldKey, newKey);
                     }
                 }
             }
@@ -2498,20 +2404,9 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                if (string.Equals(state.parameterName, oldName, StringComparison.Ordinal))
-                {
-                    state.parameterName = newName;
-                }
-
-                if (string.Equals(state.parameterXName, oldName, StringComparison.Ordinal))
-                {
-                    state.parameterXName = newName;
-                }
-
-                if (string.Equals(state.parameterYName, oldName, StringComparison.Ordinal))
-                {
-                    state.parameterYName = newName;
-                }
+                ReplaceIfEqual(ref state.parameterName, oldName, newName);
+                ReplaceIfEqual(ref state.parameterXName, oldName, newName);
+                ReplaceIfEqual(ref state.parameterYName, oldName, newName);
             }
         }
 
@@ -2605,6 +2500,12 @@ namespace XAnimationEditor
 
         private void SaveCompiledAsset()
         {
+            if (m_IsOverrideAsset)
+            {
+                m_OverrideAsset?.SaveAsset();
+                return;
+            }
+
             if (m_CompiledAsset?.Asset == null)
             {
                 return;
@@ -2625,13 +2526,10 @@ namespace XAnimationEditor
             m_CompiledAsset.Asset.preload = preload;
             if (preload)
             {
-                m_Driver.PreloadAll();
+                m_EditorActor.PreloadAll();
             }
 
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetAssetRootMotion(bool rootMotion, bool save = true)
@@ -2639,23 +2537,28 @@ namespace XAnimationEditor
             EnsureLoaded();
             m_CompiledAsset.Asset.rootMotion = rootMotion;
             m_RootMotionEnabled = rootMotion;
-            m_Driver.SetRootMotionEnabled(rootMotion);
+            m_EditorActor.SetRootMotionEnabled(rootMotion);
             if (!rootMotion)
             {
                 ResetTransform();
             }
 
+            SaveCompiledAssetIfNeeded(save);
+        }
+
+        private void SaveCompiledAssetIfNeeded(bool save)
+        {
             if (save)
             {
-                SaveCompiledAsset();
+                AssetChanged?.Invoke();
             }
         }
 
-        private void RebuildDriverAndSave()
+        private void RebuildDriverAndSave(bool save = true)
         {
             RebuildCompiledAsset();
             RebuildDriver();
-            SaveCompiledAsset();
+            SaveCompiledAssetIfNeeded(save);
         }
 
         private void RebuildCompiledAsset()
@@ -2665,23 +2568,9 @@ namespace XAnimationEditor
 
         private void RebuildDriver()
         {
-            if (m_Driver != null && m_Animator != null)
+            if (m_Animator != null)
             {
-                m_Driver.CueTriggered -= OnCueTriggered;
-                m_Driver.OnStateEnter -= OnStateEnter;
-                m_Driver.OnStateExit -= OnStateExit;
-                m_Driver.Dispose();
-                m_Driver = new XAnimationDriver();
-                m_Driver.Initialize(m_CompiledAsset, m_Animator);
-                m_Driver.SetUpdateMode(XAnimationUpdateMode.Manual);
-                m_Driver.SetUnityAnimationEventsEnabled(false);
-                m_Driver.CueTriggered += OnCueTriggered;
-                m_Driver.OnStateEnter += OnStateEnter;
-                m_Driver.OnStateExit += OnStateExit;
-                m_Driver.SetPaused(false);
-                m_Driver.SetGlobalSpeed(1f);
-                m_Driver.SetRootMotionEnabled(m_RootMotionEnabled);
-                RestorePreviewParameters();
+                m_EditorActor.Rebuild(m_CompiledAsset, m_Animator);
             }
         }
 
@@ -2691,12 +2580,7 @@ namespace XAnimationEditor
             m_CompiledAsset.GetState(stateKey);
             XAnimationAutoTransitionConfig config = GetOrCreateAutoTransition(m_CompiledAsset.Asset, stateKey);
             config.nextStateKey = string.IsNullOrWhiteSpace(nextStateKey) ? string.Empty : nextStateKey.Trim();
-            RebuildCompiledAsset();
-            RebuildDriver();
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            RebuildDriverAndSave(save);
         }
 
         public void SetAutoTransitionTiming(
@@ -2712,12 +2596,7 @@ namespace XAnimationEditor
             config.exitTime = Mathf.Clamp01(exitTime);
             config.transitionDuration = Mathf.Max(0f, transitionDuration);
             config.enterTime = Mathf.Clamp01(enterTime);
-            RebuildCompiledAsset();
-            RebuildDriver();
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            RebuildDriverAndSave(save);
         }
 
         public string AddAutoTransition(string preferredPreStateKey = null)
@@ -2727,18 +2606,14 @@ namespace XAnimationEditor
             XAnimationAsset asset = m_CompiledAsset.Asset;
             if (FindAutoTransition(asset, preStateKey) == null)
             {
-                List<XAnimationAutoTransitionConfig> transitions = new(asset.autoTransitions ?? Array.Empty<XAnimationAutoTransitionConfig>())
+                asset.autoTransitions = AppendItem(asset.autoTransitions, new XAnimationAutoTransitionConfig
                 {
-                    new XAnimationAutoTransitionConfig
-                    {
-                        preStateKey = preStateKey,
-                        nextStateKey = string.Empty,
-                        exitTime = 1f,
-                        transitionDuration = 0f,
-                        enterTime = 0f,
-                    }
-                };
-                asset.autoTransitions = transitions.ToArray();
+                    preStateKey = preStateKey,
+                    nextStateKey = string.Empty,
+                    exitTime = 1f,
+                    transitionDuration = 0f,
+                    enterTime = 0f,
+                });
             }
 
             RebuildDriverAndSave();
@@ -2809,12 +2684,7 @@ namespace XAnimationEditor
             }
 
             transition.preStateKey = newPreStateKey;
-            RebuildCompiledAsset();
-            RebuildDriver();
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            RebuildDriverAndSave(save);
         }
 
         public bool TryGetAutoTransition(string preStateKey, out XAnimationAutoTransitionConfig config)
@@ -2829,21 +2699,16 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             XAnimationTransitionPairConfig pair = CreateDefaultTransitionPair(-1);
-            List<XAnimationDefaultTransitionConfig> transitions = new(asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>())
+            asset.defaultTransitions = AppendItem(asset.defaultTransitions, new XAnimationDefaultTransitionConfig
             {
-                new XAnimationDefaultTransitionConfig
-                {
-                    editorName = CreateUniqueDefaultTransitionName("Default Transition"),
-                    pairs = new[] { pair },
-                    fadeIn = 0.15f,
-                    fadeOut = 0.15f,
-                    enterTime = 0f,
-                    priority = 0,
-                    interruptible = true,
-                }
-            };
-
-            asset.defaultTransitions = transitions.ToArray();
+                editorName = CreateUniqueDefaultTransitionName("Default Transition"),
+                pairs = new[] { pair },
+                fadeIn = 0.15f,
+                fadeOut = 0.15f,
+                enterTime = 0f,
+                priority = 0,
+                interruptible = true,
+            });
             RebuildDriverAndSave();
             return asset.defaultTransitions.Length - 1;
         }
@@ -2857,16 +2722,7 @@ namespace XAnimationEditor
                 throw new XAnimationException($"XAnimation default transition index '{transitionIndex}' does not exist.");
             }
 
-            List<XAnimationDefaultTransitionConfig> remaining = new(transitions.Length - 1);
-            for (int i = 0; i < transitions.Length; i++)
-            {
-                if (i != transitionIndex)
-                {
-                    remaining.Add(transitions[i]);
-                }
-            }
-
-            m_CompiledAsset.Asset.defaultTransitions = remaining.ToArray();
+            m_CompiledAsset.Asset.defaultTransitions = RemoveAt(transitions, transitionIndex);
             RebuildDriverAndSave();
         }
 
@@ -2875,10 +2731,7 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
             transition.editorName = editorName?.Trim() ?? string.Empty;
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            SaveCompiledAssetIfNeeded(save);
         }
 
         public void SetDefaultTransitionOptions(
@@ -2897,24 +2750,14 @@ namespace XAnimationEditor
             transition.enterTime = Mathf.Clamp01(enterTime);
             transition.priority = priority;
             transition.interruptible = interruptible;
-            RebuildCompiledAsset();
-            RebuildDriver();
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
+            RebuildDriverAndSave(save);
         }
 
         public int AddDefaultTransitionPair(int transitionIndex)
         {
             EnsureBaseAssetEditable();
             XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
-            List<XAnimationTransitionPairConfig> pairs = new(transition.pairs ?? Array.Empty<XAnimationTransitionPairConfig>())
-            {
-                CreateDefaultTransitionPair(transitionIndex)
-            };
-
-            transition.pairs = pairs.ToArray();
+            transition.pairs = AppendItem(transition.pairs, CreateDefaultTransitionPair(transitionIndex));
             RebuildDriverAndSave();
             return transition.pairs.Length - 1;
         }
@@ -2934,16 +2777,7 @@ namespace XAnimationEditor
                 throw new XAnimationException($"XAnimation default transition pair index '{pairIndex}' does not exist.");
             }
 
-            List<XAnimationTransitionPairConfig> remaining = new(pairs.Length - 1);
-            for (int i = 0; i < pairs.Length; i++)
-            {
-                if (i != pairIndex)
-                {
-                    remaining.Add(pairs[i]);
-                }
-            }
-
-            transition.pairs = remaining.ToArray();
+            transition.pairs = RemoveAt(pairs, pairIndex);
             RebuildDriverAndSave();
         }
 
@@ -2961,108 +2795,7 @@ namespace XAnimationEditor
             XAnimationTransitionPairConfig pair = GetDefaultTransitionPairConfig(transitionIndex, pairIndex);
             pair.preStateKey = preStateKey;
             pair.nextStateKey = nextStateKey;
-            RebuildCompiledAsset();
-            RebuildDriver();
-            if (save)
-            {
-                SaveCompiledAsset();
-            }
-        }
-
-        private void RestorePreviewParameters()
-        {
-            if (m_Driver == null || m_CompiledAsset == null)
-            {
-                return;
-            }
-
-            HashSet<string> validFloatKeys = new(StringComparer.Ordinal);
-            HashSet<string> validIntKeys = new(StringComparer.Ordinal);
-            HashSet<string> validBoolKeys = new(StringComparer.Ordinal);
-            IReadOnlyList<XAnimationCompiledParameter> parameters = m_CompiledAsset.Parameters;
-            for (int i = 0; i < parameters.Count; i++)
-            {
-                XAnimationCompiledParameter parameter = parameters[i];
-                string parameterName = parameter?.Name;
-                if (string.IsNullOrWhiteSpace(parameterName))
-                {
-                    continue;
-                }
-
-                switch (parameter.Type)
-                {
-                    case XAnimationParameterType.Float:
-                    {
-                        if (!m_PreviewFloatParameters.TryGetValue(parameterName, out float floatValue))
-                        {
-                            floatValue = ConvertParameterDefaultToFloat(parameter.Config.defaultValue);
-                            m_PreviewFloatParameters[parameterName] = floatValue;
-                        }
-
-                        validFloatKeys.Add(parameterName);
-                        m_Driver.SetParameter(parameterName, floatValue);
-                        break;
-                    }
-                    case XAnimationParameterType.Int:
-                    {
-                        if (!m_PreviewIntParameters.TryGetValue(parameterName, out int intValue))
-                        {
-                            intValue = ConvertParameterDefaultToInt(parameter.Config.defaultValue);
-                            m_PreviewIntParameters[parameterName] = intValue;
-                        }
-
-                        validIntKeys.Add(parameterName);
-                        m_Driver.SetParameter(parameterName, intValue);
-                        break;
-                    }
-                    case XAnimationParameterType.Bool:
-                    {
-                        if (!m_PreviewBoolParameters.TryGetValue(parameterName, out bool boolValue))
-                        {
-                            boolValue = ConvertParameterDefaultToBool(parameter.Config.defaultValue);
-                            m_PreviewBoolParameters[parameterName] = boolValue;
-                        }
-
-                        validBoolKeys.Add(parameterName);
-                        m_Driver.SetParameter(parameterName, boolValue);
-                        break;
-                    }
-                }
-            }
-
-            RemoveStalePreviewParameters(m_PreviewFloatParameters, validFloatKeys);
-            RemoveStalePreviewParameters(m_PreviewIntParameters, validIntKeys);
-            RemoveStalePreviewParameters(m_PreviewBoolParameters, validBoolKeys);
-        }
-
-        private static void RemoveStalePreviewParameters<T>(Dictionary<string, T> cache, HashSet<string> validKeys)
-        {
-            if (cache.Count == 0)
-            {
-                return;
-            }
-
-            List<string> removedKeys = null;
-            foreach (string key in cache.Keys)
-            {
-                if (validKeys.Contains(key))
-                {
-                    continue;
-                }
-
-                removedKeys ??= new List<string>();
-                removedKeys.Add(key);
-            }
-
-            if (removedKeys == null)
-            {
-                return;
-            }
-
-            for (int i = 0; i < removedKeys.Count; i++)
-            {
-                cache.Remove(removedKeys[i]);
-            }
+            RebuildDriverAndSave(save);
         }
 
         public string GetOriginalClipPath(string clipKey)
@@ -3082,14 +2815,7 @@ namespace XAnimationEditor
 
         private void DisposePreview()
         {
-            if (m_Driver != null)
-            {
-                m_Driver.CueTriggered -= OnCueTriggered;
-                m_Driver.OnStateEnter -= OnStateEnter;
-                m_Driver.OnStateExit -= OnStateExit;
-                m_Driver.Dispose();
-                m_Driver = null;
-            }
+            m_EditorActor.Dispose();
 
             DestroyGrid();
             DestroyLight(ref m_KeyLight);
@@ -3781,20 +3507,16 @@ namespace XAnimationEditor
                 return transition;
             }
 
-            List<XAnimationAutoTransitionConfig> transitions = new(asset?.autoTransitions ?? Array.Empty<XAnimationAutoTransitionConfig>())
+            transition = new XAnimationAutoTransitionConfig
             {
-                new XAnimationAutoTransitionConfig
-                {
-                    preStateKey = preStateKey,
-                    nextStateKey = string.Empty,
-                    exitTime = 1f,
-                    transitionDuration = 0f,
-                    enterTime = 0f,
-                }
+                preStateKey = preStateKey,
+                nextStateKey = string.Empty,
+                exitTime = 1f,
+                transitionDuration = 0f,
+                enterTime = 0f,
             };
 
-            transition = transitions[transitions.Count - 1];
-            asset.autoTransitions = transitions.ToArray();
+            asset.autoTransitions = AppendItem(asset.autoTransitions, transition);
             return transition;
         }
 
@@ -3809,15 +3531,8 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                if (string.Equals(transition.preStateKey, oldKey, StringComparison.Ordinal))
-                {
-                    transition.preStateKey = newKey;
-                }
-
-                if (string.Equals(transition.nextStateKey, oldKey, StringComparison.Ordinal))
-                {
-                    transition.nextStateKey = newKey;
-                }
+                ReplaceIfEqual(ref transition.preStateKey, oldKey, newKey);
+                ReplaceIfEqual(ref transition.nextStateKey, oldKey, newKey);
             }
         }
 
@@ -3835,15 +3550,8 @@ namespace XAnimationEditor
                         continue;
                     }
 
-                    if (string.Equals(pair.preStateKey, oldKey, StringComparison.Ordinal))
-                    {
-                        pair.preStateKey = newKey;
-                    }
-
-                    if (string.Equals(pair.nextStateKey, oldKey, StringComparison.Ordinal))
-                    {
-                        pair.nextStateKey = newKey;
-                    }
+                    ReplaceIfEqual(ref pair.preStateKey, oldKey, newKey);
+                    ReplaceIfEqual(ref pair.nextStateKey, oldKey, newKey);
                 }
             }
         }
@@ -3873,10 +3581,7 @@ namespace XAnimationEditor
 
             for (int i = 0; i < values.Length; i++)
             {
-                if (string.Equals(values[i], oldKey, StringComparison.Ordinal))
-                {
-                    values[i] = newKey;
-                }
+                ReplaceIfEqual(ref values[i], oldKey, newKey);
             }
         }
 

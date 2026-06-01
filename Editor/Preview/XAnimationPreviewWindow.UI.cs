@@ -18,10 +18,29 @@ namespace XAnimationEditor
         public void CreateGUI()
         {
             BuildUI();
+            RegisterWindowShortcuts();
             ApplyDefaultSelections();
             SetStatus("拖入 prefab 和 .xanimation/.xanimationoverride，或打开已配置默认 prefab 的 XAnimationAsset。");
             ScheduleAutoReloadPreview();
             ApplyPendingOpenRequest();
+        }
+
+        private void RegisterWindowShortcuts()
+        {
+            rootVisualElement.focusable = true;
+            rootVisualElement.UnregisterCallback<KeyDownEvent>(HandleWindowKeyDown, TrickleDown.TrickleDown);
+            rootVisualElement.RegisterCallback<KeyDownEvent>(HandleWindowKeyDown, TrickleDown.TrickleDown);
+        }
+
+        private void HandleWindowKeyDown(KeyDownEvent evt)
+        {
+            if (evt.keyCode != KeyCode.S || (!evt.ctrlKey && !evt.commandKey))
+            {
+                return;
+            }
+
+            TrySaveAssetChanges();
+            evt.StopImmediatePropagation();
         }
 
         private void BuildUI()
@@ -539,14 +558,6 @@ namespace XAnimationEditor
             m_AssetField.style.marginLeft = 0;
             assetRow.Add(m_AssetField);
 
-            m_ReloadPreviewButton = CreateAssetToolbarIconButton(
-                "⟳",
-                "重新读取 Prefab 和 XAnimation 资源并刷新预览。",
-                LoadPreview,
-                iconNames: new[] { "d_Refresh", "Refresh", "d_TreeEditor.Refresh", "TreeEditor.Refresh" });
-            m_ReloadPreviewButton.style.marginLeft = 6;
-            assetRow.Add(m_ReloadPreviewButton);
-
             RefreshAssetsToolbarButtons();
             return assetsBar;
         }
@@ -707,7 +718,7 @@ namespace XAnimationEditor
 
         private VisualElement BuildPlaybackSettingsCard()
         {
-            m_PlaybackHudView = new XAnimationPlaybackHudView(new PreviewPlaybackHudHost(this), includeStatus: false);
+            m_PlaybackHudView = new XAnimationPlaybackHudView(new PreviewPlaybackHudHost(this), includeStatus: false, titleText: "Playback");
             RegisterPlaybackOverlayDrag(m_PlaybackHudView.Root, () => m_PlaybackHudView.TogglePlaybackExpanded());
 
             FoldoutCard previewParametersCard = CreateSectionFoldoutCard("Preview Parameters", m_PreviewParametersSectionExpanded, value =>
@@ -737,7 +748,7 @@ namespace XAnimationEditor
             }
 
             toggleLabel.AddToClassList("xanim-playback-overlay-drag-handle");
-            toggleLabel.tooltip = "拖拽左侧三角可以移动这个悬浮面板，鼠标抬起时如果位置没变化则展开/收起。";
+            toggleLabel.tooltip = "拖拽标题可以移动这个 Playback HUD，鼠标抬起时如果位置没变化则展开/收起。";
 
             toggleLabel.RegisterCallback<PointerDownEvent>(evt =>
             {

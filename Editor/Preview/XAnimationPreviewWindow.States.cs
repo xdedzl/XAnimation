@@ -1324,7 +1324,6 @@ namespace XAnimationEditor
                 return;
             }
 
-            Selection.activeObject = clip;
             EditorGUIUtility.PingObject(clip);
             SetStatus($"已定位动画资源: {clip.name}。");
         }

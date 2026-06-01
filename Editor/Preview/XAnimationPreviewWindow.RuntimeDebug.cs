@@ -784,6 +784,7 @@ namespace XAnimationEditor
                                         string.Equals(currentPrefabPath, defaultPrefabPath, StringComparison.Ordinal);
             bool showDefaultActions = currentPrefab != null && !matchesDefaultPrefab;
 
+            m_ReloadPreviewButton?.SetEnabled(assetText != null && currentPrefab != null);
             m_SaveCurrentPrefabAsDefaultButton.style.display = showDefaultActions ? DisplayStyle.Flex : DisplayStyle.None;
             m_ResetPrefabToDefaultButton.style.display = showDefaultActions && hasDefaultPrefab ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshPreloadToggle();

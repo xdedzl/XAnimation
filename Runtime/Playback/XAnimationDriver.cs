@@ -11,6 +11,7 @@ namespace XAnimationEngine
         private readonly XAnimationAssetLoader m_AssetLoader = new();
         private readonly Dictionary<int, PendingPlaybackExit> m_PendingPlaybackExits = new();
         private readonly XAnimationRuntime m_Runtime = new();
+        private readonly XAnimationActionManager m_ActionManager;
         private readonly XAnimationDriverScheduler m_Scheduler;
 
         #endregion
@@ -36,7 +37,8 @@ namespace XAnimationEngine
 
         public XAnimationDriver()
         {
-            m_Scheduler = new XAnimationDriverScheduler(m_Runtime);
+            m_ActionManager = new XAnimationActionManager(this);
+            m_Scheduler = new XAnimationDriverScheduler(m_Runtime, ProcessActionReturns);
             m_Runtime.CueTriggered += RaiseCueTriggered;
             m_Runtime.StateEntered += RaiseStateEntered;
             m_Runtime.StateExited += CompletePlaybackExitAndRaise;
@@ -190,6 +192,12 @@ namespace XAnimationEngine
             return CreatePlaybackHandle(startInfo, stateName, string.Empty);
         }
 
+        public XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options = default)
+        {
+            EnsureInitialized();
+            return m_ActionManager.PlayAction(stateKey, options);
+        }
+
         public void Stop(string channelName, float fadeOut = 0)
         {
             EnsureInitialized();
@@ -271,6 +279,7 @@ namespace XAnimationEngine
             EnsureInitialized();
             EnsureManualUpdateMode(nameof(SyncFrame));
             m_Runtime.RunManualFrame(0f);
+            ProcessActionReturns();
         }
 
         #endregion
@@ -347,6 +356,7 @@ namespace XAnimationEngine
         {
             EnsureInitialized();
             m_Runtime.RunManualFrame(deltaTime);
+            ProcessActionReturns();
         }
 
         #endregion
@@ -356,6 +366,7 @@ namespace XAnimationEngine
         public void Dispose()
         {
             m_Scheduler.UnregisterFromAutomaticUpdate();
+            m_ActionManager.Dispose();
             m_Runtime.Dispose();
             m_PendingPlaybackExits.Clear();
         }
@@ -437,6 +448,7 @@ namespace XAnimationEngine
         private void InitializeLoadedAsset(XAnimationCompiledAsset compiledAsset, Animator animator)
         {
             m_PendingPlaybackExits.Clear();
+            m_ActionManager.Dispose();
             XAnimationContext context = new(compiledAsset.Parameters);
             m_Runtime.Initialize(compiledAsset, context, animator);
             if (compiledAsset.Asset.preload)
@@ -453,6 +465,11 @@ namespace XAnimationEngine
         private void RaiseCueTriggered(XAnimationCueEvent cueEvent)
         {
             CueTriggered?.Invoke(cueEvent);
+        }
+
+        private void ProcessActionReturns()
+        {
+            m_ActionManager.ProcessPendingReturns();
         }
 
         private void RaiseStateEntered(XAnimationStateEvent stateEvent)

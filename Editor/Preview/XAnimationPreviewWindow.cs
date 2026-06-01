@@ -147,6 +147,8 @@ namespace XAnimationEditor
         }
 
         private const string MenuPath = "XFramework/Tools/XAnimation Preview";
+        private const string WindowTitle = "XAnimation Preview";
+        private const string UnsavedChangesMessage = "XAnimation Preview 有未保存的修改，是否保存？";
         private const float DebugPaneInitialWidth = 360f;
         private const float DebugPaneMinWidth = 280f;
         private const float PreviewPaneMinWidth = 360f;
@@ -202,6 +204,7 @@ namespace XAnimationEditor
         [SerializeField] private bool m_PlaybackSectionExpanded = true;
         [SerializeField] private bool m_PlayTransitionSectionExpanded;
 
+        [SerializeField] private bool m_ActionDebugSectionExpanded;
         [SerializeField] private bool m_PreviewParametersSectionExpanded = true;
         [SerializeField] private bool m_ParametersSectionExpanded = true;
         [SerializeField] private bool m_StatesSectionExpanded = true;
@@ -301,7 +304,7 @@ namespace XAnimationEditor
         private readonly List<Label> m_LogLabels = new();
 
         private XAnimationEditorPreviewSession m_Session;
-        private IVisualElementScheduledItem m_DelayedSaveItem;
+        private bool m_HasUnsavedAssetChanges;
         private bool m_IsEditingName;
         private bool m_IsPaused;
         private bool m_IsPreviewDragging;
@@ -324,6 +327,14 @@ namespace XAnimationEditor
         private int m_PlayPriorityOverride;
         private bool m_PlayInterruptibleOverride = true;
         private bool m_ApplyTransitionRequestOverrides;
+        private string m_ActionStateKey;
+        private string m_ActionReturnStateKey;
+        private XAnimationActionReturnMode m_ActionReturnMode;
+        private float m_ActionCancelableAfter;
+        private float m_ActionCancelFadeOut;
+        private bool m_ActionForce;
+        private XAnimationActionHandle m_ActionHandle;
+        private XAnimationActionExitResult m_LastActionExitResult;
 
         private float m_PlaySpeed = 1f;
         private bool m_PlaybackPrefsLoaded;
@@ -1020,7 +1031,7 @@ namespace XAnimationEditor
         public static void ShowWindow()
         {
             XAnimationPreviewWindow window = GetOpenWindow() ?? CreateDockedWindow();
-            window.titleContent = new GUIContent("XAnimation Preview");
+            window.UpdateWindowTitle();
             window.minSize = new Vector2(1180f, 680f);
             window.Show();
         }
@@ -1028,7 +1039,7 @@ namespace XAnimationEditor
         public static XAnimationPreviewWindow ShowWindow(TextAsset animationAsset, GameObject prefab = null, bool autoLoad = true)
         {
             XAnimationPreviewWindow window = GetOpenWindow() ?? CreateDockedWindow();
-            window.titleContent = new GUIContent("XAnimation Preview");
+            window.UpdateWindowTitle();
             window.minSize = new Vector2(1180f, 680f);
             window.SetPendingOpenRequest(animationAsset, prefab, autoLoad);
             window.Show();
@@ -1082,14 +1093,16 @@ namespace XAnimationEditor
         {
             Type gameViewType = typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.GameView");
             return gameViewType != null
-                ? CreateWindow<XAnimationPreviewWindow>("XAnimation Preview", typeof(SceneView), gameViewType)
-                : CreateWindow<XAnimationPreviewWindow>("XAnimation Preview", typeof(SceneView));
+                ? CreateWindow<XAnimationPreviewWindow>(WindowTitle, typeof(SceneView), gameViewType)
+                : CreateWindow<XAnimationPreviewWindow>(WindowTitle, typeof(SceneView));
         }
 
         internal GameObject CurrentSelectedPrefab => m_PrefabField?.value as GameObject;
 
         private void OnEnable()
         {
+            UpdateWindowTitle();
+            UpdateUnsavedChangesState();
             LoadPlaybackPrefs();
             EditorApplication.update += HandleEditorUpdate;
             m_UpdateCoordinator.Reset(EditorApplication.timeSinceStartup, IsPreviewTabVisible());
@@ -1100,6 +1113,108 @@ namespace XAnimationEditor
         {
             EditorApplication.update -= HandleEditorUpdate;
             DisposeSession();
+        }
+
+        public override void SaveChanges()
+        {
+            if (!TrySaveAssetChanges())
+            {
+                UpdateUnsavedChangesState();
+                return;
+            }
+
+            base.SaveChanges();
+        }
+
+        public override void DiscardChanges()
+        {
+            ClearAssetDirty();
+            base.DiscardChanges();
+        }
+
+        private void MarkAssetDirty()
+        {
+            if (m_HasUnsavedAssetChanges)
+            {
+                return;
+            }
+
+            m_HasUnsavedAssetChanges = true;
+            UpdateUnsavedChangesState();
+        }
+
+        private void ClearAssetDirty()
+        {
+            if (!m_HasUnsavedAssetChanges && !hasUnsavedChanges)
+            {
+                return;
+            }
+
+            m_HasUnsavedAssetChanges = false;
+            UpdateUnsavedChangesState();
+        }
+
+        private void UpdateUnsavedChangesState()
+        {
+            hasUnsavedChanges = m_HasUnsavedAssetChanges;
+            saveChangesMessage = UnsavedChangesMessage;
+            UpdateWindowTitle();
+        }
+
+        private void UpdateWindowTitle()
+        {
+            titleContent = new GUIContent(WindowTitle);
+        }
+
+        private bool TrySaveAssetChanges()
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                ClearAssetDirty();
+                return true;
+            }
+
+            try
+            {
+                m_Session.SaveCurrentAsset();
+                ClearAssetDirty();
+                SetStatus("修改已保存。");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+                return false;
+            }
+        }
+
+        private bool ConfirmUnsavedChangesBeforeReset()
+        {
+            if (!m_HasUnsavedAssetChanges)
+            {
+                return true;
+            }
+
+            int option = EditorUtility.DisplayDialogComplex(
+                WindowTitle,
+                UnsavedChangesMessage,
+                "保存",
+                "取消",
+                "不保存");
+
+            if (option == 0)
+            {
+                return TrySaveAssetChanges();
+            }
+
+            if (option == 2)
+            {
+                ClearAssetDirty();
+                return true;
+            }
+
+            return false;
         }
 
 

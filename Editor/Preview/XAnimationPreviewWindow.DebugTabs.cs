@@ -69,21 +69,16 @@ namespace XAnimationEditor
             searchDivider.style.flexShrink = 0;
             toolbar.Add(searchDivider);
 
+            m_ReloadPreviewButton = CreateToolbarActionButton(string.Empty, LoadPreview);
+            m_ReloadPreviewButton.tooltip = "重新读取 Prefab 和 XAnimation 资源并刷新预览。";
+            ApplyToolbarButtonIcon(m_ReloadPreviewButton, "d_Refresh", "Refresh", "d_TreeEditor.Refresh", "TreeEditor.Refresh");
+            ApplyToolbarIconButtonSize(m_ReloadPreviewButton);
+            toolbar.Add(m_ReloadPreviewButton);
+
             m_SearchButton = CreateToolbarActionButton(string.Empty, ToggleSearchPopup);
             m_SearchButton.tooltip = "打开搜索面板，搜索 state、clip、transition、cue、parameter、channel。";
             ApplyToolbarButtonIcon(m_SearchButton, "d_Search Icon", "Search Icon", "d_ViewToolZoom", "ViewToolZoom");
-            m_SearchButton.style.width = 26;
-            m_SearchButton.style.minWidth = 26;
-            m_SearchButton.style.maxWidth = 26;
-            m_SearchButton.style.height = 26;
-            m_SearchButton.style.minHeight = 26;
-            m_SearchButton.style.maxHeight = 26;
-            m_SearchButton.style.paddingLeft = 0;
-            m_SearchButton.style.paddingRight = 0;
-            m_SearchButton.style.paddingTop = 0;
-            m_SearchButton.style.paddingBottom = 0;
-            m_SearchButton.style.alignSelf = Align.Center;
-            m_SearchButton.style.flexShrink = 0;
+            ApplyToolbarIconButtonSize(m_SearchButton);
             toolbar.Add(m_SearchButton);
 
             m_SearchField = new TextField();
@@ -200,6 +195,22 @@ namespace XAnimationEditor
             divider.style.alignSelf = Align.Center;
             divider.style.backgroundColor = SectionDivider;
             return divider;
+        }
+
+        private static void ApplyToolbarIconButtonSize(Button button)
+        {
+            button.style.width = 26;
+            button.style.minWidth = 26;
+            button.style.maxWidth = 26;
+            button.style.height = 26;
+            button.style.minHeight = 26;
+            button.style.maxHeight = 26;
+            button.style.paddingLeft = 0;
+            button.style.paddingRight = 0;
+            button.style.paddingTop = 0;
+            button.style.paddingBottom = 0;
+            button.style.alignSelf = Align.Center;
+            button.style.flexShrink = 0;
         }
 
         private Button CreateToolbarActionButton(string label, Action onClick)

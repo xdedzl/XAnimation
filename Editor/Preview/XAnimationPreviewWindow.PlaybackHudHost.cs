@@ -7,11 +7,12 @@ namespace XAnimationEditor
 {
     public sealed partial class XAnimationPreviewWindow
     {
-        private sealed class PreviewPlaybackHudHost : IXAnimationPlaybackHudHost
+        private sealed class PreviewPlaybackHudHost : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost
         {
             private readonly XAnimationPreviewWindow m_Window;
             private readonly XAnimationPlaybackSettings m_Settings = new();
             private readonly List<string> m_ChannelChoices = new();
+            private readonly List<string> m_ActionStateChoices = new();
 
             public PreviewPlaybackHudHost(XAnimationPreviewWindow window)
             {
@@ -24,6 +25,7 @@ namespace XAnimationEditor
                 {
                     m_Settings.PlaybackSectionExpanded = m_Window.m_PlaybackSectionExpanded;
                     m_Settings.TransitionSectionExpanded = m_Window.m_PlayTransitionSectionExpanded;
+                    m_Settings.ActionDebugSectionExpanded = m_Window.m_ActionDebugSectionExpanded;
                     m_Settings.ChannelName = m_Window.m_PlayTargetChannelName;
                     m_Settings.Speed = m_Window.GetPlaybackSpeed();
                     m_Settings.ApplyTransition = m_Window.m_ApplyTransitionRequestOverrides;
@@ -46,6 +48,12 @@ namespace XAnimationEditor
             {
                 get => m_Window.m_PlayTransitionSectionExpanded;
                 set => m_Window.m_PlayTransitionSectionExpanded = value;
+            }
+
+            public bool ActionDebugExpanded
+            {
+                get => m_Window.m_ActionDebugSectionExpanded;
+                set => m_Window.m_ActionDebugSectionExpanded = value;
             }
 
             public bool ShowRootMotion => true;
@@ -84,6 +92,45 @@ namespace XAnimationEditor
                     return m_ChannelChoices;
                 }
             }
+
+            public IReadOnlyList<string> ActionStateChoices => GetActionStateChoices();
+            public string ActionStateKey
+            {
+                get => m_Window.m_ActionStateKey;
+                set => m_Window.m_ActionStateKey = value ?? string.Empty;
+            }
+            public XAnimationActionReturnMode ActionReturnMode
+            {
+                get => m_Window.m_ActionReturnMode;
+                set => m_Window.m_ActionReturnMode = value;
+            }
+            public IReadOnlyList<string> ActionReturnStateChoices => GetActionStateChoices();
+            public string ActionReturnStateKey
+            {
+                get => m_Window.m_ActionReturnStateKey;
+                set => m_Window.m_ActionReturnStateKey = value ?? string.Empty;
+            }
+            public float ActionCancelableAfter
+            {
+                get => m_Window.m_ActionCancelableAfter;
+                set => m_Window.m_ActionCancelableAfter = Mathf.Max(0f, value);
+            }
+            public float ActionCancelFadeOut
+            {
+                get => m_Window.m_ActionCancelFadeOut;
+                set => m_Window.m_ActionCancelFadeOut = Mathf.Max(0f, value);
+            }
+            public bool ActionForce
+            {
+                get => m_Window.m_ActionForce;
+                set => m_Window.m_ActionForce = value;
+            }
+            public bool CanPlayAction => m_Window.m_Session != null &&
+                                         m_Window.m_Session.IsLoaded &&
+                                         !string.IsNullOrWhiteSpace(m_Window.m_ActionStateKey);
+            public bool CanCancelAction => m_Window.m_ActionHandle != null && m_Window.m_ActionHandle.CanCancel;
+            public string ActionStatusText => m_Window.BuildActionStatusText();
+            public bool ActionStatusIsError => m_Window.m_ActionHandle != null && m_Window.m_ActionHandle.Status == XAnimationActionStatus.Rejected;
 
             private bool CanPlayFirstState => m_Window.m_Session != null &&
                                               m_Window.m_Session.IsLoaded &&
@@ -164,6 +211,23 @@ namespace XAnimationEditor
             public void Seek(float normalizedTime)
             {
                 m_Window.SeekDominantPlayback(normalizedTime);
+            }
+
+            public void PlayAction()
+            {
+                m_Window.PlayPreviewAction();
+            }
+
+            public void CancelAction()
+            {
+                m_Window.CancelPreviewAction();
+            }
+
+            private IReadOnlyList<string> GetActionStateChoices()
+            {
+                m_ActionStateChoices.Clear();
+                m_ActionStateChoices.AddRange(m_Window.CollectStateKeyChoices());
+                return m_ActionStateChoices;
             }
         }
     }

@@ -205,8 +205,10 @@ namespace XAnimationEditor
 
             if (titleAction != null)
             {
-                titleAction.style.flexShrink = 0;
+                titleAction.style.flexShrink = hasVisibleTitle ? 0 : 1;
                 titleAction.style.flexGrow = hasVisibleTitle ? 0 : 1;
+                titleAction.style.minWidth = hasVisibleTitle ? StyleKeyword.Null : 0;
+                titleAction.style.maxWidth = hasVisibleTitle ? StyleKeyword.Null : Length.Percent(100f);
                 titleAction.style.marginLeft = hasVisibleTitle ? 6 : 0;
                 header.Add(titleAction);
             }

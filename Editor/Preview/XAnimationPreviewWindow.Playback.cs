@@ -19,6 +19,12 @@ namespace XAnimationEditor
         {
             try
             {
+                if (!ConfirmUnsavedChangesBeforeReset())
+                {
+                    SetStatus("已取消重载，当前修改尚未保存。");
+                    return;
+                }
+
                 GameObject prefab = m_PrefabField.value as GameObject;
                 TextAsset assetText = m_AssetField.value as TextAsset;
                 if (prefab == null)
@@ -39,9 +45,11 @@ namespace XAnimationEditor
 
                 DisposeSession();
                 m_Session = new XAnimationEditorPreviewSession();
+                m_Session.AssetChanged += MarkAssetDirty;
                 m_Session.Load(prefab, assetPath);
                 m_SelectedPrefab = prefab;
                 m_SelectedAsset = assetText;
+                ClearAssetDirty();
                 SaveLastPreviewAssetPaths(assetText, prefab);
                 m_ShouldAutoReloadPreview = true;
                 m_IsPaused = false;
@@ -253,16 +261,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_DelayedSaveItem?.Pause();
-            m_DelayedSaveItem = rootVisualElement.schedule.Execute(() =>
-            {
-                if (m_Session == null || !m_Session.IsLoaded)
-                {
-                    return;
-                }
-
-                m_Session.SaveCurrentAsset();
-            }).StartingIn(350);
+            MarkAssetDirty();
         }
 
         private bool RestartClipIfPlaying(string clipKey, string channelName)
@@ -802,6 +801,154 @@ namespace XAnimationEditor
         private void RefreshPlaybackScrubber()
         {
             m_PlaybackHudView?.Refresh();
+        }
+
+        private void PlayPreviewAction()
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                SetStatus("请先加载预览。", true);
+                return;
+            }
+
+            EnsureActionStateSelection();
+            if (string.IsNullOrWhiteSpace(m_ActionStateKey))
+            {
+                SetStatus("请选择 Action state。", true);
+                return;
+            }
+
+            if (m_ActionReturnMode == XAnimationActionReturnMode.State)
+            {
+                EnsureActionReturnStateSelection();
+            }
+
+            if (m_ActionReturnMode == XAnimationActionReturnMode.State &&
+                string.IsNullOrWhiteSpace(m_ActionReturnStateKey))
+            {
+                SetStatus("returnMode = State 时需要选择 returnState。", true);
+                return;
+            }
+
+            XAnimationActionOptions options = new()
+            {
+                transition = BuildPreviewTransitionOptions(),
+                force = m_ActionForce,
+                cancelableAfter = Mathf.Max(0f, m_ActionCancelableAfter),
+                cancelFadeOut = Mathf.Max(0f, m_ActionCancelFadeOut),
+                returnMode = m_ActionReturnMode,
+                returnStateKey = m_ActionReturnMode == XAnimationActionReturnMode.State ? m_ActionReturnStateKey : null,
+                returnTransition = null,
+            };
+
+            m_IsPaused = false;
+            m_Session.SetPaused(false);
+            SetPauseButtonState(true, false);
+            SetStepForwardButtonEnabled(true);
+            m_Session.SetGlobalSpeed(GetPlaybackSpeed());
+
+            m_LastActionExitResult = null;
+            m_ActionHandle = m_Session.PlayAction(m_ActionStateKey, options);
+            m_ActionHandle.OnExit(result =>
+            {
+                m_LastActionExitResult = result;
+                RefreshActionDebugView();
+                Repaint();
+            });
+
+            RefreshPlaybackViews();
+            FocusStateInInspector(m_ActionStateKey);
+            SetStatus(m_ActionHandle.IsValid
+                ? $"正在 PlayAction {m_ActionStateKey}。"
+                : $"PlayAction {m_ActionStateKey} 被拒绝。", !m_ActionHandle.IsValid);
+        }
+
+        private void CancelPreviewAction()
+        {
+            if (m_ActionHandle == null || !m_ActionHandle.IsValid)
+            {
+                SetStatus("当前没有有效的 Action handle。", true);
+                RefreshActionDebugView();
+                return;
+            }
+
+            bool canceled = m_ActionHandle.Cancel();
+            RefreshPlaybackViews();
+            SetStatus(canceled ? "已请求取消 Action。" : "当前 Action 尚不可取消。", !canceled);
+        }
+
+        private void RefreshActionDebugView()
+        {
+            m_PlaybackHudView?.Refresh();
+        }
+
+        private void ClearActionDebugRuntimeState()
+        {
+            m_ActionHandle = null;
+            m_LastActionExitResult = null;
+            RefreshActionDebugView();
+        }
+
+        private void EnsureActionStateSelection()
+        {
+            List<string> choices = CollectStateKeyChoices();
+            string selected = !string.IsNullOrWhiteSpace(m_ActionStateKey) && choices.Contains(m_ActionStateKey)
+                ? m_ActionStateKey
+                : choices.Count > 0 ? choices[0] : string.Empty;
+
+            m_ActionStateKey = selected;
+        }
+
+        private void EnsureActionReturnStateSelection()
+        {
+            List<string> choices = CollectStateKeyChoices();
+            string selected = !string.IsNullOrWhiteSpace(m_ActionReturnStateKey) && choices.Contains(m_ActionReturnStateKey)
+                ? m_ActionReturnStateKey
+                : choices.Count > 0 ? choices[0] : string.Empty;
+
+            m_ActionReturnStateKey = selected;
+        }
+
+        private List<string> CollectStateKeyChoices()
+        {
+            List<string> choices = new();
+            if (m_Session == null || !m_Session.IsLoaded || m_Session.CompiledAsset?.States == null)
+            {
+                return choices;
+            }
+
+            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
+            for (int i = 0; i < states.Count; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(states[i].Key))
+                {
+                    choices.Add(states[i].Key);
+                }
+            }
+
+            return choices;
+        }
+
+        private string BuildActionStatusText()
+        {
+            if (m_ActionHandle == null)
+            {
+                return "Status: no action";
+            }
+
+            string channelName = string.IsNullOrWhiteSpace(m_ActionHandle.ChannelName)
+                ? "-"
+                : m_ActionHandle.ChannelName;
+            string stateKey = string.IsNullOrWhiteSpace(m_ActionHandle.StateKey)
+                ? "-"
+                : m_ActionHandle.StateKey;
+            string statusText = $"Status: {m_ActionHandle.Status} | State: {stateKey} | Channel: {channelName} | CanCancel: {m_ActionHandle.CanCancel}";
+            if (m_LastActionExitResult != null)
+            {
+                statusText += $" | Return: {m_LastActionExitResult.ReturnStarted}";
+            }
+
+            return statusText;
         }
 
         private bool TryGetDominantPlaybackState(out XAnimationChannelState dominantState)
