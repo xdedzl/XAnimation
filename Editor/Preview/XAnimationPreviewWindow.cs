@@ -146,7 +146,7 @@ namespace XAnimationEditor
             public bool IsGroup { get; }
         }
 
-        private const string MenuPath = "XFramework/Tools/XAnimation Preview";
+        private const string MenuPath = "Tools/XAnimation/Preview";
         private const string WindowTitle = "XAnimation Preview";
         private const string UnsavedChangesMessage = "XAnimation Preview 有未保存的修改，是否保存？";
         private const float DebugPaneInitialWidth = 360f;

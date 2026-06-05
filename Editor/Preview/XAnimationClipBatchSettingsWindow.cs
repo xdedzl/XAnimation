@@ -12,7 +12,7 @@ namespace XAnimationEditor
 {
     public sealed class XAnimationClipBatchSettingsWindow : EditorWindow
     {
-        private const string MenuPath = "XFramework/Tools/XAnimation Clip Batch Settings";
+        private const string MenuPath = "Tools/XAnimation/Clip Batch Settings";
         private const int ObjectPickerControlId = 731245;
         private const float LeftPaneWidth = 420f;
 

@@ -9,26 +9,19 @@ using UObject = UnityEngine.Object;
 
 namespace XAnimationEngine
 {
+    public interface IXAnimationResLoader
+    {
+        UObject Load(string assetPath, Type assetType);
+        UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType);
+    }
+
     public static class XAnimation
     {
-        public delegate UObject LoadAssetDelegate(string assetPath, Type assetType);
-        public delegate UObject LoadSubAssetDelegate(string assetPath, string subAssetName, Type assetType);
+        private static IXAnimationResLoader s_ResLoader = CreateDefaultResLoader();
 
-        private static LoadAssetDelegate s_LoadAsset;
-        private static LoadSubAssetDelegate s_LoadSubAsset;
-
-        public static void SetAssetLoaders(
-            LoadAssetDelegate loadAsset,
-            LoadSubAssetDelegate loadSubAsset)
+        public static void SetResLoader(IXAnimationResLoader resLoader)
         {
-            s_LoadAsset = loadAsset ?? throw new ArgumentNullException(nameof(loadAsset));
-            s_LoadSubAsset = loadSubAsset ?? throw new ArgumentNullException(nameof(loadSubAsset));
-        }
-
-        public static void ClearAssetLoaders()
-        {
-            s_LoadAsset = null;
-            s_LoadSubAsset = null;
+            s_ResLoader = resLoader ?? throw new ArgumentNullException(nameof(resLoader));
         }
 
         public static T Load<T>(string assetPath) where T : UObject
@@ -37,12 +30,8 @@ namespace XAnimationEngine
             {
                 return null;
             }
-
-#if UNITY_EDITOR
-            return AssetDatabase.LoadAssetAtPath<T>(assetPath);
-#else
-            return LoadRuntimeAsset(assetPath, typeof(T)) as T;
-#endif
+            
+            return LoadAsset(assetPath, typeof(T)) as T;
         }
 
         public static T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject
@@ -57,42 +46,62 @@ namespace XAnimationEngine
                 return Load<T>(assetPath);
             }
 
+            return LoadSubAsset(assetPath, subAssetName, typeof(T)) as T;
+        }
+
+        private static UObject LoadAsset(string assetPath, Type assetType)
+        {
+            return EnsureResLoader().Load(assetPath, assetType);
+        }
+
+        private static UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType)
+        {
+            return EnsureResLoader().LoadSubAsset(assetPath, subAssetName, assetType);
+        }
+
+        private static IXAnimationResLoader EnsureResLoader()
+        {
+            if (s_ResLoader == null)
+            {
+                throw new XAnimationException("XAnimation resource loader is not set. Call XAnimation.SetResLoader before loading assets by path.");
+            }
+
+            return s_ResLoader;
+        }
+
+        private static IXAnimationResLoader CreateDefaultResLoader()
+        {
 #if UNITY_EDITOR
+            return new XAnimationEditorResLoader();
+#else
+            return null;
+#endif
+        }
+    }
+
+#if UNITY_EDITOR
+    internal sealed class XAnimationEditorResLoader : IXAnimationResLoader
+    {
+        public UObject Load(string assetPath, Type assetType)
+        {
+            return AssetDatabase.LoadAssetAtPath(assetPath, assetType);
+        }
+
+        public UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType)
+        {
             UObject[] assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
             foreach (UObject asset in assets)
             {
-                if (asset is T typedAsset && asset.name == subAssetName)
+                if (asset != null &&
+                    assetType.IsInstanceOfType(asset) &&
+                    string.Equals(asset.name, subAssetName, StringComparison.Ordinal))
                 {
-                    return typedAsset;
+                    return asset;
                 }
             }
 
             return null;
-#else
-            return LoadRuntimeSubAsset(assetPath, subAssetName, typeof(T)) as T;
-#endif
         }
-
-#if !UNITY_EDITOR
-        private static UObject LoadRuntimeAsset(string assetPath, Type assetType)
-        {
-            if (s_LoadAsset == null)
-            {
-                throw new XAnimationException("XAnimation asset loader is not set. Call XAnimation.SetAssetLoaders before loading assets by path.");
-            }
-
-            return s_LoadAsset(assetPath, assetType);
-        }
-
-        private static UObject LoadRuntimeSubAsset(string assetPath, string subAssetName, Type assetType)
-        {
-            if (s_LoadSubAsset == null)
-            {
-                throw new XAnimationException("XAnimation sub-asset loader is not set. Call XAnimation.SetAssetLoaders before loading sub-assets by path.");
-            }
-
-            return s_LoadSubAsset(assetPath, subAssetName, assetType);
-        }
-#endif
     }
+#endif
 }

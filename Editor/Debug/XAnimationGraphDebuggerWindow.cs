@@ -10,7 +10,7 @@ namespace XAnimationEditor
 {
     public sealed class XAnimationGraphDebuggerWindow : EditorWindow
     {
-        private const string MenuPath = "XFramework/Tools/XAnimation Graph Debugger";
+        private const string MenuPath = "Tools/XAnimation/Graph Debugger";
         private const double AutoRefreshIntervalSeconds = 0.2d;
 
         private ObjectField m_ActorField;

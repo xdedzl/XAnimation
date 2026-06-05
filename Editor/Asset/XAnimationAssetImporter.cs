@@ -8,9 +8,8 @@ namespace XAnimationEditor
 {
     public abstract class XAnimationAssetImporterBase : ScriptedImporter
     {
-        private const string DefaultIconPath = "Packages/com.xdedzl.xanimation/XAnimation/Editor/Assets/xasset-icon.png";
-        private const string AnimationIconPath = "Packages/com.xdedzl.xanimation/XAnimation/Editor/Assets/xasset-aniamtion-icon.png";
-        private const string AnimationOverrideIconPath = "Packages/com.xdedzl.xanimation/XAnimation/Editor/Assets/xasset-aniamtion-override-icon.png";
+        private const string AnimationIconName = "xasset-aniamtion-icon.png";
+        private const string AnimationOverrideIconName = "xasset-aniamtion-override-icon.png";
 
         public override void OnImportAsset(AssetImportContext ctx)
         {
@@ -31,20 +30,38 @@ namespace XAnimationEditor
 
         private static Texture2D ResolveIcon(string text)
         {
-            string iconPath = DefaultIconPath;
-            if (XAnimationAssetUtility.TryReadMetaInfo(text, out XAnimationMetaInfo metaInfo))
+            if (!XAnimationAssetUtility.TryReadMetaInfo(text, out XAnimationMetaInfo metaInfo))
             {
-                if (string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationAssetAlias, System.StringComparison.Ordinal))
-                {
-                    iconPath = AnimationIconPath;
-                }
-                else if (string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationOverrideAlias, System.StringComparison.Ordinal))
-                {
-                    iconPath = AnimationOverrideIconPath;
-                }
+                return null;
             }
 
+            string iconName;
+            if (string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationAssetAlias, System.StringComparison.Ordinal))
+            {
+                iconName = AnimationIconName;
+            }
+            else if (string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationOverrideAlias, System.StringComparison.Ordinal))
+            {
+                iconName = AnimationOverrideIconName;
+            }
+            else
+            {
+                return null;
+            }
+
+            string iconPath = ResolveIconPath(iconName);
             return AssetDatabase.LoadAssetAtPath<Texture2D>(iconPath);
+        }
+
+        private static string ResolveIconPath(string iconName)
+        {
+            UnityEditor.PackageManager.PackageInfo packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(XAnimationAssetImporterBase).Assembly);
+            if (packageInfo == null || string.IsNullOrEmpty(packageInfo.assetPath))
+            {
+                return string.Empty;
+            }
+
+            return Path.Combine(packageInfo.assetPath, "Editor", "Assets", iconName).Replace('\\', '/');
         }
     }
 

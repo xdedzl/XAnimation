@@ -589,12 +589,14 @@ driver.SetGlobalSpeed(1f);
 
 ### 5.3 资源加载规则
 
-默认解析器 `XAnimationRuntimeAssetResolver` 通过 `ResourceManager` 加载资源：
+`XAnimationRuntimeAssetResolver` 不绑定具体项目资源系统，只通过 `XAnimation.Load<T>()` / `XAnimation.LoadSubAsset<T>()` 访问 `IXAnimationResLoader`：
 
-- `.xanimation` / `.xanimationoverride` 文本资源：`ResourceManager.Instance.Load<TextAsset>(assetPath)`。
-- 普通 `AnimationClip`：`ResourceManager.Instance.Load<AnimationClip>(clipPath)`。
+- `.xanimation` / `.xanimationoverride` 文本资源：调用当前 `IXAnimationResLoader.Load(assetPath, typeof(TextAsset))`。
+- 普通 `AnimationClip`：调用当前 `IXAnimationResLoader.Load(clipPath, typeof(AnimationClip))`。
 - FBX 子动画：`clipPath` 写为 `Assets/Path/Model.fbx|ClipName`，内部会调用 `LoadSubAsset<AnimationClip>`。
-- `AvatarMask`：`ResourceManager.Instance.Load<AvatarMask>(maskPath)`。
+- `AvatarMask`：调用当前 `IXAnimationResLoader.Load(maskPath, typeof(AvatarMask))`。
+
+编辑器下框架默认使用 `AssetDatabase` 实现 `IXAnimationResLoader`，可以直接加载工程资源。Player 下框架不会默认绑定 `ResourceManager` / Addressables / AssetBundle；项目层需要在启动阶段调用 `XAnimation.SetResLoader(...)` 注入自己的同步资源加载实现。
 
 加载时机：
 
