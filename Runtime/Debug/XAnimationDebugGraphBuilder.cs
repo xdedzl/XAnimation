@@ -22,8 +22,9 @@ namespace XAnimationEngine
                     string.Empty);
             }
 
+            string graphName = GetGraphName(graph, context.AnimatorName);
             XAnimationDebugSnapshotBuilder builder = new();
-            XAnimationDebugNodeSnapshot graphNode = builder.CreateNode(0, graph.GetEditorName(), "PlayableGraph");
+            XAnimationDebugNodeSnapshot graphNode = builder.CreateNode(0, graphName, "PlayableGraph");
             graphNode.isConnected = true;
             graphNode.isActive = graph.IsPlaying();
             graphNode.details = $"Time Update Mode: {graph.GetTimeUpdateMode()}";
@@ -50,7 +51,7 @@ namespace XAnimationEngine
 
             return new XAnimationDebugGraphSnapshot
             {
-                graphName = graph.GetEditorName(),
+                graphName = graphName,
                 isValid = true,
                 isPlaying = graph.IsPlaying(),
                 isDisposed = false,
@@ -59,6 +60,15 @@ namespace XAnimationEngine
                 channels = channels,
                 rootNodes = new[] { graphNode },
             };
+        }
+
+        private static string GetGraphName(PlayableGraph graph, string animatorName)
+        {
+#if UNITY_EDITOR
+            string editorName = graph.GetEditorName();
+            if (!string.IsNullOrEmpty(editorName)) return editorName;
+#endif
+            return !string.IsNullOrEmpty(animatorName) ? $"XAnimationDriver_{animatorName}" : "PlayableGraph";
         }
 
         private static void BuildDirectChannelOutput(
