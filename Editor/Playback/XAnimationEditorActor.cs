@@ -325,8 +325,10 @@ namespace XAnimationEditor
 
         public XAnimationChannelState GetChannelState(string channelName)
         {
-            return m_Driver != null && !string.IsNullOrWhiteSpace(channelName)
-                ? m_Driver.GetChannelState(channelName)
+            return m_Driver != null &&
+                   !string.IsNullOrWhiteSpace(channelName) &&
+                   m_Driver.TryGetCurrentState(channelName, out XAnimationChannelState state)
+                ? state
                 : null;
         }
 

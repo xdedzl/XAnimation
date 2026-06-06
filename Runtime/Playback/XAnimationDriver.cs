@@ -294,7 +294,12 @@ namespace XAnimationEngine
 
         public bool TryGetCurrentState(string channelName, out XAnimationChannelState state)
         {
-            EnsureInitialized();
+            state = null;
+            if (!m_Runtime.IsInitialized)
+            {
+                return false;
+            }
+
             return m_Runtime.TryGetCurrentState(channelName, out state);
         }
 

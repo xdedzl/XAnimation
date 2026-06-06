@@ -797,7 +797,7 @@ namespace XAnimationEditor
             try
             {
                 string channelName = FindPlayingChannelForState(actor, state.key) ?? state.channelName;
-                XAnimationChannelState channelState = string.IsNullOrWhiteSpace(channelName) ? null : actor.GetChannelState(channelName);
+                XAnimationChannelState channelState = TryGetActorChannelState(actor, channelName, out XAnimationChannelState runtimeState) ? runtimeState : null;
                 bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
                 if (isPlaying)
                 {
@@ -861,7 +861,7 @@ namespace XAnimationEditor
 
             try
             {
-                XAnimationChannelState channelState = actor.GetChannelState(channelName);
+                XAnimationChannelState channelState = TryGetActorChannelState(actor, channelName, out XAnimationChannelState runtimeState) ? runtimeState : null;
                 bool isPlaying = channelState != null && string.Equals(channelState.clipKey, clip.key, StringComparison.Ordinal);
                 if (isPlaying)
                 {
@@ -1136,7 +1136,7 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                XAnimationChannelState state = actor.GetChannelState(channel.name);
+                XAnimationChannelState state = GetChannelState(actor, channel.name);
                 if (state != null && string.Equals(state.stateKey, stateKey, StringComparison.Ordinal))
                 {
                     return channel.name;
@@ -1160,7 +1160,15 @@ namespace XAnimationEditor
                 return controller.GetChannelState(channelName);
             }
 
-            return actor != null ? actor.GetChannelState(channelName) : null;
+            return TryGetActorChannelState(actor, channelName, out XAnimationChannelState state) ? state : null;
+        }
+
+        private static bool TryGetActorChannelState(XAnimationActor actor, string channelName, out XAnimationChannelState state)
+        {
+            state = null;
+            return actor != null &&
+                   !string.IsNullOrWhiteSpace(channelName) &&
+                   actor.TryGetCurrentState(channelName, out state);
         }
 
         private string GetSelectedChannelName()
