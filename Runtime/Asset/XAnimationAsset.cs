@@ -139,6 +139,56 @@ namespace XAnimationEngine
                 extension,
                 StringComparison.OrdinalIgnoreCase);
         }
+
+        internal static IReadOnlyList<string> GetReferencedAnimationAssetPaths(IReadOnlyList<XAnimationClipConfig> clips)
+        {
+            if (clips == null || clips.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> paths = new();
+            HashSet<string> uniquePaths = new(StringComparer.Ordinal);
+            for (int i = 0; i < clips.Count; i++)
+            {
+                AddReferencedAnimationAssetPath(paths, uniquePaths, clips[i]?.clipPath);
+            }
+
+            return paths.Count == 0 ? Array.Empty<string>() : paths;
+        }
+
+        internal static IReadOnlyList<string> GetReferencedAnimationAssetPaths(IReadOnlyList<XAnimationOverrideClipConfig> clips)
+        {
+            if (clips == null || clips.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> paths = new();
+            HashSet<string> uniquePaths = new(StringComparer.Ordinal);
+            for (int i = 0; i < clips.Count; i++)
+            {
+                AddReferencedAnimationAssetPath(paths, uniquePaths, clips[i]?.clipPath);
+            }
+
+            return paths.Count == 0 ? Array.Empty<string>() : paths;
+        }
+
+        private static void AddReferencedAnimationAssetPath(List<string> paths, HashSet<string> uniquePaths, string clipPath)
+        {
+            if (string.IsNullOrWhiteSpace(clipPath))
+            {
+                return;
+            }
+
+            XAnimationClipPathUtility.Split(clipPath, out string assetPath, out _);
+            if (string.IsNullOrWhiteSpace(assetPath) || !uniquePaths.Add(assetPath))
+            {
+                return;
+            }
+
+            paths.Add(assetPath);
+        }
     }
 
     public enum XAnimationChannelLayerType
@@ -290,6 +340,11 @@ namespace XAnimationEngine
         public XAnimationDefaultTransitionConfig[] defaultTransitions = Array.Empty<XAnimationDefaultTransitionConfig>();
         public XAnimationParameterConfig[] parameters = Array.Empty<XAnimationParameterConfig>();
         public XAnimationCueConfig[] cues = Array.Empty<XAnimationCueConfig>();
+
+        public IReadOnlyList<string> GetReferencedAnimationAssetPaths()
+        {
+            return XAnimationAssetUtility.GetReferencedAnimationAssetPaths(clips);
+        }
     }
 
     [Serializable]
@@ -306,6 +361,11 @@ namespace XAnimationEngine
         public string baseAssetPath;
         public string DefaultPrefabPath;
         public XAnimationOverrideClipConfig[] clips = Array.Empty<XAnimationOverrideClipConfig>();
+
+        public IReadOnlyList<string> GetReferencedAnimationAssetPaths()
+        {
+            return XAnimationAssetUtility.GetReferencedAnimationAssetPaths(clips);
+        }
     }
 
     public sealed class XAnimationCompiledChannel
@@ -375,8 +435,7 @@ namespace XAnimationEngine
             AnimationClip clip = m_Resolver.LoadAnimationClip(Config.clipPath);
             if (clip == null)
             {
-                string message = $"XAnimation clip '{Key}' failed to load AnimationClip at '{Config.clipPath}'.";
-                Debug.LogError($"[XFramework] {message}");
+                string message = $"XAnimation clip '{Key}' failed to load AnimationClip at '{Config.clipPath}'. Resolver: {m_Resolver.GetType().Name}";
                 throw new XAnimationException(message);
             }
 

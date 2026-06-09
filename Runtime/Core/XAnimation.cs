@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using UnityEngine;
 
 #if UNITY_EDITOR
@@ -11,8 +12,8 @@ namespace XAnimationEngine
 {
     public interface IXAnimationResLoader
     {
-        UObject Load(string assetPath, Type assetType);
-        UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType);
+        T Load<T>(string assetPath) where T : UObject;
+        T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject;
     }
 
     public static class XAnimation
@@ -31,7 +32,7 @@ namespace XAnimationEngine
                 return null;
             }
             
-            return LoadAsset(assetPath, typeof(T)) as T;
+            return LoadAsset<T>(assetPath);
         }
 
         public static T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject
@@ -46,17 +47,12 @@ namespace XAnimationEngine
                 return Load<T>(assetPath);
             }
 
-            return LoadSubAsset(assetPath, subAssetName, typeof(T)) as T;
+            return EnsureResLoader().LoadSubAsset<T>(assetPath, subAssetName);
         }
 
-        private static UObject LoadAsset(string assetPath, Type assetType)
+        private static T LoadAsset<T>(string assetPath) where T : UObject
         {
-            return EnsureResLoader().Load(assetPath, assetType);
-        }
-
-        private static UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType)
-        {
-            return EnsureResLoader().LoadSubAsset(assetPath, subAssetName, assetType);
+            return EnsureResLoader().Load<T>(assetPath);
         }
 
         private static IXAnimationResLoader EnsureResLoader()
@@ -82,25 +78,21 @@ namespace XAnimationEngine
 #if UNITY_EDITOR
     internal sealed class XAnimationEditorResLoader : IXAnimationResLoader
     {
-        public UObject Load(string assetPath, Type assetType)
+        public T Load<T>(string assetPath) where T : UObject
         {
-            return AssetDatabase.LoadAssetAtPath(assetPath, assetType);
+            return AssetDatabase.LoadAssetAtPath<T>(assetPath);
         }
 
-        public UObject LoadSubAsset(string assetPath, string subAssetName, Type assetType)
+        public T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject
         {
-            UObject[] assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
-            foreach (UObject asset in assets)
+            if (string.IsNullOrWhiteSpace(assetPath) || string.IsNullOrWhiteSpace(subAssetName))
             {
-                if (asset != null &&
-                    assetType.IsInstanceOfType(asset) &&
-                    string.Equals(asset.name, subAssetName, StringComparison.Ordinal))
-                {
-                    return asset;
-                }
+                return null;
             }
 
-            return null;
+            return AssetDatabase.LoadAllAssetsAtPath(assetPath)
+                .OfType<T>()
+                .FirstOrDefault(asset => string.Equals(asset.name, subAssetName, StringComparison.Ordinal));
         }
     }
 #endif
