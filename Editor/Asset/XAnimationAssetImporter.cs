@@ -69,9 +69,4 @@ namespace XAnimationEditor
     public class XAnimationAssetImporter : XAnimationAssetImporterBase
     {
     }
-
-    [ScriptedImporter(1, "xanimationoverride")]
-    public class XAnimationOverrideAssetImporter : XAnimationAssetImporterBase
-    {
-    }
 }

@@ -544,12 +544,8 @@ namespace XAnimationEditor
                 objectType = typeof(TextAsset),
                 allowSceneObjects = false
             };
-            m_AssetField.tooltip = "要加载和编辑的 XAnimation .xanimation 或 .xanimationoverride。";
-            m_AssetField.RegisterValueChangedCallback(evt =>
-            {
-                m_SelectedAsset = evt.newValue as TextAsset;
-                RefreshAssetsToolbarButtons();
-            });
+            m_AssetField.tooltip = "当前打开的 XAnimation 资源，只读显示。请从 Project 中打开其他 .xanimation 或 .xanimationoverride。";
+            m_AssetField.SetEnabled(false);
 
             m_AssetField.style.flexGrow = 1;
             m_AssetField.style.flexBasis = 0;
@@ -557,6 +553,30 @@ namespace XAnimationEditor
             m_AssetField.style.marginBottom = 0;
             m_AssetField.style.marginLeft = 0;
             assetRow.Add(m_AssetField);
+
+            m_BaseAssetRow = new VisualElement();
+            m_BaseAssetRow.style.flexDirection = FlexDirection.Row;
+            m_BaseAssetRow.style.alignItems = Align.Center;
+            m_BaseAssetRow.style.marginTop = 4;
+            assetsBar.Add(m_BaseAssetRow);
+
+            m_BaseAssetField = new ObjectField()
+            {
+                label = "BaseAsset",
+                objectType = typeof(TextAsset),
+                allowSceneObjects = false
+            };
+            m_BaseAssetField.tooltip = "XAnimationOverride 继承的基础 .xanimation 资源。";
+            m_BaseAssetField.RegisterValueChangedCallback(evt =>
+            {
+                SetSelectedOverrideBaseAsset(evt.newValue as TextAsset);
+            });
+            m_BaseAssetField.style.flexGrow = 1;
+            m_BaseAssetField.style.flexBasis = 0;
+            m_BaseAssetField.style.minWidth = 0;
+            m_BaseAssetField.style.marginBottom = 0;
+            m_BaseAssetField.style.marginLeft = 0;
+            m_BaseAssetRow.Add(m_BaseAssetField);
 
             RefreshAssetsToolbarButtons();
             return assetsBar;

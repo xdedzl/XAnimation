@@ -386,14 +386,24 @@ namespace XAnimationEngine
     public sealed class XAnimationCompiledClip
     {
         private readonly IXAnimationAssetResolver m_Resolver;
+        private readonly XAnimationLoadedAssetRegistry m_LoadedAssets;
         private AnimationClip m_Clip;
         private AnimationClip m_PlaybackClip;
         private XAnimationCompiledCue[] m_AnimationEventCues;
 
         public XAnimationCompiledClip(XAnimationClipConfig config, IXAnimationAssetResolver resolver)
+            : this(config, resolver, null)
+        {
+        }
+
+        internal XAnimationCompiledClip(
+            XAnimationClipConfig config,
+            IXAnimationAssetResolver resolver,
+            XAnimationLoadedAssetRegistry loadedAssets = null)
         {
             Config = config ?? throw new ArgumentNullException(nameof(config));
             m_Resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+            m_LoadedAssets = loadedAssets;
         }
 
         public XAnimationCompiledClip(
@@ -439,7 +449,7 @@ namespace XAnimationEngine
                 throw new XAnimationException(message);
             }
 
-            m_Clip = clip;
+            m_Clip = m_LoadedAssets?.Track(clip) ?? clip;
             return m_Clip;
         }
 
@@ -773,7 +783,7 @@ namespace XAnimationEngine
         public override IReadOnlyList<int> ClipIndices => m_ClipIndices;
     }
 
-    public sealed class XAnimationCompiledAsset
+    public sealed class XAnimationCompiledAsset : IDisposable
     {
         private readonly Dictionary<string, int> m_ChannelIndexByName;
         private readonly Dictionary<string, int> m_ClipIndexByKey;
@@ -781,6 +791,7 @@ namespace XAnimationEngine
         private readonly Dictionary<string, int> m_StateIndexByKey;
         private readonly Dictionary<string, int> m_AutoTransitionIndexByPreStateKey;
         private readonly Dictionary<string, int> m_DefaultTransitionIndexByPairKey;
+        private readonly XAnimationLoadedAssetRegistry m_LoadedAssets;
 
         public XAnimationCompiledAsset(
             XAnimationAsset asset,
@@ -797,6 +808,41 @@ namespace XAnimationEngine
             Dictionary<string, int> stateIndexByKey,
             Dictionary<string, int> autoTransitionIndexByPreStateKey,
             Dictionary<string, int> defaultTransitionIndexByPairKey)
+            : this(
+                asset,
+                channels,
+                clips,
+                states,
+                autoTransitions,
+                defaultTransitions,
+                parameters,
+                cuesByClipKey,
+                channelIndexByName,
+                clipIndexByKey,
+                parameterIndexByName,
+                stateIndexByKey,
+                autoTransitionIndexByPreStateKey,
+                defaultTransitionIndexByPairKey,
+                null)
+        {
+        }
+
+        internal XAnimationCompiledAsset(
+            XAnimationAsset asset,
+            XAnimationCompiledChannel[] channels,
+            XAnimationCompiledClip[] clips,
+            XAnimationCompiledState[] states,
+            XAnimationCompiledAutoTransition[] autoTransitions,
+            XAnimationCompiledDefaultTransition[] defaultTransitions,
+            XAnimationCompiledParameter[] parameters,
+            Dictionary<string, List<XAnimationCompiledCue>> cuesByClipKey,
+            Dictionary<string, int> channelIndexByName,
+            Dictionary<string, int> clipIndexByKey,
+            Dictionary<string, int> parameterIndexByName,
+            Dictionary<string, int> stateIndexByKey,
+            Dictionary<string, int> autoTransitionIndexByPreStateKey,
+            Dictionary<string, int> defaultTransitionIndexByPairKey,
+            XAnimationLoadedAssetRegistry loadedAssets)
         {
             Asset = asset ?? throw new ArgumentNullException(nameof(asset));
             Channels = channels ?? Array.Empty<XAnimationCompiledChannel>();
@@ -812,6 +858,7 @@ namespace XAnimationEngine
             m_StateIndexByKey = stateIndexByKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_AutoTransitionIndexByPreStateKey = autoTransitionIndexByPreStateKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_DefaultTransitionIndexByPairKey = defaultTransitionIndexByPairKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
+            m_LoadedAssets = loadedAssets;
         }
 
         public XAnimationAsset Asset { get; }
@@ -823,6 +870,11 @@ namespace XAnimationEngine
         public IReadOnlyList<XAnimationCompiledParameter> Parameters { get; }
         public IReadOnlyDictionary<string, List<XAnimationCompiledCue>> CuesByClipKey { get; }
         public bool RootMotionEnabled => Asset.rootMotion;
+
+        public void Dispose()
+        {
+            m_LoadedAssets?.Dispose();
+        }
 
         public bool TryGetChannelIndex(string channelName, out int channelIndex)
         {

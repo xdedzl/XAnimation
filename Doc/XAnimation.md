@@ -92,6 +92,7 @@ flowchart TD
 - 预览窗口会在当前 tab 真正可见时才推进动画和执行渲染；如果窗口被其他 tab 或其他编辑器界面覆盖，会自动暂停后台预览，避免持续占用编辑器 CPU / GPU。
 - 预览窗口始终使用 `Manual` 更新模式，以保证暂停、单帧步进、Seek、Cue Log 和调试图显示都可控且可复现；运行时 `XAnimationActor.UpdateMode` 不会影响预览。
 - 预览窗口的相机渲染默认走稳定优先配置：关闭 HDR 与 MSAA，以降低 Unity 6000 + D3D12 下的预览渲染压力。
+- 预览窗口使用 `PreviewRenderUtility` 离屏实例渲染 prefab。若同一模型挂 `XAnimationActor` 后在场景 Inspector 预览正常，但在 `XAnimation Preview` 中出现头部正常、身体蒙皮异常等问题，优先检查离屏预览下 `SkinnedMeshRenderer` 的刷新条件；Preview 实例会强制开启 `updateWhenOffscreen` 和 `forceMatrixRecalculationPerRender`，避免 EditMode 离屏渲染时蒙皮矩阵或 Bounds 未稳定刷新。
 - 调试 UI 采用“局部连续刷新 + 事件驱动刷新”：
   - `Channel` 调试区中的 `normalizedTime / totalNormalizedTime / weight / speed / nextStateKey / Blend` 等连续数值，会在预览可见且动画实际推进时同步更新。
   - `State / Clip` 高亮、暂停 / 停止按钮状态、`Cue Log` 列表等非连续区域，只会在播放状态变化、Cue 追加或用户操作时刷新。
@@ -459,10 +460,13 @@ handle.OnExit(result =>
 
 如果业务不想自己维护 `XAnimationDriver` 生命周期，可以直接挂 `XAnimationActor`：
 
-- `XAnimationActor` 会在 `Awake` / `Start` 中帮你处理初始化和可选的起始 state，并通过 `UpdateMode` 选择 `Manual` 或 `GameTime` 更新；如果业务订阅 `NativeRootMotionApplied`，Actor 会按需挂桥接组件接收 Unity 原生 `OnAnimatorMove()`。
+- `XAnimationActor` 会在 `Awake` 中帮你处理初始化和可选的起始 state，并通过 `UpdateMode` 选择 `Manual` 或 `GameTime` 更新；如果业务订阅 `NativeRootMotionApplied`，Actor 会按需挂桥接组件接收 Unity 原生 `OnAnimatorMove()`。
 - 它本质上只是 `XAnimationDriver` 的 `MonoBehaviour` 包装层，不会引入额外状态机语义。
 - 适合做角色预制体上的直接挂载；如果你需要更细粒度的接管，仍建议直接持有 `XAnimationDriver`。
 - 如果业务需要自己消费原生 Root Motion，可订阅 `XAnimationActor.NativeRootMotionApplied`，在回调中自行把 `Animator.deltaPosition / deltaRotation` 应用到 `CharacterController`、`NavMeshAgent` 或其他运动系统。
+- 运行时代码设置 `Animator`、`UpdateMode`、`UnityAnimationEventsEnabled`、`AnimationAsset` 时，Actor 会按当前字段是否齐全自动判断能否初始化。
+- 初始化成功后再修改 `Animator`、`UpdateMode`、`UnityAnimationEventsEnabled` 会抛出 `XAnimationException`。如果运行时需要指定这些初始化参数，应先设置它们，再设置 `AnimationAsset`。
+- `AnimationAsset` 可以随时设置；如果 Actor 已初始化，赋新值会释放旧 Runtime 并用新资源重新初始化。热切资源会停止旧播放，不会自动续播同名 state，也不会自动播放 `Start State Key`。
 
 运行关系可以简单理解为：
 
@@ -534,7 +538,7 @@ driver.SetGlobalSpeed(1f);
 
 - XAnimation 默认关闭 Unity 原生 `AnimationEvent`，内部通过 `Animator.fireEvents = false` 实现，不修改也不复制原始 `AnimationClip`。
 - 关闭 Unity 原生 `AnimationEvent` 只影响 Unity 对目标 GameObject 的函数回调，不影响 XAnimation 从 `AnimationClip.events` 读取数据并派生 Cue。
-- 如果业务需要保留 Unity 原生 `AnimationEvent`，可以设置 `XAnimationActor.UnityAnimationEventsEnabled = true` 或调用 `XAnimationDriver.SetUnityAnimationEventsEnabled(true)`。此时若目标对象没有对应函数，Unity 仍会按原生规则报错。
+- 如果业务需要保留 Unity 原生 `AnimationEvent`，可以在 `XAnimationActor` 初始化前设置 `UnityAnimationEventsEnabled = true`，或调用 `XAnimationDriver.SetUnityAnimationEventsEnabled(true)`。此时若目标对象没有对应函数，Unity 仍会按原生规则报错。
 - `XAnimation Preview` 始终关闭 Unity 原生 `AnimationEvent`，预览事件观察以 Cue Log 为准。
 
 ---
@@ -597,6 +601,8 @@ driver.SetGlobalSpeed(1f);
 - `AvatarMask`：调用当前 `IXAnimationResLoader.Load(maskPath, typeof(AvatarMask))`。
 
 编辑器下框架默认使用 `AssetDatabase` 实现 `IXAnimationResLoader`，可以直接加载工程资源。Player 下框架不会默认绑定 `ResourceManager` / Addressables / AssetBundle；项目层需要在启动阶段调用 `XAnimation.SetResLoader(...)` 注入自己的同步资源加载实现。
+
+运行时通过 `IXAnimationResLoader.Load` / `LoadSubAsset` 成功加载的资源会记录在当前 `XAnimationCompiledAsset` 生命周期内；`XAnimationDriver.Dispose()` / `XAnimationActor.OnDestroy()` / 重新初始化旧资源时会调用 `IXAnimationResLoader.Release` 归还这些资源引用。
 
 加载时机：
 

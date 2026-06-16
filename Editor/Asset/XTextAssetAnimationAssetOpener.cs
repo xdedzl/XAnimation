@@ -113,7 +113,10 @@ namespace XAnimationEditor
 
         private static bool OpenAnimationAsset(TextAsset textAsset)
         {
-            if (textAsset == null || !XAnimationEngine.XAnimationAssetLoader.IsXAnimationAssetText(textAsset.text))
+            if (textAsset == null ||
+                !XAnimationAssetUtility.TryReadMetaInfo(textAsset.text, out XAnimationMetaInfo metaInfo) ||
+                (metaInfo.typeAlias != XAnimationAssetUtility.AnimationAssetAlias &&
+                 metaInfo.typeAlias != XAnimationAssetUtility.AnimationOverrideAlias))
             {
                 return false;
             }

@@ -226,6 +226,7 @@ namespace XAnimationEditor
 
         private ObjectField m_PrefabField;
         private ObjectField m_AssetField;
+        private ObjectField m_BaseAssetField;
         private Button m_ReloadPreviewButton;
         private Button m_SaveCurrentPrefabAsDefaultButton;
         private Button m_ResetPrefabToDefaultButton;
@@ -258,6 +259,7 @@ namespace XAnimationEditor
         private VisualElement m_ClipListView;
         private ScrollView m_InspectorScrollView;
         private VisualElement m_InspectorOverlayLayer;
+        private VisualElement m_BaseAssetRow;
         private VisualElement m_SettingGroupContainer;
         private VisualElement m_MainGroupContainer;
         private VisualElement m_ClipGroupContainer;

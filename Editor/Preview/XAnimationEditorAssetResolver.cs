@@ -79,6 +79,10 @@ namespace XAnimationEditor
         {
             return AssetDatabase.LoadAssetAtPath<AvatarMask>(assetPath);
         }
+
+        public void Release(UnityEngine.Object asset)
+        {
+        }
     }
 }
 #endif

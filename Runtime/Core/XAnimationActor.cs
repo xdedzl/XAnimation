@@ -3,17 +3,6 @@ using UnityEngine;
 
 namespace XAnimationEngine
 {
-    public struct XAnimationActorInfo
-    {
-        public TextAsset animationAsset;
-        public Animator animator;
-        public XAnimationUpdateMode updateMode;
-        public bool playOnStart;
-        public string startStateKey;
-        public bool unityAnimationEventsEnabled;
-    }
-    
-    
     [DisallowMultipleComponent]
     [AddComponentMenu("XAnimation/XAnimation Actor")]
     public sealed class XAnimationActor : MonoBehaviour
@@ -28,13 +17,44 @@ namespace XAnimationEngine
 
         private readonly XAnimationDriver m_Driver = new();
         private bool m_PausedByDisable;
+        private bool m_Initialized;
         private Action<Animator, Vector3, Quaternion> m_NativeRootMotionApplied;
         private Action<Animator> m_OnAnimatorMove = IgnoreAnimatorMove;
         
         private XAnimationRootMotionBridge m_RootMotionBridge;
 
-        public TextAsset AnimationAsset => m_AnimationAsset;
-        public Animator Animator => m_Animator;
+        public TextAsset AnimationAsset
+        {
+            get => m_AnimationAsset;
+            set
+            {
+                if (m_AnimationAsset == value)
+                {
+                    return;
+                }
+
+                m_AnimationAsset = value;
+                if (m_Initialized)
+                {
+                    TryInitialize(false, true);
+                    return;
+                }
+
+                TryInitialize(false, false);
+            }
+        }
+
+        public Animator Animator
+        {
+            get => m_Animator;
+            set
+            {
+                ThrowIfInitialized(nameof(Animator));
+                m_Animator = value;
+                TryInitialize(false, false);
+            }
+        }
+
         public bool IsPaused => m_Driver.IsPaused;
         public event Action<XAnimationCueEvent> CueTriggered
         {
@@ -86,14 +106,26 @@ namespace XAnimationEngine
             get => m_UpdateMode;
             set
             {
-                m_Driver.SetUpdateMode(value);
+                ThrowIfInitialized(nameof(UpdateMode));
                 m_UpdateMode = value;
+                TryInitialize(false, false);
+            }
+        }
+
+        public bool UnityAnimationEventsEnabled
+        {
+            get => m_UnityAnimationEventsEnabled;
+            set
+            {
+                ThrowIfInitialized(nameof(UnityAnimationEventsEnabled));
+                m_UnityAnimationEventsEnabled = value;
+                TryInitialize(false, false);
             }
         }
 
         private void Awake()
         {
-            Initialize();
+            TryInitialize(true, false);
         }
 
         private void OnEnable()
@@ -122,22 +154,11 @@ namespace XAnimationEngine
         {
             UnbindRootMotionBridge();
             m_Driver.Dispose();
+            m_Initialized = false;
             m_PausedByDisable = false;
         }
-        
-        public void SetInfo(XAnimationActorInfo info)
-        {
-            m_Driver.SetUpdateMode(info.updateMode);
-            m_AnimationAsset = info.animationAsset;
-            m_Animator = info.animator;
-            m_UpdateMode = info.updateMode;
-            m_PlayOnStart = info.playOnStart;
-            m_StartStateKey = info.startStateKey;
-            m_UnityAnimationEventsEnabled = info.unityAnimationEventsEnabled;
-            m_GlobalSpeed = 1f;
-        }
 
-        public void Initialize()
+        private bool TryInitialize(bool playConfiguredStartState, bool logWarnings)
         {
             if (m_Animator == null)
             {
@@ -146,19 +167,36 @@ namespace XAnimationEngine
             
             if (m_AnimationAsset == null)
             {
-                Debug.LogWarning($"{nameof(XAnimationActor)} requires an XAnimation TextAsset.");
-                return;
+                ResetRuntime();
+                if (logWarnings)
+                {
+                    Debug.LogWarning($"{nameof(XAnimationActor)} requires an XAnimation TextAsset.");
+                }
+
+                return false;
             }
 
             if (m_Animator == null)
             {
-                Debug.LogWarning($"{nameof(XAnimationActor)} requires an Animator.");
-                return;
+                ResetRuntime();
+                if (logWarnings)
+                {
+                    Debug.LogWarning($"{nameof(XAnimationActor)} requires an Animator.");
+                }
+
+                return false;
             }
-            
+
+            if (m_Initialized)
+            {
+                m_Driver.Dispose();
+            }
+
+            m_Initialized = false;
             m_Driver.SetUpdateMode(m_UpdateMode);
             m_Driver.SetUnityAnimationEventsEnabled(m_UnityAnimationEventsEnabled);
             m_Driver.Initialize(m_AnimationAsset, m_Animator);
+            m_Initialized = true;
             m_Driver.SetGlobalSpeed(m_GlobalSpeed);
             m_Driver.SetUnityAnimationEventsEnabled(m_UnityAnimationEventsEnabled);
             if (!isActiveAndEnabled)
@@ -172,11 +210,12 @@ namespace XAnimationEngine
                 m_Driver.Resume();
             }
 
-            if (m_PlayOnStart && !string.IsNullOrWhiteSpace(m_StartStateKey))
+            if (playConfiguredStartState && m_PlayOnStart && !string.IsNullOrWhiteSpace(m_StartStateKey))
             {
                 PlayState(m_StartStateKey);
             }
             SyncRootMotionBridge();
+            return true;
         }
 
         public XAnimationPlaybackHandle PlayClip(string clipName, string channelName, XAnimationTransitionOptions transition = null)
@@ -422,6 +461,22 @@ namespace XAnimationEngine
 
             m_RootMotionBridge = null;
             m_OnAnimatorMove = IgnoreAnimatorMove;
+        }
+
+        private void ResetRuntime()
+        {
+            UnbindRootMotionBridge();
+            m_Driver.Dispose();
+            m_Initialized = false;
+            m_PausedByDisable = false;
+        }
+
+        private void ThrowIfInitialized(string propertyName)
+        {
+            if (m_Initialized)
+            {
+                throw new XAnimationException($"{nameof(XAnimationActor)}.{propertyName} cannot be changed after initialization.");
+            }
         }
 
         private static void IgnoreAnimatorMove(Animator animator)

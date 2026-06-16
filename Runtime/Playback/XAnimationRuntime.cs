@@ -384,10 +384,13 @@ namespace XAnimationEngine
 
         private void DisposeRuntime()
         {
+            XAnimationCompiledAsset compiledAsset = m_CompiledAsset;
+            m_CompiledAsset = null;
             m_PlaybackController.Reset();
             if (!m_RuntimeInitialized)
             {
                 m_CueRuntime.Clear();
+                compiledAsset?.Dispose();
                 return;
             }
 
@@ -407,6 +410,7 @@ namespace XAnimationEngine
             RestoreAnimatorController();
             m_CueRuntime.Clear();
             m_RuntimeInitialized = false;
+            compiledAsset?.Dispose();
         }
 
         private void BuildGraph()

@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
 using UnityEngine;
+
+using UObject = UnityEngine.Object;
 
 namespace XAnimationEngine
 {
@@ -7,6 +11,7 @@ namespace XAnimationEngine
         TextAsset LoadTextAsset(string assetPath);
         AnimationClip LoadAnimationClip(string assetPath);
         AvatarMask LoadAvatarMask(string assetPath);
+        void Release(UObject asset);
     }
 
     public sealed class XAnimationRuntimeAssetResolver : IXAnimationAssetResolver
@@ -30,6 +35,56 @@ namespace XAnimationEngine
         public AvatarMask LoadAvatarMask(string assetPath)
         {
             return XAnimation.Load<AvatarMask>(assetPath);
+        }
+
+        public void Release(UObject asset)
+        {
+            XAnimation.Release(asset);
+        }
+    }
+
+    internal sealed class XAnimationLoadedAssetRegistry : IDisposable
+    {
+        private readonly IXAnimationAssetResolver m_Resolver;
+        private readonly List<UObject> m_Assets = new();
+        private bool m_Disposed;
+
+        internal XAnimationLoadedAssetRegistry(IXAnimationAssetResolver resolver)
+        {
+            m_Resolver = resolver ?? throw new ArgumentNullException(nameof(resolver));
+        }
+
+        internal T Track<T>(T asset) where T : UObject
+        {
+            if (asset == null)
+            {
+                return null;
+            }
+
+            if (m_Disposed)
+            {
+                m_Resolver.Release(asset);
+                return asset;
+            }
+
+            m_Assets.Add(asset);
+            return asset;
+        }
+
+        public void Dispose()
+        {
+            if (m_Disposed)
+            {
+                return;
+            }
+
+            m_Disposed = true;
+            for (int i = m_Assets.Count - 1; i >= 0; i--)
+            {
+                m_Resolver.Release(m_Assets[i]);
+            }
+
+            m_Assets.Clear();
         }
     }
 }

@@ -128,6 +128,7 @@ namespace XAnimationEditor
             m_Animator.enabled = true;
             m_Animator.applyRootMotion = false;
             m_Animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+            ConfigurePreviewSkinnedMeshRenderers();
 
             m_PreviewUtility.AddSingleGO(m_Instance);
 
@@ -3116,6 +3117,27 @@ namespace XAnimationEditor
                 ParticleSystem particleSystem = particleSystems[i];
                 particleSystem.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 particleSystem.gameObject.SetActive(false);
+            }
+        }
+
+        private void ConfigurePreviewSkinnedMeshRenderers()
+        {
+            if (m_Instance == null)
+            {
+                return;
+            }
+
+            SkinnedMeshRenderer[] renderers = m_Instance.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                SkinnedMeshRenderer renderer = renderers[i];
+                if (renderer == null)
+                {
+                    continue;
+                }
+
+                renderer.updateWhenOffscreen = true;
+                renderer.forceMatrixRecalculationPerRender = true;
             }
         }
 

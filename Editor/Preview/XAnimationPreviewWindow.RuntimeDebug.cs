@@ -362,7 +362,13 @@ namespace XAnimationEditor
                 m_PrefabField.SetValueWithoutNotify(m_SelectedPrefab);
             }
 
-            bool shouldAutoLoad = m_PendingAutoLoad && m_AssetField.value != null && m_PrefabField.value != null;
+            TextAsset assetText = m_AssetField.value as TextAsset;
+            GameObject prefab = m_PrefabField.value as GameObject;
+            bool canLoadAsset = assetText != null &&
+                                (!TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset) ||
+                                 !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath));
+            bool shouldAutoLoad = m_PendingAutoLoad && canLoadAsset && prefab != null;
+            bool shouldShowAssetOnly = m_PendingAutoLoad && assetText != null && !shouldAutoLoad;
 
             m_PendingAsset = null;
             m_PendingPrefab = null;
@@ -371,6 +377,13 @@ namespace XAnimationEditor
             if (shouldAutoLoad)
             {
                 LoadPreview();
+            }
+            else if (shouldShowAssetOnly)
+            {
+                SetDebugToolbarGroup(DebugToolbarGroup.Setting);
+                SetStatus(canLoadAsset
+                    ? "已打开 XAnimation 资源；当前没有可用 Prefab，暂不加载模型。"
+                    : "已打开 XAnimationOverride 资源；请在 Setting 设置 BaseAsset，暂不加载模型。");
             }
 
             RefreshAssetsToolbarButtons();
@@ -474,6 +487,31 @@ namespace XAnimationEditor
             return prefab;
         }
 
+        private static bool TryGetOverrideAsset(TextAsset assetText, out XAnimationOverrideAsset overrideAsset)
+        {
+            overrideAsset = null;
+            if (assetText == null ||
+                !XAnimationAssetUtility.TryReadMetaInfo(assetText.text, out XAnimationMetaInfo metaInfo) ||
+                !string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationOverrideAlias, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            overrideAsset = assetText.ToXAnimationAsset<XAnimationOverrideAsset>();
+            return overrideAsset != null;
+        }
+
+        private static bool IsBaseAnimationAsset(TextAsset assetText)
+        {
+            if (assetText == null ||
+                !XAnimationAssetUtility.TryReadMetaInfo(assetText.text, out XAnimationMetaInfo metaInfo))
+            {
+                return false;
+            }
+
+            return string.Equals(metaInfo.typeAlias, XAnimationAssetUtility.AnimationAssetAlias, StringComparison.Ordinal);
+        }
+
         private bool TryGetDefaultPrefabPath(TextAsset assetText, out string defaultPrefabPath)
         {
             defaultPrefabPath = string.Empty;
@@ -482,12 +520,16 @@ namespace XAnimationEditor
                 return false;
             }
 
-            XAnimationOverrideAsset overrideAsset = assetText.ToXAnimationAsset<XAnimationOverrideAsset>();
-            if (overrideAsset != null && !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+            if (TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset))
             {
                 if (!string.IsNullOrWhiteSpace(overrideAsset.DefaultPrefabPath))
                 {
                     defaultPrefabPath = overrideAsset.DefaultPrefabPath;
+                    return true;
+                }
+
+                if (string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+                {
                     return true;
                 }
 
@@ -517,9 +559,14 @@ namespace XAnimationEditor
                 return false;
             }
 
-            XAnimationOverrideAsset overrideAsset = assetText.ToXAnimationAsset<XAnimationOverrideAsset>();
-            if (overrideAsset != null && !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+            if (TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset))
             {
+                if (string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+                {
+                    editable = false;
+                    return true;
+                }
+
                 TextAsset baseTextAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(overrideAsset.baseAssetPath);
                 if (baseTextAsset == null)
                 {
@@ -553,9 +600,14 @@ namespace XAnimationEditor
                 return false;
             }
 
-            XAnimationOverrideAsset overrideAsset = assetText.ToXAnimationAsset<XAnimationOverrideAsset>();
-            if (overrideAsset != null && !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+            if (TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset))
             {
+                if (string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+                {
+                    editable = false;
+                    return true;
+                }
+
                 TextAsset baseTextAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(overrideAsset.baseAssetPath);
                 if (baseTextAsset == null)
                 {
@@ -693,6 +745,77 @@ namespace XAnimationEditor
                 : "XAnimationOverride 继承 base asset 的 rootMotion 设置，请打开 base .xanimation 修改。";
         }
 
+        private void RefreshOverrideBaseAssetField()
+        {
+            if (m_BaseAssetField == null || m_BaseAssetRow == null)
+            {
+                return;
+            }
+
+            TextAsset assetText = m_AssetField?.value as TextAsset;
+            bool isOverride = TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset);
+            m_BaseAssetRow.style.display = isOverride ? DisplayStyle.Flex : DisplayStyle.None;
+            m_BaseAssetField.SetEnabled(isOverride);
+
+            TextAsset baseTextAsset = null;
+            if (isOverride && !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+            {
+                baseTextAsset = AssetDatabase.LoadAssetAtPath<TextAsset>(overrideAsset.baseAssetPath);
+            }
+
+            m_BaseAssetField.SetValueWithoutNotify(baseTextAsset);
+            m_BaseAssetField.tooltip = isOverride
+                ? "XAnimationOverride 继承的基础 .xanimation 资源。为空时不会加载动画图和模型。"
+                : "只有 .xanimationoverride 资源需要设置 BaseAsset。";
+        }
+
+        private void SetSelectedOverrideBaseAsset(TextAsset baseTextAsset)
+        {
+            TextAsset assetText = m_AssetField?.value as TextAsset;
+            if (!TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset))
+            {
+                RefreshOverrideBaseAssetField();
+                SetStatus("请选择一个 XAnimationOverride 资源后再设置 BaseAsset。", true);
+                return;
+            }
+
+            if (baseTextAsset != null)
+            {
+                if (baseTextAsset == assetText)
+                {
+                    RefreshOverrideBaseAssetField();
+                    SetStatus("Override 的 BaseAsset 不能指向自身。", true);
+                    return;
+                }
+
+                if (!IsBaseAnimationAsset(baseTextAsset))
+                {
+                    RefreshOverrideBaseAssetField();
+                    SetStatus("BaseAsset 必须是基础 .xanimation 资源，不能是 .xanimationoverride。", true);
+                    return;
+                }
+            }
+
+            overrideAsset.baseAssetPath = baseTextAsset == null ? string.Empty : AssetDatabase.GetAssetPath(baseTextAsset);
+            overrideAsset.SaveAsset();
+            RefreshAssetsToolbarButtons();
+
+            if (baseTextAsset != null && m_PrefabField?.value == null)
+            {
+                GameObject defaultPrefab = LoadDefaultPrefabForAsset(assetText);
+                if (defaultPrefab != null)
+                {
+                    m_SelectedPrefab = defaultPrefab;
+                    m_PrefabField.SetValueWithoutNotify(defaultPrefab);
+                    RefreshAssetsToolbarButtons();
+                }
+            }
+
+            SetStatus(string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath)
+                ? "已清空 Override BaseAsset，当前不会加载动画图和模型。"
+                : $"已设置 Override BaseAsset：{overrideAsset.baseAssetPath}");
+        }
+
         private void SaveCurrentPrefabAsDefault()
         {
             GameObject prefab = m_PrefabField?.value as GameObject;
@@ -716,8 +839,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            XAnimationOverrideAsset overrideAsset = assetText.ToXAnimationAsset<XAnimationOverrideAsset>();
-            if (overrideAsset != null && !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath))
+            if (TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset))
             {
                 overrideAsset.DefaultPrefabPath = prefabPath;
                 overrideAsset.SaveAsset();
@@ -783,10 +905,14 @@ namespace XAnimationEditor
             bool matchesDefaultPrefab = hasDefaultPrefab &&
                                         string.Equals(currentPrefabPath, defaultPrefabPath, StringComparison.Ordinal);
             bool showDefaultActions = currentPrefab != null && !matchesDefaultPrefab;
+            bool canLoadAsset = assetText != null &&
+                                (!TryGetOverrideAsset(assetText, out XAnimationOverrideAsset overrideAsset) ||
+                                 !string.IsNullOrWhiteSpace(overrideAsset.baseAssetPath));
 
-            m_ReloadPreviewButton?.SetEnabled(assetText != null && currentPrefab != null);
+            m_ReloadPreviewButton?.SetEnabled(canLoadAsset && currentPrefab != null);
             m_SaveCurrentPrefabAsDefaultButton.style.display = showDefaultActions ? DisplayStyle.Flex : DisplayStyle.None;
             m_ResetPrefabToDefaultButton.style.display = showDefaultActions && hasDefaultPrefab ? DisplayStyle.Flex : DisplayStyle.None;
+            RefreshOverrideBaseAssetField();
             RefreshPreloadToggle();
             RefreshAssetRootMotionToggle();
         }

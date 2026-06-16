@@ -28,14 +28,23 @@ namespace XAnimationEngine
                 throw new XAnimationException("XAnimation assetPath cannot be empty.");
             }
 
-            TextAsset textAsset = m_Resolver.LoadTextAsset(assetPath);
-            if (textAsset == null)
+            XAnimationLoadedAssetRegistry loadedAssets = new(m_Resolver);
+            try
             {
-                throw new XAnimationException($"XAnimation asset missing at '{assetPath}'.");
-            }
+                TextAsset textAsset = loadedAssets.Track(m_Resolver.LoadTextAsset(assetPath));
+                if (textAsset == null)
+                {
+                    throw new XAnimationException($"XAnimation asset missing at '{assetPath}'.");
+                }
 
-            XAnimationAsset asset = LoadAsset(textAsset, assetPath);
-            return Compile(asset);
+                XAnimationAsset asset = LoadAsset(textAsset, assetPath, loadedAssets);
+                return Compile(asset, loadedAssets);
+            }
+            catch
+            {
+                loadedAssets.Dispose();
+                throw;
+            }
         }
 
         public XAnimationCompiledAsset Load(TextAsset textAsset)
@@ -45,8 +54,17 @@ namespace XAnimationEngine
                 throw new XAnimationException("XAnimation TextAsset cannot be null.");
             }
 
-            XAnimationAsset asset = LoadAsset(textAsset, textAsset.name);
-            return Compile(asset);
+            XAnimationLoadedAssetRegistry loadedAssets = new(m_Resolver);
+            try
+            {
+                XAnimationAsset asset = LoadAsset(textAsset, textAsset.name, loadedAssets);
+                return Compile(asset, loadedAssets);
+            }
+            catch
+            {
+                loadedAssets.Dispose();
+                throw;
+            }
         }
 
         public static bool IsXAnimationAssetText(string text)
@@ -74,6 +92,22 @@ namespace XAnimationEngine
 
         public XAnimationCompiledAsset Compile(XAnimationAsset asset)
         {
+            XAnimationLoadedAssetRegistry loadedAssets = new(m_Resolver);
+            try
+            {
+                return Compile(asset, loadedAssets);
+            }
+            catch
+            {
+                loadedAssets.Dispose();
+                throw;
+            }
+        }
+
+        private XAnimationCompiledAsset Compile(
+            XAnimationAsset asset,
+            XAnimationLoadedAssetRegistry loadedAssets)
+        {
             NormalizeStateTransitionGateValues(asset);
             NormalizeAutoTransitionValues(asset);
             NormalizeDefaultTransitionValues(asset);
@@ -87,7 +121,7 @@ namespace XAnimationEngine
                 AvatarMask mask = null;
                 if (!string.IsNullOrWhiteSpace(channelConfig.maskPath))
                 {
-                    mask = m_Resolver.LoadAvatarMask(channelConfig.maskPath);
+                    mask = loadedAssets.Track(m_Resolver.LoadAvatarMask(channelConfig.maskPath));
                     if (mask == null)
                     {
                         throw new XAnimationException($"XAnimation channel '{channelConfig.name}' failed to load AvatarMask at '{channelConfig.maskPath}'.");
@@ -103,7 +137,7 @@ namespace XAnimationEngine
             for (int i = 0; i < asset.clips.Length; i++)
             {
                 XAnimationClipConfig clipConfig = asset.clips[i];
-                compiledClips[i] = new XAnimationCompiledClip(clipConfig, m_Resolver);
+                compiledClips[i] = new XAnimationCompiledClip(clipConfig, m_Resolver, loadedAssets);
                 clipIndexByKey[clipConfig.key] = i;
             }
 
@@ -216,7 +250,8 @@ namespace XAnimationEngine
                 parameterIndexByName,
                 stateIndexByKey,
                 autoTransitionIndexByPreStateKey,
-                defaultTransitionIndexByPairKey);
+                defaultTransitionIndexByPairKey,
+                loadedAssets);
         }
 
         private static void AddCue(
@@ -303,11 +338,14 @@ namespace XAnimationEngine
                 compiledSamples);
         }
 
-        private XAnimationAsset LoadAsset(TextAsset textAsset, string assetPath)
+        private XAnimationAsset LoadAsset(
+            TextAsset textAsset,
+            string assetPath,
+            XAnimationLoadedAssetRegistry loadedAssets)
         {
             if (IsOverrideAssetText(textAsset.text))
             {
-                return LoadOverrideAsset(textAsset, assetPath);
+                return LoadOverrideAsset(textAsset, assetPath, loadedAssets);
             }
 
             XAnimationAsset asset = textAsset.ToXAnimationAsset<XAnimationAsset>();
@@ -319,7 +357,10 @@ namespace XAnimationEngine
             return asset;
         }
 
-        private XAnimationAsset LoadOverrideAsset(TextAsset textAsset, string assetPath)
+        private XAnimationAsset LoadOverrideAsset(
+            TextAsset textAsset,
+            string assetPath,
+            XAnimationLoadedAssetRegistry loadedAssets)
         {
             XAnimationOverrideAsset overrideAsset = textAsset.ToXAnimationAsset<XAnimationOverrideAsset>();
             if (overrideAsset == null)
@@ -329,7 +370,7 @@ namespace XAnimationEngine
 
             ValidateOverrideAsset(overrideAsset, assetPath);
 
-            TextAsset baseTextAsset = m_Resolver.LoadTextAsset(overrideAsset.baseAssetPath);
+            TextAsset baseTextAsset = loadedAssets.Track(m_Resolver.LoadTextAsset(overrideAsset.baseAssetPath));
             if (baseTextAsset == null)
             {
                 throw new XAnimationException($"XAnimation override '{assetPath}' base asset missing at '{overrideAsset.baseAssetPath}'.");

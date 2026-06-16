@@ -14,6 +14,7 @@ namespace XAnimationEngine
     {
         T Load<T>(string assetPath) where T : UObject;
         T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject;
+        void Release(UObject asset);
     }
 
     public static class XAnimation
@@ -48,6 +49,16 @@ namespace XAnimationEngine
             }
 
             return EnsureResLoader().LoadSubAsset<T>(assetPath, subAssetName);
+        }
+
+        public static void Release(UObject asset)
+        {
+            if (asset == null)
+            {
+                return;
+            }
+
+            EnsureResLoader().Release(asset);
         }
 
         private static T LoadAsset<T>(string assetPath) where T : UObject
@@ -93,6 +104,10 @@ namespace XAnimationEngine
             return AssetDatabase.LoadAllAssetsAtPath(assetPath)
                 .OfType<T>()
                 .FirstOrDefault(asset => string.Equals(asset.name, subAssetName, StringComparison.Ordinal));
+        }
+
+        public void Release(UObject asset)
+        {
         }
     }
 #endif
