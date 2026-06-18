@@ -199,13 +199,11 @@ namespace XAnimationEngine
             {
                 XAnimationDefaultTransitionConfig defaultTransitionConfig = defaultTransitionConfigs[i];
                 compiledDefaultTransitions[i] = new XAnimationCompiledDefaultTransition(defaultTransitionConfig);
-                XAnimationTransitionPairConfig[] pairs = defaultTransitionConfig.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
-                {
-                    XAnimationTransitionPairConfig pair = pairs[pairIndex];
-                    string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(pair.preStateKey, pair.nextStateKey);
-                    defaultTransitionIndexByPairKey[pairKey] = i;
-                }
+                string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(
+                    defaultTransitionConfig.channelName,
+                    defaultTransitionConfig.preStateKey,
+                    defaultTransitionConfig.nextStateKey);
+                defaultTransitionIndexByPairKey[pairKey] = i;
             }
 
             Dictionary<string, List<XAnimationCompiledCue>> cuesByClipKey = new(StringComparer.Ordinal);
@@ -505,22 +503,12 @@ namespace XAnimationEngine
                     continue;
                 }
 
-                transition.editorName = transition.editorName?.Trim() ?? string.Empty;
-                transition.pairs ??= Array.Empty<XAnimationTransitionPairConfig>();
+                transition.channelName = transition.channelName?.Trim();
+                transition.preStateKey = transition.preStateKey?.Trim();
+                transition.nextStateKey = transition.nextStateKey?.Trim();
                 transition.fadeIn = Mathf.Max(0f, transition.fadeIn);
                 transition.fadeOut = Mathf.Max(0f, transition.fadeOut);
                 transition.enterTime = Mathf.Clamp01(transition.enterTime);
-                for (int pairIndex = 0; pairIndex < transition.pairs.Length; pairIndex++)
-                {
-                    XAnimationTransitionPairConfig pair = transition.pairs[pairIndex];
-                    if (pair == null)
-                    {
-                        continue;
-                    }
-
-                    pair.preStateKey = pair.preStateKey?.Trim();
-                    pair.nextStateKey = pair.nextStateKey?.Trim();
-                }
             }
         }
 

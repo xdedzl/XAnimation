@@ -2699,18 +2699,50 @@ namespace XAnimationEditor
         {
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
-            XAnimationTransitionPairConfig pair = CreateDefaultTransitionPair(-1);
+            XAnimationDefaultTransitionConfig transition = CreateDefaultTransitionConfig(-1);
             asset.defaultTransitions = AppendItem(asset.defaultTransitions, new XAnimationDefaultTransitionConfig
             {
-                editorName = CreateUniqueDefaultTransitionName("Default Transition"),
-                pairs = new[] { pair },
+                channelName = transition.channelName,
+                preStateKey = transition.preStateKey,
+                nextStateKey = transition.nextStateKey,
+                fadeIn = transition.fadeIn,
+                fadeOut = transition.fadeOut,
+                enterTime = transition.enterTime,
+                priority = transition.priority,
+                interruptible = transition.interruptible,
+            });
+            RebuildDriverAndSave();
+            return asset.defaultTransitions.Length - 1;
+        }
+
+        public int AddDefaultTransition(string preStateKey, string nextStateKey, bool save = true)
+            => AddDefaultTransition(null, preStateKey, nextStateKey, save);
+
+        public int AddDefaultTransition(string channelName, string preStateKey, string nextStateKey, bool save = true)
+        {
+            EnsureBaseAssetEditable();
+            channelName = channelName?.Trim();
+            preStateKey = preStateKey?.Trim();
+            nextStateKey = nextStateKey?.Trim();
+
+            XAnimationAsset asset = m_CompiledAsset.Asset;
+            XAnimationDefaultTransitionConfig[] transitions = asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
+            int transitionIndex = transitions.Length;
+            channelName = ResolveDefaultTransitionChannelName(channelName, preStateKey, nextStateKey);
+            ValidateDefaultTransitionPairChange(transitionIndex, channelName, preStateKey, nextStateKey);
+
+            asset.defaultTransitions = AppendItem(transitions, new XAnimationDefaultTransitionConfig
+            {
+                channelName = channelName,
+                preStateKey = preStateKey,
+                nextStateKey = nextStateKey,
                 fadeIn = 0.15f,
                 fadeOut = 0.15f,
                 enterTime = 0f,
                 priority = 0,
                 interruptible = true,
             });
-            RebuildDriverAndSave();
+            RebuildDriverAndSave(save);
             return asset.defaultTransitions.Length - 1;
         }
 
@@ -2727,12 +2759,14 @@ namespace XAnimationEditor
             RebuildDriverAndSave();
         }
 
-        public void SetDefaultTransitionName(int transitionIndex, string editorName, bool save = true)
+        public void SetDefaultTransitionChannel(int transitionIndex, string channelName, bool save = true)
         {
             EnsureBaseAssetEditable();
             XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
-            transition.editorName = editorName?.Trim() ?? string.Empty;
-            SaveCompiledAssetIfNeeded(save);
+            channelName = ResolveDefaultTransitionChannelName(channelName, transition.preStateKey, transition.nextStateKey);
+            ValidateDefaultTransitionPairChange(transitionIndex, channelName, transition.preStateKey, transition.nextStateKey);
+            transition.channelName = channelName;
+            RebuildDriverAndSave(save);
         }
 
         public void SetDefaultTransitionOptions(
@@ -2757,29 +2791,46 @@ namespace XAnimationEditor
         public int AddDefaultTransitionPair(int transitionIndex)
         {
             EnsureBaseAssetEditable();
-            XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
-            transition.pairs = AppendItem(transition.pairs, CreateDefaultTransitionPair(transitionIndex));
+            XAnimationAsset asset = m_CompiledAsset.Asset;
+            XAnimationDefaultTransitionConfig transition = CreateDefaultTransitionConfig(transitionIndex);
+            asset.defaultTransitions = AppendItem(asset.defaultTransitions, transition);
             RebuildDriverAndSave();
-            return transition.pairs.Length - 1;
+            return 0;
+        }
+
+        public int AddDefaultTransitionPair(int transitionIndex, string preStateKey, string nextStateKey, bool save = true)
+        {
+            EnsureBaseAssetEditable();
+            preStateKey = preStateKey?.Trim();
+            nextStateKey = nextStateKey?.Trim();
+
+            XAnimationDefaultTransitionConfig source = transitionIndex >= 0 &&
+                transitionIndex < (m_CompiledAsset.Asset.defaultTransitions?.Length ?? 0)
+                    ? GetDefaultTransitionConfig(transitionIndex)
+                    : null;
+            string channelName = ResolveDefaultTransitionChannelName(source?.channelName, preStateKey, nextStateKey);
+            ValidateDefaultTransitionPairChange(-1, channelName, preStateKey, nextStateKey);
+            XAnimationDefaultTransitionConfig transition = new()
+            {
+                channelName = channelName,
+                preStateKey = preStateKey,
+                nextStateKey = nextStateKey,
+                fadeIn = source?.fadeIn ?? 0.15f,
+                fadeOut = source?.fadeOut ?? 0.15f,
+                enterTime = source?.enterTime ?? 0f,
+                priority = source?.priority ?? 0,
+                interruptible = source?.interruptible ?? true,
+            };
+            m_CompiledAsset.Asset.defaultTransitions = AppendItem(
+                m_CompiledAsset.Asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>(),
+                transition);
+            RebuildDriverAndSave(save);
+            return 0;
         }
 
         public void DeleteDefaultTransitionPair(int transitionIndex, int pairIndex)
         {
-            EnsureBaseAssetEditable();
-            XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
-            XAnimationTransitionPairConfig[] pairs = transition.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-            if (pairs.Length <= 1)
-            {
-                throw new XAnimationException("XAnimation default transition must contain at least one pair.");
-            }
-
-            if (pairIndex < 0 || pairIndex >= pairs.Length)
-            {
-                throw new XAnimationException($"XAnimation default transition pair index '{pairIndex}' does not exist.");
-            }
-
-            transition.pairs = RemoveAt(pairs, pairIndex);
-            RebuildDriverAndSave();
+            DeleteDefaultTransition(transitionIndex);
         }
 
         public void SetDefaultTransitionPair(
@@ -2792,10 +2843,12 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             preStateKey = preStateKey?.Trim();
             nextStateKey = nextStateKey?.Trim();
-            ValidateDefaultTransitionPairChange(transitionIndex, pairIndex, preStateKey, nextStateKey);
-            XAnimationTransitionPairConfig pair = GetDefaultTransitionPairConfig(transitionIndex, pairIndex);
-            pair.preStateKey = preStateKey;
-            pair.nextStateKey = nextStateKey;
+            XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
+            string channelName = ResolveDefaultTransitionChannelName(transition.channelName, preStateKey, nextStateKey);
+            ValidateDefaultTransitionPairChange(transitionIndex, channelName, preStateKey, nextStateKey);
+            transition.channelName = channelName;
+            transition.preStateKey = preStateKey;
+            transition.nextStateKey = nextStateKey;
             RebuildDriverAndSave(save);
         }
 
@@ -3350,19 +3403,7 @@ namespace XAnimationEditor
             return transitions[transitionIndex];
         }
 
-        private XAnimationTransitionPairConfig GetDefaultTransitionPairConfig(int transitionIndex, int pairIndex)
-        {
-            XAnimationDefaultTransitionConfig transition = GetDefaultTransitionConfig(transitionIndex);
-            XAnimationTransitionPairConfig[] pairs = transition.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-            if (pairIndex < 0 || pairIndex >= pairs.Length || pairs[pairIndex] == null)
-            {
-                throw new XAnimationException($"XAnimation default transition pair index '{pairIndex}' does not exist.");
-            }
-
-            return pairs[pairIndex];
-        }
-
-        private XAnimationTransitionPairConfig CreateDefaultTransitionPair(int transitionIndex)
+        private XAnimationDefaultTransitionConfig CreateDefaultTransitionConfig(int transitionIndex)
         {
             IReadOnlyList<XAnimationCompiledState> states = m_CompiledAsset.States;
             if (states.Count < 2)
@@ -3372,17 +3413,21 @@ namespace XAnimationEditor
 
             HashSet<string> occupiedPairs = CollectDefaultTransitionPairKeys();
             XAnimationDefaultTransitionConfig[] transitions = m_CompiledAsset.Asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
+            string preferredChannelName = null;
+            float fadeIn = 0.15f;
+            float fadeOut = 0.15f;
+            float enterTime = 0f;
+            int priority = 0;
+            bool interruptible = true;
             if (transitionIndex >= 0 && transitionIndex < transitions.Length)
             {
-                XAnimationTransitionPairConfig[] existingPairs = transitions[transitionIndex]?.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                for (int i = 0; i < existingPairs.Length; i++)
-                {
-                    XAnimationTransitionPairConfig pair = existingPairs[i];
-                    if (pair != null)
-                    {
-                        occupiedPairs.Add(XAnimationCompiledAsset.BuildTransitionPairKey(pair.preStateKey, pair.nextStateKey));
-                    }
-                }
+                XAnimationDefaultTransitionConfig source = transitions[transitionIndex];
+                preferredChannelName = source?.channelName;
+                fadeIn = source?.fadeIn ?? fadeIn;
+                fadeOut = source?.fadeOut ?? fadeOut;
+                enterTime = source?.enterTime ?? enterTime;
+                priority = source?.priority ?? priority;
+                interruptible = source?.interruptible ?? interruptible;
             }
 
             for (int preIndex = 0; preIndex < states.Count; preIndex++)
@@ -3396,13 +3441,20 @@ namespace XAnimationEditor
 
                     string preStateKey = states[preIndex].Key;
                     string nextStateKey = states[nextIndex].Key;
-                    string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(preStateKey, nextStateKey);
+                    string channelName = ResolveDefaultTransitionChannelName(preferredChannelName, preStateKey, nextStateKey);
+                    string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(channelName, preStateKey, nextStateKey);
                     if (!occupiedPairs.Contains(pairKey))
                     {
-                        return new XAnimationTransitionPairConfig
+                        return new XAnimationDefaultTransitionConfig
                         {
+                            channelName = channelName,
                             preStateKey = preStateKey,
                             nextStateKey = nextStateKey,
+                            fadeIn = fadeIn,
+                            fadeOut = fadeOut,
+                            enterTime = enterTime,
+                            priority = priority,
+                            interruptible = interruptible,
                         };
                     }
                 }
@@ -3411,8 +3463,13 @@ namespace XAnimationEditor
             throw new XAnimationException("所有可用的 Default Transition state pair 都已经配置。");
         }
 
-        private void ValidateDefaultTransitionPairChange(int transitionIndex, int pairIndex, string preStateKey, string nextStateKey)
+        private void ValidateDefaultTransitionPairChange(int transitionIndex, string channelName, string preStateKey, string nextStateKey)
         {
+            if (string.IsNullOrWhiteSpace(channelName))
+            {
+                throw new XAnimationException("XAnimation default transition channelName cannot be empty.");
+            }
+
             if (string.IsNullOrWhiteSpace(preStateKey))
             {
                 throw new XAnimationException("XAnimation default transition preStateKey cannot be empty.");
@@ -3428,26 +3485,24 @@ namespace XAnimationEditor
                 throw new XAnimationException($"XAnimation default transition cannot transition state '{preStateKey}' to itself.");
             }
 
+            m_CompiledAsset.GetChannel(channelName);
             m_CompiledAsset.GetState(preStateKey);
             m_CompiledAsset.GetState(nextStateKey);
             XAnimationDefaultTransitionConfig[] transitions = m_CompiledAsset.Asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
             for (int i = 0; i < transitions.Length; i++)
             {
-                XAnimationTransitionPairConfig[] pairs = transitions[i]?.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                for (int j = 0; j < pairs.Length; j++)
+                if (i == transitionIndex)
                 {
-                    if (i == transitionIndex && j == pairIndex)
-                    {
-                        continue;
-                    }
+                    continue;
+                }
 
-                    XAnimationTransitionPairConfig pair = pairs[j];
-                    if (pair != null &&
-                        string.Equals(pair.preStateKey, preStateKey, StringComparison.Ordinal) &&
-                        string.Equals(pair.nextStateKey, nextStateKey, StringComparison.Ordinal))
-                    {
-                        throw new XAnimationException($"XAnimation default transition pair '{preStateKey}' -> '{nextStateKey}' is duplicated.");
-                    }
+                XAnimationDefaultTransitionConfig transition = transitions[i];
+                if (transition != null &&
+                    string.Equals(transition.channelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(transition.preStateKey, preStateKey, StringComparison.Ordinal) &&
+                    string.Equals(transition.nextStateKey, nextStateKey, StringComparison.Ordinal))
+                {
+                    throw new XAnimationException($"XAnimation default transition pair '{channelName}: {preStateKey}' -> '{nextStateKey}' is duplicated.");
                 }
             }
         }
@@ -3458,43 +3513,53 @@ namespace XAnimationEditor
             XAnimationDefaultTransitionConfig[] transitions = m_CompiledAsset.Asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
             for (int i = 0; i < transitions.Length; i++)
             {
-                XAnimationTransitionPairConfig[] pairs = transitions[i]?.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
+                XAnimationDefaultTransitionConfig transition = transitions[i];
+                if (transition != null &&
+                    !string.IsNullOrWhiteSpace(transition.channelName) &&
+                    !string.IsNullOrWhiteSpace(transition.preStateKey) &&
+                    !string.IsNullOrWhiteSpace(transition.nextStateKey))
                 {
-                    XAnimationTransitionPairConfig pair = pairs[pairIndex];
-                    if (pair != null &&
-                        !string.IsNullOrWhiteSpace(pair.preStateKey) &&
-                        !string.IsNullOrWhiteSpace(pair.nextStateKey))
-                    {
-                        pairKeys.Add(XAnimationCompiledAsset.BuildTransitionPairKey(pair.preStateKey, pair.nextStateKey));
-                    }
+                    pairKeys.Add(XAnimationCompiledAsset.BuildTransitionPairKey(transition.channelName, transition.preStateKey, transition.nextStateKey));
                 }
             }
 
             return pairKeys;
         }
 
-        private string CreateUniqueDefaultTransitionName(string prefix)
+        private string ResolveDefaultTransitionChannelName(string preferredChannelName, string preStateKey, string nextStateKey)
         {
-            HashSet<string> names = new(StringComparer.Ordinal);
-            XAnimationDefaultTransitionConfig[] transitions = m_CompiledAsset.Asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
-            for (int i = 0; i < transitions.Length; i++)
+            if (!string.IsNullOrWhiteSpace(preferredChannelName))
             {
-                XAnimationDefaultTransitionConfig transition = transitions[i];
-                if (transition != null && !string.IsNullOrWhiteSpace(transition.editorName))
+                return preferredChannelName.Trim();
+            }
+
+            if (!string.IsNullOrWhiteSpace(preStateKey) &&
+                m_CompiledAsset.TryGetStateIndex(preStateKey, out int preStateIndex))
+            {
+                string channelName = m_CompiledAsset.States[preStateIndex].Config.channelName;
+                if (!string.IsNullOrWhiteSpace(channelName))
                 {
-                    names.Add(transition.editorName);
+                    return channelName;
                 }
             }
 
-            string candidate = prefix;
-            int suffix = 1;
-            while (names.Contains(candidate))
+            if (!string.IsNullOrWhiteSpace(nextStateKey) &&
+                m_CompiledAsset.TryGetStateIndex(nextStateKey, out int nextStateIndex))
             {
-                candidate = $"{prefix} {suffix++}";
+                string channelName = m_CompiledAsset.States[nextStateIndex].Config.channelName;
+                if (!string.IsNullOrWhiteSpace(channelName))
+                {
+                    return channelName;
+                }
             }
 
-            return candidate;
+            IReadOnlyList<XAnimationCompiledChannel> channels = m_CompiledAsset.Channels;
+            if (channels.Count == 0)
+            {
+                throw new XAnimationException("XAnimation default transition requires at least one channel.");
+            }
+
+            return channels[0].Name;
         }
 
         private string ResolveAutoTransitionPreStateKey(string preferredPreStateKey)
@@ -3563,18 +3628,14 @@ namespace XAnimationEditor
             XAnimationDefaultTransitionConfig[] transitions = asset?.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
             for (int i = 0; i < transitions.Length; i++)
             {
-                XAnimationTransitionPairConfig[] pairs = transitions[i]?.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
+                XAnimationDefaultTransitionConfig transition = transitions[i];
+                if (transition == null)
                 {
-                    XAnimationTransitionPairConfig pair = pairs[pairIndex];
-                    if (pair == null)
-                    {
-                        continue;
-                    }
-
-                    ReplaceIfEqual(ref pair.preStateKey, oldKey, newKey);
-                    ReplaceIfEqual(ref pair.nextStateKey, oldKey, newKey);
+                    continue;
                 }
+
+                ReplaceIfEqual(ref transition.preStateKey, oldKey, newKey);
+                ReplaceIfEqual(ref transition.nextStateKey, oldKey, newKey);
             }
         }
 
@@ -3655,32 +3716,13 @@ namespace XAnimationEditor
             for (int i = 0; i < transitions.Length; i++)
             {
                 XAnimationDefaultTransitionConfig transition = transitions[i];
-                if (transition == null)
+                if (transition == null ||
+                    string.Equals(transition.preStateKey, deletedStateKey, StringComparison.Ordinal) ||
+                    string.Equals(transition.nextStateKey, deletedStateKey, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                XAnimationTransitionPairConfig[] pairs = transition.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                List<XAnimationTransitionPairConfig> remainingPairs = new(pairs.Length);
-                for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
-                {
-                    XAnimationTransitionPairConfig pair = pairs[pairIndex];
-                    if (pair == null ||
-                        string.Equals(pair.preStateKey, deletedStateKey, StringComparison.Ordinal) ||
-                        string.Equals(pair.nextStateKey, deletedStateKey, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    remainingPairs.Add(pair);
-                }
-
-                if (remainingPairs.Count == 0)
-                {
-                    continue;
-                }
-
-                transition.pairs = remainingPairs.ToArray();
                 remainingTransitions.Add(transition);
             }
 

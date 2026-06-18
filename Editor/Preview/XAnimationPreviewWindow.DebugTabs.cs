@@ -431,9 +431,9 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                string title = string.IsNullOrWhiteSpace(transition.EditorName)
+                string title = string.IsNullOrWhiteSpace(transition.ChannelName)
                     ? $"Default Transition {i + 1}"
-                    : transition.EditorName;
+                    : $"{transition.ChannelName} #{i + 1}";
                 string pairs = FormatDefaultTransitionPairSummary(transition.Config);
                 string detail = $"{pairs} | fadeIn={transition.Config.fadeIn:0.###} | fadeOut={transition.Config.fadeOut:0.###}";
                 int transitionIndex = i;

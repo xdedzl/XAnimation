@@ -65,8 +65,8 @@ namespace XAnimationEngine
         private static string GetGraphName(PlayableGraph graph, string animatorName)
         {
 #if UNITY_EDITOR
-            string editorName = graph.GetEditorName();
-            if (!string.IsNullOrEmpty(editorName)) return editorName;
+            string graphName = graph.GetEditorName();
+            if (!string.IsNullOrEmpty(graphName)) return graphName;
 #endif
             return !string.IsNullOrEmpty(animatorName) ? $"XAnimationDriver_{animatorName}" : "PlayableGraph";
         }

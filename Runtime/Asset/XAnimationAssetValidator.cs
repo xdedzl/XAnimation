@@ -18,7 +18,7 @@ namespace XAnimationEngine
             ValidateParameters(asset.parameters);
             Dictionary<string, XAnimationStateConfig> stateMap = ValidateStates(asset.channels, asset.clips, asset.parameters, asset.states);
             ValidateAutoTransitions(asset.autoTransitions, stateMap);
-            ValidateDefaultTransitions(asset.defaultTransitions, stateMap);
+            ValidateDefaultTransitions(asset.channels, asset.defaultTransitions, stateMap);
             ValidateCues(asset.clips, asset.cues);
         }
 
@@ -594,6 +594,7 @@ namespace XAnimationEngine
         }
 
         private static void ValidateDefaultTransitions(
+            IReadOnlyList<XAnimationChannelConfig> channels,
             IReadOnlyList<XAnimationDefaultTransitionConfig> defaultTransitions,
             IReadOnlyDictionary<string, XAnimationStateConfig> stateMap)
         {
@@ -603,6 +604,19 @@ namespace XAnimationEngine
             }
 
             HashSet<string> pairKeys = new(StringComparer.Ordinal);
+            HashSet<string> channelNames = new(StringComparer.Ordinal);
+            if (channels != null)
+            {
+                for (int i = 0; i < channels.Count; i++)
+                {
+                    string channelName = channels[i]?.name;
+                    if (!string.IsNullOrWhiteSpace(channelName))
+                    {
+                        channelNames.Add(channelName);
+                    }
+                }
+            }
+
             for (int transitionIndex = 0; transitionIndex < defaultTransitions.Count; transitionIndex++)
             {
                 XAnimationDefaultTransitionConfig transition = defaultTransitions[transitionIndex];
@@ -621,59 +635,60 @@ namespace XAnimationEngine
                     throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' EnterTime must be within [0, 1].");
                 }
 
-                XAnimationTransitionPairConfig[] pairs = transition.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-                if (pairs.Length == 0)
+                if (string.IsNullOrWhiteSpace(transition.channelName))
                 {
-                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' must contain at least one pair.");
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' channelName cannot be empty.");
                 }
 
-                for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
+                if (!channelNames.Contains(transition.channelName))
                 {
-                    XAnimationTransitionPairConfig pair = pairs[pairIndex];
-                    if (pair == null)
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' pair at index {pairIndex} is null.");
-                    }
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown channel '{transition.channelName}'.");
+                }
 
-                    if (string.IsNullOrWhiteSpace(pair.preStateKey))
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' preStateKey cannot be empty.");
-                    }
+                if (string.IsNullOrWhiteSpace(transition.preStateKey))
+                {
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' preStateKey cannot be empty.");
+                }
 
-                    if (string.IsNullOrWhiteSpace(pair.nextStateKey))
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' nextStateKey cannot be empty.");
-                    }
+                if (string.IsNullOrWhiteSpace(transition.nextStateKey))
+                {
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' nextStateKey cannot be empty.");
+                }
 
-                    if (string.Equals(pair.preStateKey, pair.nextStateKey, StringComparison.Ordinal))
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' cannot transition state '{pair.preStateKey}' to itself.");
-                    }
+                if (string.Equals(transition.preStateKey, transition.nextStateKey, StringComparison.Ordinal))
+                {
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' cannot transition state '{transition.preStateKey}' to itself.");
+                }
 
-                    if (!stateMap.ContainsKey(pair.preStateKey))
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown preStateKey '{pair.preStateKey}'.");
-                    }
+                if (!stateMap.ContainsKey(transition.preStateKey))
+                {
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown preStateKey '{transition.preStateKey}'.");
+                }
 
-                    if (!stateMap.ContainsKey(pair.nextStateKey))
-                    {
-                        throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown nextStateKey '{pair.nextStateKey}'.");
-                    }
+                if (!stateMap.ContainsKey(transition.nextStateKey))
+                {
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown nextStateKey '{transition.nextStateKey}'.");
+                }
 
-                    string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(pair.preStateKey, pair.nextStateKey);
-                    if (!pairKeys.Add(pairKey))
-                    {
-                        throw new XAnimationException($"XAnimation default transition pair '{pair.preStateKey}' -> '{pair.nextStateKey}' is duplicated.");
-                    }
+                string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(transition.channelName, transition.preStateKey, transition.nextStateKey);
+                if (!pairKeys.Add(pairKey))
+                {
+                    throw new XAnimationException($"XAnimation default transition pair '{transition.channelName}: {transition.preStateKey}' -> '{transition.nextStateKey}' is duplicated.");
                 }
             }
         }
 
         private static string GetDefaultTransitionName(XAnimationDefaultTransitionConfig transition, int index)
         {
-            return string.IsNullOrWhiteSpace(transition.editorName)
-                ? $"#{index}"
-                : transition.editorName;
+            if (transition == null)
+            {
+                return $"#{index}";
+            }
+
+            string channelName = string.IsNullOrWhiteSpace(transition.channelName) ? "?" : transition.channelName;
+            string preStateKey = string.IsNullOrWhiteSpace(transition.preStateKey) ? "?" : transition.preStateKey;
+            string nextStateKey = string.IsNullOrWhiteSpace(transition.nextStateKey) ? "?" : transition.nextStateKey;
+            return $"{channelName}: {preStateKey} -> {nextStateKey}";
         }
 
     }

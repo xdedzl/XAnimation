@@ -42,6 +42,12 @@ namespace XAnimationEditor
             Setting = 4,
         }
 
+        private enum PreviewPaneTab
+        {
+            Scene = 0,
+            DefaultTransition = 1,
+        }
+
         private enum SearchEntryType
         {
             State,
@@ -146,6 +152,28 @@ namespace XAnimationEditor
             public bool IsGroup { get; }
         }
 
+        private readonly struct DefaultTransitionPairEntry
+        {
+            public DefaultTransitionPairEntry(
+                int transitionIndex,
+                int pairIndex,
+                XAnimationDefaultTransitionConfig transition,
+                bool isInState)
+            {
+                TransitionIndex = transitionIndex;
+                PairIndex = pairIndex;
+                Transition = transition;
+                IsInState = isInState;
+            }
+
+            public int TransitionIndex { get; }
+            public int PairIndex { get; }
+            public XAnimationDefaultTransitionConfig Transition { get; }
+            public bool IsInState { get; }
+            public string PreStateKey => Transition?.preStateKey ?? string.Empty;
+            public string NextStateKey => Transition?.nextStateKey ?? string.Empty;
+        }
+
         private const string MenuPath = "Tools/XAnimation/Preview";
         private const string WindowTitle = "XAnimation Preview";
         private const string UnsavedChangesMessage = "XAnimation Preview 有未保存的修改，是否保存？";
@@ -165,6 +193,8 @@ namespace XAnimationEditor
         private const float PlaybackOverlayInitialTop = 10f;
         private const float PlaybackOverlayMinWidth = 392f;
         private const float PlaybackOverlayClickThreshold = 2f;
+        private const float PreviewTabBarHeight = 30f;
+        private const float DefaultTransitionDetailsWidth = 260f;
         private const float FreeformBlendGraphOverlayInitialLeft = 12f;
         private const float FreeformBlendGraphOverlayInitialBottom = 12f;
         private const float FreeformBlendGraphOverlayWidth = 244f;
@@ -217,6 +247,7 @@ namespace XAnimationEditor
         [SerializeField] private Vector2 m_FreeformBlendGraphOverlayPosition = new(FreeformBlendGraphOverlayInitialLeft, FreeformBlendGraphOverlayInitialBottom);
         [SerializeField] private bool m_FreeformBlendGraphOverlayExpanded = true;
         [SerializeField] private Vector2 m_PlaybackOverlayPosition = new(PlaybackOverlayInitialLeft, PlaybackOverlayInitialTop);
+        [SerializeField] private PreviewPaneTab m_SelectedPreviewPaneTab = PreviewPaneTab.Scene;
 
         private TextAsset m_PendingAsset;
         private GameObject m_PendingPrefab;
@@ -244,6 +275,10 @@ namespace XAnimationEditor
         private Button m_ClipGroupButton;
         private Button m_ChannelsGroupButton;
         private Button m_ParametersGroupButton;
+        private Button m_PreviewSceneTabButton;
+        private Button m_PreviewDefaultTransitionTabButton;
+        private Button m_AddDefaultTransitionInPairButton;
+        private Button m_AddDefaultTransitionOutPairButton;
         private Button m_OpenGraphButton;
         private Button m_SearchButton;
         private TextField m_SearchField;
@@ -256,6 +291,12 @@ namespace XAnimationEditor
         private VisualElement m_StateListView;
         private VisualElement m_AutoTransitionEditorView;
         private VisualElement m_DefaultTransitionsEditorView;
+        private VisualElement m_PreviewSceneTabView;
+        private VisualElement m_DefaultTransitionTabView;
+        private XAnimationEditorSelectionField m_DefaultTransitionEditingStateField;
+        private XAnimationDefaultTransitionGraphElement m_DefaultTransitionGraphView;
+        private Label m_DefaultTransitionGraphZoomLabel;
+        private VisualElement m_DefaultTransitionDetailsView;
         private VisualElement m_ClipListView;
         private ScrollView m_InspectorScrollView;
         private VisualElement m_InspectorOverlayLayer;
@@ -322,6 +363,10 @@ namespace XAnimationEditor
         private string m_CurrentFreeformGraphStateKey;
         private string m_SelectedAutoTransitionStateKey;
         private int m_SelectedDefaultTransitionIndex = -1;
+        private string m_DefaultTransitionEditingStateKey;
+        private int m_DefaultTransitionTabTransitionIndex = -1;
+        private int m_DefaultTransitionTabPairIndex = -1;
+        private bool m_DefaultTransitionTabPairWaitingSwitch;
         private float m_PlayFadeInOverride;
         private float m_PlayFadeOutOverride;
 
@@ -368,13 +413,6 @@ namespace XAnimationEditor
         private VisualElement m_PlaybackOverlayCard;
         private string m_FreeformBlendGraphTitleText = "Blend Graph";
         private float m_FreeformBlendGraphLastExpandedContentHeight;
-
-        private enum AutoTransitionTimelineDragMode
-        {
-            ExitTime,
-            TransitionDuration,
-            EnterTime,
-        }
 
         private readonly struct PendingPlaybackRequest
         {

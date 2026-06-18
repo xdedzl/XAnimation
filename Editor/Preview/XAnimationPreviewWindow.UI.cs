@@ -197,11 +197,26 @@ namespace XAnimationEditor
             VisualElement pane = CreatePane();
             pane.style.minWidth = PreviewPaneMinWidth;
 
+            VisualElement tabToolbar = BuildPreviewTabToolbar();
+            pane.Add(tabToolbar);
+
+            VisualElement tabContent = new VisualElement();
+            tabContent.style.flexGrow = 1;
+            tabContent.style.minHeight = 0;
+            tabContent.style.position = Position.Relative;
+            pane.Add(tabContent);
+
+            m_PreviewSceneTabView = new VisualElement();
+            m_PreviewSceneTabView.style.flexGrow = 1;
+            m_PreviewSceneTabView.style.minHeight = 0;
+            m_PreviewSceneTabView.style.flexDirection = FlexDirection.Column;
+            tabContent.Add(m_PreviewSceneTabView);
+
             VisualElement previewSurface = new VisualElement();
             previewSurface.style.position = Position.Relative;
             previewSurface.style.flexGrow = 1;
             previewSurface.style.minHeight = 0;
-            pane.Add(previewSurface);
+            m_PreviewSceneTabView.Add(previewSurface);
 
             m_PreviewImage = new Image
             {
@@ -252,7 +267,7 @@ namespace XAnimationEditor
             controls.style.flexDirection = FlexDirection.Row;
             controls.style.marginTop = 3;
             controls.style.alignItems = Align.Center;
-            pane.Add(controls);
+            m_PreviewSceneTabView.Add(controls);
 
             controls.Add(CreateStyledButton("重置位置", ResetPreviewTransform, AccentColor));
             controls.Add(CreateStyledButton("重置视角", ResetPreviewCamera, AccentColor, 6));
@@ -274,7 +289,78 @@ namespace XAnimationEditor
             });
             controls.Add(m_GridToggle);
 
+            m_DefaultTransitionTabView = BuildDefaultTransitionTab();
+            tabContent.Add(m_DefaultTransitionTabView);
+            ApplyPreviewPaneTab();
+
             return pane;
+        }
+
+        private VisualElement BuildPreviewTabToolbar()
+        {
+            VisualElement toolbar = new();
+            toolbar.style.flexDirection = FlexDirection.Row;
+            toolbar.style.alignItems = Align.Center;
+            toolbar.style.height = PreviewTabBarHeight;
+            toolbar.style.flexShrink = 0;
+            toolbar.style.marginBottom = 4;
+            toolbar.style.paddingLeft = 2;
+            toolbar.style.paddingRight = 2;
+            toolbar.style.paddingTop = 2;
+            toolbar.style.paddingBottom = 0;
+            toolbar.style.backgroundColor = ToolbarBg;
+            toolbar.style.borderBottomWidth = 1;
+            toolbar.style.borderBottomColor = SectionDivider;
+            toolbar.style.borderTopLeftRadius = 3;
+            toolbar.style.borderTopRightRadius = 3;
+
+            m_PreviewSceneTabButton = CreateToolbarTabButton("Scene", () => SetPreviewPaneTab(PreviewPaneTab.Scene));
+            m_PreviewDefaultTransitionTabButton = CreateToolbarTabButton("Default Transition", () => SetPreviewPaneTab(PreviewPaneTab.DefaultTransition));
+            toolbar.Add(m_PreviewSceneTabButton);
+            toolbar.Add(CreateToolbarDivider());
+            toolbar.Add(m_PreviewDefaultTransitionTabButton);
+            return toolbar;
+        }
+
+        private void SetPreviewPaneTab(PreviewPaneTab tab)
+        {
+            m_SelectedPreviewPaneTab = tab;
+            ApplyPreviewPaneTab();
+        }
+
+        private void ApplyPreviewPaneTab()
+        {
+            if (m_PreviewSceneTabView != null)
+            {
+                m_PreviewSceneTabView.style.display = m_SelectedPreviewPaneTab == PreviewPaneTab.Scene ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+
+            if (m_DefaultTransitionTabView != null)
+            {
+                m_DefaultTransitionTabView.style.display = m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition ? DisplayStyle.Flex : DisplayStyle.None;
+                if (m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition)
+                {
+                    RebuildDefaultTransitionTab();
+                }
+            }
+
+            ApplyPreviewTabButtonState(m_PreviewSceneTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.Scene);
+            ApplyPreviewTabButtonState(m_PreviewDefaultTransitionTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition);
+        }
+
+        private static void ApplyPreviewTabButtonState(Button button, bool selected)
+        {
+            if (button == null)
+            {
+                return;
+            }
+
+            button.style.backgroundColor = selected ? AccentColor : ToolbarBg;
+            button.style.color = selected ? Color.white : TextNormal;
+            button.style.borderTopColor = selected ? AccentColor : SectionDivider;
+            button.style.borderBottomColor = selected ? AccentColor : SectionDivider;
+            button.style.borderLeftColor = selected ? AccentColor : SectionDivider;
+            button.style.borderRightColor = selected ? AccentColor : SectionDivider;
         }
 
         private VisualElement BuildDebugPane()

@@ -26,7 +26,7 @@ namespace XAnimationEngine
             s_ResLoader = resLoader ?? throw new ArgumentNullException(nameof(resLoader));
         }
 
-        public static T Load<T>(string assetPath) where T : UObject
+        internal static T Load<T>(string assetPath) where T : UObject
         {
             if (string.IsNullOrWhiteSpace(assetPath))
             {
@@ -36,7 +36,7 @@ namespace XAnimationEngine
             return LoadAsset<T>(assetPath);
         }
 
-        public static T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject
+        internal static T LoadSubAsset<T>(string assetPath, string subAssetName) where T : UObject
         {
             if (string.IsNullOrWhiteSpace(assetPath))
             {
@@ -51,7 +51,7 @@ namespace XAnimationEngine
             return EnsureResLoader().LoadSubAsset<T>(assetPath, subAssetName);
         }
 
-        public static void Release(UObject asset)
+        internal static void Release(UObject asset)
         {
             if (asset == null)
             {

@@ -49,19 +49,17 @@ namespace XAnimationEditor
             foldLabel.style.color = TextMuted;
             header.Add(foldLabel);
 
-            string displayName = string.IsNullOrWhiteSpace(config.editorName)
-                ? $"Default Transition {transitionIndex + 1}"
-                : config.editorName;
-            EditableLabel nameLabel = new(displayName);
-            ConfigureEditableNameLabel(nameLabel, 150f);
-            nameLabel.SetEditable(editable, EditableLabelEditTrigger.DoubleClick);
-            nameLabel.EditStarted += BeginNameEdit;
-            nameLabel.EditEnded += EndNameEdit;
-            nameLabel.ValueCommitted += (oldName, newName) => RenameDefaultTransition(transitionIndex, oldName, newName, nameLabel);
-            nameLabel.tooltip = editable ? "双击重命名这个编辑器分组。" : "Override 资源不能重命名 Default Transition。";
+            Label nameLabel = new(FormatDefaultTransitionDisplayName(config, transitionIndex));
+            nameLabel.style.width = 220f;
+            nameLabel.style.minWidth = 160f;
+            nameLabel.style.color = TextNormal;
+            nameLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            nameLabel.style.overflow = Overflow.Hidden;
+            nameLabel.style.textOverflow = TextOverflow.Ellipsis;
+            nameLabel.tooltip = FormatDefaultTransitionDisplayName(config, transitionIndex);
             header.Add(nameLabel);
 
-            Label summaryLabel = new($"{FormatDefaultTransitionPairSummary(config)} | {config.pairs?.Length ?? 0} pairs");
+            Label summaryLabel = new(FormatDefaultTransitionPairSummary(config));
             summaryLabel.style.flexGrow = 1;
             summaryLabel.style.color = TextMuted;
             summaryLabel.style.fontSize = BodyFontSize;
@@ -86,7 +84,7 @@ namespace XAnimationEditor
             {
                 if (evt.button != 0 ||
                     (evt.target is VisualElement target &&
-                     (ReferenceEquals(target, deleteButton) || deleteButton.Contains(target) || ReferenceEquals(target, nameLabel) || nameLabel.Contains(target))))
+                     (ReferenceEquals(target, deleteButton) || deleteButton.Contains(target))))
                 {
                     return;
                 }
@@ -100,7 +98,7 @@ namespace XAnimationEditor
             });
 
             content.Add(CreateDefaultTransitionOptionsEditor(transitionIndex, config, editable));
-            content.Add(CreateDefaultTransitionPairsEditor(transitionIndex, config, editable));
+            content.Add(CreateDefaultTransitionPairEditor(transitionIndex, config, editable));
             wrapper.Add(header);
             wrapper.Add(content);
             m_DefaultTransitionRowMap[transitionIndex] = wrapper;
@@ -115,80 +113,52 @@ namespace XAnimationEditor
             container.style.borderBottomWidth = 1;
             container.style.borderBottomColor = SectionDivider;
 
-            VisualElement row1 = CreateDefaultTransitionOptionRow();
-            FloatField fadeInField = CreateDefaultTransitionFloatField("fadeIn", config.fadeIn, editable);
-            FloatField fadeOutField = CreateDefaultTransitionFloatField("fadeOut", config.fadeOut, editable);
-            FloatField enterTimeField = CreateDefaultTransitionFloatField("enterTime", config.enterTime, editable);
-            row1.Add(fadeInField);
-            row1.Add(fadeOutField);
-            row1.Add(enterTimeField);
-            container.Add(row1);
-
-            VisualElement row2 = CreateDefaultTransitionOptionRow();
-            IntegerField priorityField = new("priority") { value = config.priority };
-            ConfigureDefaultTransitionField(priorityField, editable);
-            Toggle interruptibleToggle = new("interruptible") { value = config.interruptible };
-            ConfigureDefaultTransitionToggleField(interruptibleToggle, editable);
-            row2.Add(priorityField);
-            row2.Add(interruptibleToggle);
-            container.Add(row2);
-
-            void ApplyOptions()
+            string preStateKey = GetDefaultTransitionTimelinePreStateKey(config);
+            string nextStateKey = GetDefaultTransitionTimelineNextStateKey(config);
+            float currentExitTime = 0.5f;
+            float currentTransitionDuration = GetDefaultTransitionDuration(config);
+            float currentEnterTime = Mathf.Clamp01(config.enterTime);
+            XAnimationTransitionTimelineEditor timelineEditor = new();
+            timelineEditor.SetData(
+                preStateKey,
+                nextStateKey,
+                ResolveTimelineStateDuration(preStateKey, 1f),
+                ResolveTimelineStateDuration(nextStateKey, 1f),
+                currentExitTime,
+                currentTransitionDuration,
+                currentEnterTime,
+                editable,
+                false,
+                "只读显示。拖拽 timeline 的起点可调整这个编辑器临时值，不会写入 Default Transition 数据。");
+            timelineEditor.TimingChanged += (exitTime, transitionDuration, enterTime) =>
             {
-                if (m_Session == null || !m_Session.IsLoaded)
+                bool optionsChanged =
+                    !Mathf.Approximately(currentTransitionDuration, Mathf.Max(0f, transitionDuration)) ||
+                    !Mathf.Approximately(currentEnterTime, Mathf.Clamp01(enterTime));
+                currentExitTime = Mathf.Clamp01(exitTime);
+                currentTransitionDuration = Mathf.Max(0f, transitionDuration);
+                currentEnterTime = Mathf.Clamp01(enterTime);
+                if (!optionsChanged || m_Session == null || !m_Session.IsLoaded)
                 {
                     return;
                 }
 
                 m_Session.SetDefaultTransitionOptions(
                     transitionIndex,
-                    fadeInField.value,
-                    fadeOutField.value,
-                    enterTimeField.value,
-                    priorityField.value,
-                    interruptibleToggle.value,
+                    currentTransitionDuration,
+                    currentTransitionDuration,
+                    currentEnterTime,
+                    config.priority,
+                    config.interruptible,
                     save: false);
                 ScheduleAssetSave();
                 RefreshChannelStates();
-                SetStatus($"Default Transition {transitionIndex + 1} 参数已更新。");
-            }
-
-            fadeInField.RegisterValueChangedCallback(evt =>
-            {
-                float value = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(value, evt.newValue))
-                {
-                    fadeInField.SetValueWithoutNotify(value);
-                }
-
-                ApplyOptions();
-            });
-            fadeOutField.RegisterValueChangedCallback(evt =>
-            {
-                float value = Mathf.Max(0f, evt.newValue);
-                if (!Mathf.Approximately(value, evt.newValue))
-                {
-                    fadeOutField.SetValueWithoutNotify(value);
-                }
-
-                ApplyOptions();
-            });
-            enterTimeField.RegisterValueChangedCallback(evt =>
-            {
-                float value = Mathf.Clamp01(evt.newValue);
-                if (!Mathf.Approximately(value, evt.newValue))
-                {
-                    enterTimeField.SetValueWithoutNotify(value);
-                }
-
-                ApplyOptions();
-            });
-            priorityField.RegisterValueChangedCallback(_ => ApplyOptions());
-            interruptibleToggle.RegisterValueChangedCallback(_ => ApplyOptions());
+            };
+            timelineEditor.DragStatusChanged += statusText => SetStatus($"Default Transition {transitionIndex + 1} {statusText}");
+            container.Add(timelineEditor);
             return container;
         }
-
-        private VisualElement CreateDefaultTransitionPairsEditor(int transitionIndex, XAnimationDefaultTransitionConfig config, bool editable)
+        private VisualElement CreateDefaultTransitionPairEditor(int transitionIndex, XAnimationDefaultTransitionConfig config, bool editable)
         {
             VisualElement container = new();
             container.style.marginTop = 5;
@@ -196,36 +166,23 @@ namespace XAnimationEditor
             VisualElement titleRow = new();
             titleRow.style.flexDirection = FlexDirection.Row;
             titleRow.style.alignItems = Align.Center;
-            Label title = new("Pairs");
+            Label title = new("Transition");
             title.style.flexGrow = 1;
             title.style.color = TextMuted;
             title.style.fontSize = BodyFontSize;
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
             titleRow.Add(title);
-
-            Button addPairButton = CreateStyledButton("+ Pair", () => AddDefaultTransitionPair(transitionIndex), AccentColor);
-            addPairButton.tooltip = editable ? "新增一组 preState / nextState。" : "Override 资源不能新增 pair。";
-            addPairButton.SetEnabled(editable);
-            titleRow.Add(addPairButton);
             container.Add(titleRow);
-
-            XAnimationTransitionPairConfig[] pairs = config.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-            for (int pairIndex = 0; pairIndex < pairs.Length; pairIndex++)
-            {
-                container.Add(CreateDefaultTransitionPairRow(transitionIndex, pairIndex, pairs[pairIndex], editable, pairs.Length));
-            }
+            container.Add(CreateDefaultTransitionPairRow(transitionIndex, config, editable));
 
             return container;
         }
 
         private VisualElement CreateDefaultTransitionPairRow(
             int transitionIndex,
-            int pairIndex,
-            XAnimationTransitionPairConfig pair,
-            bool editable,
-            int pairCount)
+            XAnimationDefaultTransitionConfig config,
+            bool editable)
         {
-            pair ??= new XAnimationTransitionPairConfig();
             VisualElement row = new();
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
@@ -240,8 +197,14 @@ namespace XAnimationEditor
             summaryRow.style.minWidth = 0;
             row.Add(summaryRow);
 
-            XAnimationEditorSelectionField preStateField = CreateStateSelectionField(string.Empty, pair.preStateKey);
-            XAnimationEditorSelectionField nextStateField = CreateStateSelectionField(string.Empty, pair.nextStateKey, pair.preStateKey);
+            DropdownField channelField = CreateChannelDropdown(string.Empty, config.channelName);
+            channelField.style.width = 120f;
+            channelField.style.minWidth = 90f;
+            channelField.SetEnabled(editable);
+            summaryRow.Add(channelField);
+
+            XAnimationEditorSelectionField preStateField = CreateStateSelectionField(string.Empty, config.preStateKey);
+            XAnimationEditorSelectionField nextStateField = CreateStateSelectionField(string.Empty, config.nextStateKey, config.preStateKey);
             preStateField.style.width = 180f;
             preStateField.style.minWidth = 120f;
             preStateField.style.flexGrow = 1;
@@ -294,13 +257,6 @@ namespace XAnimationEditor
                 }
             };
 
-            Button deleteButton = new(() => DeleteDefaultTransitionPair(transitionIndex, pairIndex));
-            ApplyTrashButtonIcon(deleteButton);
-            ApplyClipIconButtonStyle(deleteButton);
-            deleteButton.tooltip = editable && pairCount > 1 ? "删除这组 pair。" : "Default Transition 至少保留一组 pair。";
-            deleteButton.SetEnabled(editable && pairCount > 1);
-            deleteButton.style.flexShrink = 0;
-
             VisualElement actionsRow = new();
             actionsRow.style.flexDirection = FlexDirection.Row;
             actionsRow.style.alignItems = Align.Center;
@@ -309,7 +265,11 @@ namespace XAnimationEditor
             actionsRow.style.marginLeft = 6;
             row.Add(actionsRow);
             actionsRow.Add(playButton);
-            actionsRow.Add(deleteButton);
+
+            channelField.RegisterValueChangedCallback(evt =>
+            {
+                ChangeDefaultTransitionChannel(transitionIndex, evt.newValue, channelField, evt.previousValue);
+            });
 
             preStateField.ValueChanged += (previousValue, newValue) =>
             {
@@ -319,11 +279,596 @@ namespace XAnimationEditor
                     nextStateKey = GetFallbackNextState(newValue);
                 }
 
-                ChangeDefaultTransitionPair(transitionIndex, pairIndex, newValue, nextStateKey, preStateField, previousValue);
+                ChangeDefaultTransitionPair(transitionIndex, 0, newValue, nextStateKey, preStateField, previousValue);
             };
             nextStateField.ValueChanged += (previousValue, newValue) =>
-                ChangeDefaultTransitionPair(transitionIndex, pairIndex, preStateField.value, newValue, nextStateField, previousValue);
+                ChangeDefaultTransitionPair(transitionIndex, 0, preStateField.value, newValue, nextStateField, previousValue);
             return row;
+        }
+
+        private VisualElement BuildDefaultTransitionTab()
+        {
+            VisualElement root = new();
+            root.style.flexGrow = 1;
+            root.style.minHeight = 0;
+            root.style.display = DisplayStyle.None;
+            root.style.backgroundColor = new Color(0.13f, 0.14f, 0.16f, 1f);
+            SetBorder(root, SectionDivider, 1, 4);
+
+            VisualElement body = Row();
+            body.style.flexGrow = 1;
+            body.style.minHeight = 0;
+            body.style.alignItems = Align.Stretch;
+            root.Add(body);
+
+            VisualElement leftPane = new();
+            leftPane.style.flexGrow = 1;
+            leftPane.style.flexShrink = 1;
+            leftPane.style.minWidth = 0;
+            leftPane.style.minHeight = 0;
+            leftPane.style.flexDirection = FlexDirection.Column;
+            leftPane.style.borderRightWidth = 1;
+            leftPane.style.borderRightColor = SectionDivider;
+            body.Add(leftPane);
+
+            leftPane.Add(BuildDefaultTransitionGraphPane());
+
+            m_DefaultTransitionDetailsView = new();
+            m_DefaultTransitionDetailsView.style.width = DefaultTransitionDetailsWidth;
+            m_DefaultTransitionDetailsView.style.minWidth = DefaultTransitionDetailsWidth;
+            m_DefaultTransitionDetailsView.style.maxWidth = DefaultTransitionDetailsWidth;
+            m_DefaultTransitionDetailsView.style.flexShrink = 0;
+            m_DefaultTransitionDetailsView.style.paddingLeft = 8;
+            m_DefaultTransitionDetailsView.style.paddingRight = 8;
+            m_DefaultTransitionDetailsView.style.paddingTop = 8;
+            m_DefaultTransitionDetailsView.style.backgroundColor = new Color(0.16f, 0.17f, 0.19f, 1f);
+            body.Add(m_DefaultTransitionDetailsView);
+
+            Label status = new("Scene 与旧列表保持不变；本页只提供 Default Transition 的 state 视角编辑。");
+            status.style.height = 23;
+            status.style.flexShrink = 0;
+            status.style.paddingLeft = 8;
+            status.style.paddingTop = 3;
+            status.style.borderTopWidth = 1;
+            status.style.borderTopColor = SectionDivider;
+            status.style.backgroundColor = ListHeaderBg;
+            status.style.color = TextMuted;
+            status.style.fontSize = BodyFontSize;
+            root.Add(status);
+
+            RebuildDefaultTransitionTab();
+            return root;
+        }
+
+        private VisualElement BuildDefaultTransitionGraphPane()
+        {
+            VisualElement pane = new();
+            pane.style.flexGrow = 1;
+            pane.style.minHeight = 0;
+            pane.style.flexDirection = FlexDirection.Column;
+
+            VisualElement toolbar = Row();
+            toolbar.style.flexShrink = 0;
+            toolbar.style.paddingLeft = 8;
+            toolbar.style.paddingRight = 8;
+            toolbar.style.paddingTop = 6;
+            toolbar.style.paddingBottom = 6;
+            toolbar.style.borderBottomWidth = 1;
+            toolbar.style.borderBottomColor = SectionDivider;
+            toolbar.style.backgroundColor = new Color(0.12f, 0.13f, 0.145f, 1f);
+            pane.Add(toolbar);
+
+            m_DefaultTransitionEditingStateField = CreateStateSelectionField(string.Empty, m_DefaultTransitionEditingStateKey);
+            m_DefaultTransitionEditingStateField.style.flexGrow = 1;
+            m_DefaultTransitionEditingStateField.style.flexShrink = 1;
+            m_DefaultTransitionEditingStateField.style.minWidth = 160;
+            m_DefaultTransitionEditingStateField.ValueChanged += (_, newValue) =>
+            {
+                SetDefaultTransitionEditingState(newValue);
+            };
+            toolbar.Add(m_DefaultTransitionEditingStateField);
+
+            m_DefaultTransitionGraphZoomLabel = new("100%");
+            m_DefaultTransitionGraphZoomLabel.style.color = TextMuted;
+            m_DefaultTransitionGraphZoomLabel.style.fontSize = BodyFontSize;
+            m_DefaultTransitionGraphZoomLabel.style.marginRight = 8;
+            toolbar.Add(m_DefaultTransitionGraphZoomLabel);
+
+            Button resetZoomButton = CreateStyledButton("Reset Zoom", () =>
+            {
+                m_DefaultTransitionGraphView?.ResetZoom();
+                UpdateDefaultTransitionGraphZoomLabel();
+            }, AccentColor);
+            resetZoomButton.tooltip = "把 Default Transition graph 缩放还原到 100%。";
+            toolbar.Add(resetZoomButton);
+
+            m_AddDefaultTransitionInPairButton = CreateStyledButton("+ In", () => ShowAddDefaultTransitionPairMenu(true), AccentColor, 6);
+            m_AddDefaultTransitionInPairButton.tooltip = "新增一个指向当前 state 的 Default Transition pair。";
+            toolbar.Add(m_AddDefaultTransitionInPairButton);
+
+            m_AddDefaultTransitionOutPairButton = CreateStyledButton("+ Out", () => ShowAddDefaultTransitionPairMenu(false), AccentColor, 6);
+            m_AddDefaultTransitionOutPairButton.tooltip = "新增一个从当前 state 出发的 Default Transition pair。";
+            toolbar.Add(m_AddDefaultTransitionOutPairButton);
+
+            m_DefaultTransitionGraphView = new XAnimationDefaultTransitionGraphElement();
+            m_DefaultTransitionGraphView.PairSelected += SelectDefaultTransitionTabPair;
+            m_DefaultTransitionGraphView.PairDeleteRequested += DeleteDefaultTransitionTabPair;
+            m_DefaultTransitionGraphView.StateEditRequested += SetDefaultTransitionEditingState;
+            m_DefaultTransitionGraphView.ZoomChanged += _ => UpdateDefaultTransitionGraphZoomLabel();
+            pane.Add(m_DefaultTransitionGraphView);
+            return pane;
+        }
+
+        private void UpdateDefaultTransitionGraphZoomLabel()
+        {
+            if (m_DefaultTransitionGraphZoomLabel == null)
+            {
+                return;
+            }
+
+            float zoom = m_DefaultTransitionGraphView?.Zoom ?? 1f;
+            m_DefaultTransitionGraphZoomLabel.text = $"{Mathf.RoundToInt(zoom * 100f)}%";
+        }
+
+        private void RebuildDefaultTransitionTab()
+        {
+            if (m_DefaultTransitionTabView == null ||
+                m_DefaultTransitionGraphView == null ||
+                m_DefaultTransitionDetailsView == null)
+            {
+                return;
+            }
+
+            EnsureDefaultTransitionEditingState();
+            bool canAddPair = CanAddDefaultTransitionPairFromTab();
+            m_AddDefaultTransitionInPairButton?.SetEnabled(canAddPair);
+            m_AddDefaultTransitionOutPairButton?.SetEnabled(canAddPair);
+            m_DefaultTransitionEditingStateField?.SetValueWithoutNotify(m_DefaultTransitionEditingStateKey);
+            m_DefaultTransitionDetailsView.Clear();
+
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                m_DefaultTransitionGraphView.SetEmpty("No asset loaded");
+                BuildDefaultTransitionDetails(null);
+                return;
+            }
+
+            List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(m_DefaultTransitionEditingStateKey, true);
+            List<DefaultTransitionPairEntry> outEntries = CollectDefaultTransitionPairEntries(m_DefaultTransitionEditingStateKey, false);
+            EnsureDefaultTransitionTabSelection(inEntries, outEntries);
+            m_DefaultTransitionGraphView.SetData(
+                m_DefaultTransitionEditingStateKey,
+                BuildDefaultTransitionGraphPairs(inEntries, outEntries));
+            UpdateDefaultTransitionGraphZoomLabel();
+            BuildDefaultTransitionDetails(GetSelectedDefaultTransitionPairEntry(inEntries, outEntries));
+        }
+
+        private bool CanAddDefaultTransitionPairFromTab()
+        {
+            return m_Session != null &&
+                   m_Session.IsLoaded &&
+                   !m_Session.IsOverrideAsset &&
+                   m_Session.CompiledAsset.States.Count >= 2 &&
+                   !string.IsNullOrWhiteSpace(m_DefaultTransitionEditingStateKey);
+        }
+
+        private void EnsureDefaultTransitionEditingState()
+        {
+            if (m_Session == null || !m_Session.IsLoaded || m_Session.CompiledAsset.States.Count == 0)
+            {
+                m_DefaultTransitionEditingStateKey = string.Empty;
+                m_DefaultTransitionTabTransitionIndex = -1;
+                m_DefaultTransitionTabPairIndex = -1;
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(m_DefaultTransitionEditingStateKey) &&
+                m_Session.CompiledAsset.TryGetStateIndex(m_DefaultTransitionEditingStateKey, out _))
+            {
+                return;
+            }
+
+            m_DefaultTransitionEditingStateKey = m_Session.CompiledAsset.States[0].Key;
+        }
+
+        private void SetDefaultTransitionEditingState(string stateKey)
+        {
+            if (string.IsNullOrWhiteSpace(stateKey) ||
+                m_Session == null ||
+                !m_Session.IsLoaded ||
+                !m_Session.CompiledAsset.TryGetStateIndex(stateKey, out _))
+            {
+                return;
+            }
+
+            if (string.Equals(m_DefaultTransitionEditingStateKey, stateKey, StringComparison.Ordinal))
+            {
+                m_DefaultTransitionEditingStateField?.SetValueWithoutNotify(m_DefaultTransitionEditingStateKey);
+                return;
+            }
+
+            m_DefaultTransitionEditingStateKey = stateKey;
+            m_DefaultTransitionTabTransitionIndex = -1;
+            m_DefaultTransitionTabPairIndex = -1;
+            m_DefaultTransitionTabPairWaitingSwitch = false;
+            RebuildDefaultTransitionTab();
+        }
+
+        private List<DefaultTransitionPairEntry> CollectDefaultTransitionPairEntries(string stateKey, bool inState)
+        {
+            List<DefaultTransitionPairEntry> entries = new();
+            if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateKey))
+            {
+                return entries;
+            }
+
+            IReadOnlyList<XAnimationCompiledDefaultTransition> transitions = m_Session.CompiledAsset.DefaultTransitions;
+            for (int transitionIndex = 0; transitionIndex < transitions.Count; transitionIndex++)
+            {
+                XAnimationDefaultTransitionConfig config = transitions[transitionIndex]?.Config;
+                if (config == null)
+                {
+                    continue;
+                }
+
+                bool matches = inState
+                    ? string.Equals(config.nextStateKey, stateKey, StringComparison.Ordinal)
+                    : string.Equals(config.preStateKey, stateKey, StringComparison.Ordinal);
+                if (matches)
+                {
+                    entries.Add(new DefaultTransitionPairEntry(transitionIndex, 0, config, inState));
+                }
+            }
+
+            return entries;
+        }
+
+        private List<XAnimationDefaultTransitionGraphElement.PairViewData> BuildDefaultTransitionGraphPairs(
+            List<DefaultTransitionPairEntry> inEntries,
+            List<DefaultTransitionPairEntry> outEntries)
+        {
+            int inCount = inEntries?.Count ?? 0;
+            int outCount = outEntries?.Count ?? 0;
+            List<XAnimationDefaultTransitionGraphElement.PairViewData> pairs = new(inCount + outCount);
+            if (inEntries != null)
+            {
+                for (int i = 0; i < inEntries.Count; i++)
+                {
+                    pairs.Add(CreateDefaultTransitionGraphPair(inEntries[i]));
+                }
+            }
+
+            if (outEntries != null)
+            {
+                for (int i = 0; i < outEntries.Count; i++)
+                {
+                    pairs.Add(CreateDefaultTransitionGraphPair(outEntries[i]));
+                }
+            }
+
+            return pairs;
+        }
+
+        private XAnimationDefaultTransitionGraphElement.PairViewData CreateDefaultTransitionGraphPair(DefaultTransitionPairEntry entry)
+        {
+            XAnimationDefaultTransitionConfig transition = entry.Transition;
+            bool selected = entry.TransitionIndex == m_DefaultTransitionTabTransitionIndex &&
+                            entry.PairIndex == m_DefaultTransitionTabPairIndex;
+            bool editable = m_Session != null &&
+                            m_Session.IsLoaded &&
+                            !m_Session.IsOverrideAsset;
+            return new XAnimationDefaultTransitionGraphElement.PairViewData(
+                entry.TransitionIndex,
+                entry.PairIndex,
+                entry.PreStateKey,
+                entry.NextStateKey,
+                transition?.channelName ?? string.Empty,
+                transition?.fadeIn ?? 0f,
+                transition?.fadeOut ?? 0f,
+                transition?.priority ?? 0,
+                entry.IsInState,
+                selected,
+                selected && m_DefaultTransitionTabPairWaitingSwitch,
+                editable);
+        }
+
+        private void EnsureDefaultTransitionTabSelection(
+            List<DefaultTransitionPairEntry> inEntries,
+            List<DefaultTransitionPairEntry> outEntries)
+        {
+            if (ContainsDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex) ||
+                ContainsDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex))
+            {
+                return;
+            }
+
+            if (outEntries.Count > 0)
+            {
+                SelectDefaultTransitionTabPair(outEntries[0], rebuild: false);
+                return;
+            }
+
+            if (inEntries.Count > 0)
+            {
+                SelectDefaultTransitionTabPair(inEntries[0], rebuild: false);
+                return;
+            }
+
+            m_DefaultTransitionTabTransitionIndex = -1;
+            m_DefaultTransitionTabPairIndex = -1;
+            m_DefaultTransitionTabPairWaitingSwitch = false;
+        }
+
+        private static bool ContainsDefaultTransitionPairEntry(List<DefaultTransitionPairEntry> entries, int transitionIndex, int pairIndex)
+        {
+            if (entries == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < entries.Count; i++)
+            {
+                if (entries[i].TransitionIndex == transitionIndex && entries[i].PairIndex == pairIndex)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private DefaultTransitionPairEntry? GetSelectedDefaultTransitionPairEntry(
+            List<DefaultTransitionPairEntry> inEntries,
+            List<DefaultTransitionPairEntry> outEntries)
+        {
+            if (TryFindDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, out DefaultTransitionPairEntry entry) ||
+                TryFindDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, out entry))
+            {
+                return entry;
+            }
+
+            return null;
+        }
+
+        private static bool TryFindDefaultTransitionPairEntry(
+            List<DefaultTransitionPairEntry> entries,
+            int transitionIndex,
+            int pairIndex,
+            out DefaultTransitionPairEntry entry)
+        {
+            if (entries != null)
+            {
+                for (int i = 0; i < entries.Count; i++)
+                {
+                    if (entries[i].TransitionIndex == transitionIndex && entries[i].PairIndex == pairIndex)
+                    {
+                        entry = entries[i];
+                        return true;
+                    }
+                }
+            }
+
+            entry = default;
+            return false;
+        }
+
+        private void SelectDefaultTransitionTabPair(DefaultTransitionPairEntry entry, bool rebuild = true)
+        {
+            bool changed = entry.TransitionIndex != m_DefaultTransitionTabTransitionIndex ||
+                           entry.PairIndex != m_DefaultTransitionTabPairIndex;
+            m_DefaultTransitionTabTransitionIndex = entry.TransitionIndex;
+            m_DefaultTransitionTabPairIndex = entry.PairIndex;
+            m_SelectedDefaultTransitionIndex = entry.TransitionIndex;
+            if (changed)
+            {
+                m_DefaultTransitionTabPairWaitingSwitch = false;
+            }
+
+            if (rebuild)
+            {
+                RebuildDefaultTransitionTab();
+            }
+        }
+
+        private void SelectDefaultTransitionTabPair(int transitionIndex, int pairIndex)
+        {
+            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, out DefaultTransitionPairEntry entry))
+            {
+                SelectDefaultTransitionTabPair(entry);
+            }
+        }
+
+        private bool TryGetDefaultTransitionTabPairEntry(int transitionIndex, int pairIndex, out DefaultTransitionPairEntry entry)
+        {
+            List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(m_DefaultTransitionEditingStateKey, true);
+            List<DefaultTransitionPairEntry> outEntries = CollectDefaultTransitionPairEntries(m_DefaultTransitionEditingStateKey, false);
+            return TryFindDefaultTransitionPairEntry(outEntries, transitionIndex, pairIndex, out entry) ||
+                   TryFindDefaultTransitionPairEntry(inEntries, transitionIndex, pairIndex, out entry);
+        }
+
+        private void BuildDefaultTransitionDetails(DefaultTransitionPairEntry? selectedEntry)
+        {
+            m_DefaultTransitionDetailsView.Clear();
+            Label title = new("Selected Pair");
+            title.style.color = TextNormal;
+            title.style.fontSize = SectionTitleFontSize;
+            title.style.unityFontStyleAndWeight = FontStyle.Bold;
+            title.style.marginBottom = 8;
+            m_DefaultTransitionDetailsView.Add(title);
+
+            if (!selectedEntry.HasValue)
+            {
+                AddEmptyLabel(m_DefaultTransitionDetailsView, "No pair selected");
+                return;
+            }
+
+            DefaultTransitionPairEntry entry = selectedEntry.Value;
+            XAnimationDefaultTransitionConfig config = entry.Transition;
+            bool editable = m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset;
+
+            VisualElement pairPreview = CreateSubBox();
+            pairPreview.style.backgroundColor = new Color(0.14f, 0.18f, 0.25f, 1f);
+            pairPreview.style.marginBottom = 8;
+            Label pairTitle = CreateBoldLabel($"{entry.PreStateKey} -> {entry.NextStateKey}");
+            pairTitle.style.color = Color.white;
+            pairPreview.Add(pairTitle);
+            Label pairName = new(string.IsNullOrWhiteSpace(config.channelName) ? "Channel: ?" : $"Channel: {config.channelName}");
+            pairName.style.color = TextMuted;
+            pairName.style.fontSize = BodyFontSize;
+            pairName.style.marginTop = 2;
+            pairPreview.Add(pairName);
+            m_DefaultTransitionDetailsView.Add(pairPreview);
+
+            float currentExitTime = 0.5f;
+            float currentTransitionDuration = GetDefaultTransitionDuration(config);
+            float currentEnterTime = Mathf.Clamp01(config.enterTime);
+            XAnimationTransitionTimelineEditor timelineEditor = new();
+            timelineEditor.SetData(
+                entry.PreStateKey,
+                entry.NextStateKey,
+                ResolveTimelineStateDuration(entry.PreStateKey, 1f),
+                ResolveTimelineStateDuration(entry.NextStateKey, 1f),
+                currentExitTime,
+                currentTransitionDuration,
+                currentEnterTime,
+                editable,
+                false,
+                "只读显示。拖拽 timeline 的起点可调整这个编辑器临时值，不会写入 Default Transition 数据。");
+            timelineEditor.TimingChanged += (exitTime, transitionDuration, enterTime) =>
+            {
+                bool optionsChanged =
+                    !Mathf.Approximately(currentTransitionDuration, Mathf.Max(0f, transitionDuration)) ||
+                    !Mathf.Approximately(currentEnterTime, Mathf.Clamp01(enterTime));
+                currentExitTime = Mathf.Clamp01(exitTime);
+                currentTransitionDuration = Mathf.Max(0f, transitionDuration);
+                currentEnterTime = Mathf.Clamp01(enterTime);
+                if (!optionsChanged || m_Session == null || !m_Session.IsLoaded)
+                {
+                    return;
+                }
+
+                try
+                {
+                    m_Session.SetDefaultTransitionOptions(
+                        entry.TransitionIndex,
+                        currentTransitionDuration,
+                        currentTransitionDuration,
+                        currentEnterTime,
+                        config.priority,
+                        config.interruptible,
+                        save: false);
+                    ScheduleAssetSave();
+                    RefreshChannelStates();
+                }
+                catch (Exception ex)
+                {
+                    SetStatus(ex.Message, true);
+                    Debug.LogException(ex);
+                }
+            };
+            timelineEditor.DragStatusChanged += statusText => SetStatus($"Default Transition {entry.TransitionIndex + 1} {statusText}");
+            m_DefaultTransitionDetailsView.Add(timelineEditor);
+        }
+        private void ShowAddDefaultTransitionPairMenu(bool inState)
+        {
+            if (!CanAddDefaultTransitionPairFromTab())
+            {
+                return;
+            }
+
+            Button sourceButton = inState
+                ? m_AddDefaultTransitionInPairButton
+                : m_AddDefaultTransitionOutPairButton;
+            VisualElement activator = sourceButton ?? m_DefaultTransitionTabView;
+            List<StateSelectionItem> items = CollectSelectableStates(m_DefaultTransitionEditingStateKey);
+            List<SearchableSelectionItem> entries = BuildStateSelectionEntries(items, includeNone: false);
+            SearchableSelectionWindow.Show(
+                GetSelectionActivatorRect(activator),
+                inState ? "Select In State" : "Select Out State",
+                string.Empty,
+                entries,
+                selected =>
+                {
+                    if (inState)
+                    {
+                        AddDefaultTransitionTabPair(selected, m_DefaultTransitionEditingStateKey);
+                    }
+                    else
+                    {
+                        AddDefaultTransitionTabPair(m_DefaultTransitionEditingStateKey, selected);
+                    }
+                });
+        }
+
+        private void AddDefaultTransitionTabPair(string preStateKey, string nextStateKey)
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                return;
+            }
+
+            try
+            {
+                int transitionIndex = m_DefaultTransitionTabTransitionIndex;
+                int pairIndex;
+                if (transitionIndex >= 0 && transitionIndex < m_Session.CompiledAsset.DefaultTransitions.Count)
+                {
+                    pairIndex = m_Session.AddDefaultTransitionPair(transitionIndex, preStateKey, nextStateKey, save: false);
+                }
+                else
+                {
+                    transitionIndex = m_Session.AddDefaultTransition(preStateKey, nextStateKey, save: false);
+                    pairIndex = 0;
+                }
+
+                m_SelectedDefaultTransitionIndex = transitionIndex;
+                m_DefaultTransitionTabTransitionIndex = transitionIndex;
+                m_DefaultTransitionTabPairIndex = pairIndex;
+                m_DefaultTransitionTabPairWaitingSwitch = false;
+                ScheduleAssetSave();
+                RebuildDefaultTransitionsEditor();
+                RefreshChannelStates();
+                SetStatus($"已新增 Default Transition pair: {preStateKey} -> {nextStateKey}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void DeleteDefaultTransitionTabPair(DefaultTransitionPairEntry entry)
+        {
+            if (m_Session == null || !m_Session.IsLoaded || m_Session.IsOverrideAsset)
+            {
+                return;
+            }
+
+            try
+            {
+                m_Session.DeleteDefaultTransition(entry.TransitionIndex);
+                m_SelectedDefaultTransitionIndex = -1;
+                m_DefaultTransitionTabTransitionIndex = -1;
+
+                m_DefaultTransitionTabPairIndex = -1;
+                m_DefaultTransitionTabPairWaitingSwitch = false;
+                RebuildDefaultTransitionsEditor();
+                RefreshChannelStates();
+                SetStatus($"已删除 Default Transition pair。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void DeleteDefaultTransitionTabPair(int transitionIndex, int pairIndex)
+        {
+            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, out DefaultTransitionPairEntry entry))
+            {
+                DeleteDefaultTransitionTabPair(entry);
+            }
         }
 
         private VisualElement CreateStateEditor(XAnimationCompiledState state)
@@ -332,35 +877,6 @@ namespace XAnimationEditor
             VisualElement editor = CreateFoldoutRowEditor();
             VisualElement configBox = CreateStateConfigSection();
             editor.Add(configBox);
-
-            List<string> stateTypeNames = new(Enum.GetNames(typeof(XAnimationStateType)));
-            DropdownField stateTypeField = new(
-                "stateType",
-                stateTypeNames,
-                Mathf.Max(0, stateTypeNames.IndexOf(config.stateType.ToString())));
-            ApplyDropdownFieldStyle(stateTypeField);
-            stateTypeField.tooltip = "State 类型。Single 播放一个 clip；Blend1D 根据 float 参数混合采样点；2D directional blend 根据二维方向参数混合采样点。";
-            stateTypeField.RegisterValueChangedCallback(evt =>
-            {
-                if (!Enum.TryParse(evt.newValue, out XAnimationStateType stateType))
-                {
-                    return;
-                }
-
-                ChangeStateType(state.Key, stateType, evt.previousValue, stateTypeField);
-            });
-            configBox.Add(stateTypeField);
-
-            DropdownField channelField = CreateChannelDropdown("channel", config.channelName);
-            channelField.tooltip = "State 默认播放 channel。";
-            AttachDropdownInspectorButton(
-                channelField,
-                () => channelField?.value ?? config.channelName,
-                () => HasChannel(channelField?.value ?? config.channelName),
-                () => FocusChannelInInspector(channelField?.value ?? config.channelName),
-                "定位到 Channels 面板里当前 channel 对应的条目。");
-            channelField.RegisterValueChangedCallback(evt => ChangeStateChannel(state.Key, evt.newValue, channelField, evt.previousValue));
-            configBox.Add(channelField);
 
             DropdownField parameterField = null;
             DropdownField parameterXField = null;
@@ -434,11 +950,14 @@ namespace XAnimationEditor
 
             if (config.stateType == XAnimationStateType.Single)
             {
+                VisualElement clipBox = CreateSubBox();
+                clipBox.style.marginTop = 5;
                 XAnimationEditorSelectionField clipField = CreateClipSelectionField("clipKey", config.clipKey);
                 clipField.tooltip = "Single state 播放的 clip。";
                 clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(state.Key, newValue, clipField, previousValue);
                 AttachClipKeyPingButton(clipField, config.clipKey, enabled: true);
-                editor.Add(clipField);
+                clipBox.Add(clipField);
+                editor.Add(clipBox);
             }
             else if (deferredTypeSpecificEditor != null)
             {
@@ -561,18 +1080,11 @@ namespace XAnimationEditor
             XAnimationStateConfig config = preState.Config;
             bool loopEnabled = config.loop;
             bool editable = m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset;
-            string nextStateKey = transitionConfig.nextStateKey ?? string.Empty;
-            string currentNextStateKey = nextStateKey;
+            bool timingEditable = !loopEnabled && editable;
+            string currentNextStateKey = transitionConfig.nextStateKey ?? string.Empty;
             float currentExitTime = transitionConfig.exitTime;
             float currentTransitionDuration = transitionConfig.transitionDuration;
             float currentEnterTime = transitionConfig.enterTime;
-            bool suppressTimingCallbacks = false;
-            float lastPreStateDurationSeconds = 0f;
-            float lastNextStateDurationSeconds = 0f;
-            float lastNextStateStartSeconds = 0f;
-            float lastNextStateEndSeconds = 0f;
-            float lastTransitionStartSeconds = 0f;
-            float lastAxisDurationSeconds = 0.1f;
 
             DropdownField preStateField = CreateAutoTransitionPreStateDropdown(string.Empty, preStateKey);
             ConfigureAutoTransitionHeaderDropdown(preStateField, 120f);
@@ -592,28 +1104,22 @@ namespace XAnimationEditor
             arrowLabel.style.fontSize = BodyFontSize;
             arrowLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
 
-            XAnimationEditorSelectionField nextStateField = CreateStateSelectionField(string.Empty, nextStateKey, preStateKey, includeNone: true);
+            XAnimationEditorSelectionField nextStateField = CreateStateSelectionField(string.Empty, currentNextStateKey, preStateKey, includeNone: true);
             nextStateField.style.width = 180f;
             nextStateField.style.minWidth = 120f;
             nextStateField.style.flexGrow = 1;
             nextStateField.style.flexShrink = 1;
             nextStateField.tooltip = "非循环 state 播放完成后自动切到的目标 state。None 表示关闭自动切换。";
-            nextStateField.SetEnabled(!loopEnabled && editable);
+            nextStateField.SetEnabled(timingEditable);
 
-            Button deleteButton = new(() => DeleteAutoTransition(preStateKey))
-            {
-                text = "⌫"
-            };
+            Button deleteButton = new(() => DeleteAutoTransition(preStateKey)) { text = "⌫" };
             deleteButton.tooltip = editable ? "删除这个 Auto Transition。" : "Override 资源不能删除 Auto Transition。";
             deleteButton.SetEnabled(editable);
             ApplyTrashButtonIcon(deleteButton);
             ApplyClipIconButtonStyle(deleteButton);
             deleteButton.style.marginLeft = 4;
 
-            Button playButton = new(() => ToggleStatePlayback(preState))
-            {
-                text = "▶"
-            };
+            Button playButton = new(() => ToggleStatePlayback(preState)) { text = "▶" };
             playButton.tooltip = "播放或暂停这个 Auto Transition 对应的 preState。";
             ApplyClipButtonStyle(playButton, false);
 
@@ -672,357 +1178,23 @@ namespace XAnimationEditor
                 allowActionAreaBackgroundToggle: true);
             m_AutoTransitionRowMap[preStateKey] = card.Root;
 
-            VisualElement content = card.Content;
-
-            VisualElement timelineBox = CreateSubBox();
-            Color nextStateInactiveColor = new(0.20f, 0.34f, 0.58f, 0.32f);
-            Color nextStateActiveColor = new(0.24f, 0.50f, 0.92f, 0.72f);
-            Color transitionMarkerColor = new(0.95f, 0.82f, 0.24f, 1f);
-
-            VisualElement rulerRow = CreateAutoTransitionTimelineRow("Sec", out _, out VisualElement rulerTrack);
-            rulerTrack.style.height = 26;
-            rulerTrack.style.overflow = Overflow.Hidden;
-            VisualElement rulerTicksLayer = new();
-            rulerTicksLayer.style.position = Position.Absolute;
-            rulerTicksLayer.style.left = 0;
-            rulerTicksLayer.style.right = 0;
-            rulerTicksLayer.style.top = 0;
-            rulerTicksLayer.style.bottom = 0;
-            rulerTrack.Add(rulerTicksLayer);
-            VisualElement rulerTransitionStartLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            VisualElement rulerTransitionEndLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            rulerTrack.Add(rulerTransitionStartLine);
-            rulerTrack.Add(rulerTransitionEndLine);
-            timelineBox.Add(rulerRow);
-
-            VisualElement preStateRow = CreateAutoTransitionTimelineRow(preStateKey, out _, out VisualElement preStateTrack);
-            preStateTrack.style.overflow = Overflow.Hidden;
-            VisualElement preStateFill = CreateAutoTransitionTimelineFill(AccentColor, 0.72f);
-            VisualElement preTransitionStartLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            VisualElement preTransitionEndLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            preStateTrack.Add(preStateFill);
-            preStateTrack.Add(preTransitionStartLine);
-            preStateTrack.Add(preTransitionEndLine);
-            timelineBox.Add(preStateRow);
-
-            VisualElement nextStateRow = CreateAutoTransitionTimelineRow(GetAutoTransitionTimelineStateLabel(currentNextStateKey), out Label nextStateLabel, out VisualElement nextStateTrack);
-            nextStateTrack.style.overflow = Overflow.Hidden;
-            VisualElement nextStateFill = CreateAutoTransitionTimelineFill(nextStateInactiveColor, 1f);
-            VisualElement nextStatePlayedFill = CreateAutoTransitionTimelineFill(nextStateActiveColor, 1f);
-            VisualElement nextTransitionStartLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            VisualElement nextTransitionEndLine = CreateAutoTransitionTimelineMarkerLine(transitionMarkerColor);
-            nextStateTrack.Add(nextStateFill);
-            nextStateTrack.Add(nextStatePlayedFill);
-            nextStateTrack.Add(nextTransitionStartLine);
-            nextStateTrack.Add(nextTransitionEndLine);
-            timelineBox.Add(nextStateRow);
-            content.Add(timelineBox);
-
-            FloatField exitTimeField = new("ExitTime") { value = currentExitTime };
-            Slider exitTimeSlider = new(0f, 1f) { value = currentExitTime };
-            VisualElement exitTimeRow = CreateAutoTransitionTimingRow(exitTimeField, exitTimeSlider);
-            exitTimeField.tooltip = "当前状态播到哪个 normalized time 时开始自动切换。范围 [0, 1]。";
-            exitTimeSlider.tooltip = exitTimeField.tooltip;
-            exitTimeField.SetEnabled(!loopEnabled && editable);
-            exitTimeSlider.SetEnabled(!loopEnabled && editable);
-            content.Add(exitTimeRow);
-
-            FloatField transitionDurationField = new("TransitionDuration") { value = currentTransitionDuration };
-            Slider transitionDurationSlider = new(0f, GetAutoTransitionDurationSliderMax(0f))
+            XAnimationTransitionTimelineEditor timelineEditor = new();
+            void RefreshTimelineEditor()
             {
-                value = currentTransitionDuration
-            };
-            VisualElement transitionDurationRow = CreateAutoTransitionTimingRow(transitionDurationField, transitionDurationSlider);
-            transitionDurationField.tooltip = "<= 0 表示回退到 channel 默认 fadeIn / fadeOut。";
-            transitionDurationSlider.tooltip = "拖动调节过渡时长。";
-            transitionDurationField.SetEnabled(!loopEnabled && editable);
-            transitionDurationSlider.SetEnabled(!loopEnabled && editable);
-            content.Add(transitionDurationRow);
-
-            FloatField enterTimeField = new("EnterTime") { value = currentEnterTime };
-            Slider enterTimeSlider = new(0f, 1f) { value = currentEnterTime };
-            VisualElement enterTimeRow = CreateAutoTransitionTimingRow(enterTimeField, enterTimeSlider);
-            enterTimeField.tooltip = "目标状态从哪个 normalized time 开始播放。范围 [0, 1]。";
-            enterTimeSlider.tooltip = enterTimeField.tooltip;
-            enterTimeField.SetEnabled(!loopEnabled && editable);
-            enterTimeSlider.SetEnabled(!loopEnabled && editable);
-            content.Add(enterTimeRow);
-
-            void SyncTimelinePreview()
-            {
-                float preStateDurationSeconds = 0f;
-                bool hasPreDuration = m_Session != null &&
-                                      m_Session.IsLoaded &&
-                                      m_Session.CompiledAsset.TryGetStateDuration(preStateKey, out preStateDurationSeconds);
-
-                float nextStateDurationSeconds = 0f;
-                bool hasNextDuration = m_Session != null &&
-                                       m_Session.IsLoaded &&
-                                       !string.IsNullOrWhiteSpace(currentNextStateKey) &&
-                                       m_Session.CompiledAsset.TryGetStateDuration(currentNextStateKey, out nextStateDurationSeconds);
-
-                float transitionStartSeconds = preStateDurationSeconds * currentExitTime;
-                float transitionEndSeconds = transitionStartSeconds + currentTransitionDuration;
-                float nextStateStartSeconds = hasNextDuration
-                    ? transitionStartSeconds - (nextStateDurationSeconds * currentEnterTime)
-                    : 0f;
-                float nextStateEndSeconds = hasNextDuration
-                    ? nextStateStartSeconds + nextStateDurationSeconds
-                    : 0f;
-                float axisDurationSeconds = Mathf.Max(
-                    Mathf.Max(0.1f, preStateDurationSeconds),
-                    Mathf.Max(transitionEndSeconds, nextStateEndSeconds));
-
-                lastPreStateDurationSeconds = hasPreDuration ? preStateDurationSeconds : 0f;
-                lastNextStateDurationSeconds = hasNextDuration ? nextStateDurationSeconds : 0f;
-                lastNextStateStartSeconds = hasNextDuration ? nextStateStartSeconds : 0f;
-                lastNextStateEndSeconds = hasNextDuration ? nextStateEndSeconds : 0f;
-                lastTransitionStartSeconds = transitionStartSeconds;
-                lastAxisDurationSeconds = axisDurationSeconds;
-
-                nextStateLabel.text = GetAutoTransitionTimelineStateLabel(currentNextStateKey);
-                RebuildAutoTransitionTimelineRuler(rulerTicksLayer, axisDurationSeconds);
-                UpdateAutoTransitionTimelineSegment(preStateFill, 0f, preStateDurationSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineSegment(nextStateFill, nextStateStartSeconds, nextStateEndSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineSegment(nextStatePlayedFill, transitionStartSeconds, nextStateEndSeconds, axisDurationSeconds);
-
-                UpdateAutoTransitionTimelineMarker(rulerTransitionStartLine, transitionStartSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineMarker(rulerTransitionEndLine, transitionEndSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineMarker(preTransitionStartLine, transitionStartSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineMarker(preTransitionEndLine, transitionEndSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineMarker(nextTransitionStartLine, transitionStartSeconds, axisDurationSeconds);
-                UpdateAutoTransitionTimelineMarker(nextTransitionEndLine, transitionEndSeconds, axisDurationSeconds);
+                timelineEditor.SetData(
+                    preStateKey,
+                    currentNextStateKey,
+                    ResolveTimelineStateDuration(preStateKey, 0f),
+                    ResolveTimelineStateDuration(currentNextStateKey, 0f),
+                    currentExitTime,
+                    currentTransitionDuration,
+                    currentEnterTime,
+                    timingEditable,
+                    true,
+                    null);
             }
 
-            void ApplyTimelineDrag(AutoTransitionTimelineDragMode mode, VisualElement track, Vector2 pointerPosition)
-            {
-                if (!editable || loopEnabled || m_Session == null || !m_Session.IsLoaded || track == null)
-                {
-                    return;
-                }
-
-                Rect trackBounds = track.worldBound;
-                if (trackBounds.width <= 0f)
-                {
-                    return;
-                }
-
-                float pointerX = Mathf.Clamp(pointerPosition.x - trackBounds.xMin, 0f, trackBounds.width);
-                float axisSeconds = Mathf.Max(0.0001f, lastAxisDurationSeconds);
-                float targetSeconds = (pointerX / trackBounds.width) * axisSeconds;
-
-                switch (mode)
-                {
-                    case AutoTransitionTimelineDragMode.ExitTime:
-                    {
-                        float exitTime = lastPreStateDurationSeconds > 0f
-                            ? Mathf.Clamp01(targetSeconds / lastPreStateDurationSeconds)
-                            : 0f;
-                        ApplyTimingChange(
-                            exitTime,
-                            currentTransitionDuration,
-                            currentEnterTime,
-                            $"ExitTime = {exitTime:0.###}。");
-                        break;
-                    }
-                    case AutoTransitionTimelineDragMode.TransitionDuration:
-                    {
-                        float duration = Mathf.Max(0f, targetSeconds - lastTransitionStartSeconds);
-                        ApplyTimingChange(
-                            currentExitTime,
-                            duration,
-                            currentEnterTime,
-                            $"TransitionDuration = {duration:0.###}。");
-                        break;
-                    }
-                    case AutoTransitionTimelineDragMode.EnterTime:
-                    {
-                        float enterTime = lastNextStateDurationSeconds > 0f
-                            ? Mathf.Clamp01((lastTransitionStartSeconds - targetSeconds) / lastNextStateDurationSeconds)
-                            : 0f;
-                        ApplyTimingChange(
-                            currentExitTime,
-                            currentTransitionDuration,
-                            enterTime,
-                            $"EnterTime = {enterTime:0.###}。");
-                        break;
-                    }
-                }
-            }
-
-            bool TryGetTrackTime(VisualElement track, Vector2 pointerPosition, out float targetSeconds)
-            {
-                targetSeconds = 0f;
-                if (track == null)
-                {
-                    return false;
-                }
-
-                Rect trackBounds = track.worldBound;
-                if (trackBounds.width <= 0f)
-                {
-                    return false;
-                }
-
-                float pointerX = Mathf.Clamp(pointerPosition.x - trackBounds.xMin, 0f, trackBounds.width);
-                float axisSeconds = Mathf.Max(0.0001f, lastAxisDurationSeconds);
-                targetSeconds = (pointerX / trackBounds.width) * axisSeconds;
-                return true;
-            }
-
-            void RegisterTimelineDragHandle(VisualElement element, VisualElement track, AutoTransitionTimelineDragMode mode, string tooltip)
-            {
-                if (element == null)
-                {
-                    return;
-                }
-
-                element.tooltip = tooltip;
-                if (!editable || loopEnabled)
-                {
-                    return;
-                }
-
-                int activePointerId = PointerId.invalidPointerId;
-
-                element.RegisterCallback<PointerDownEvent>(evt =>
-                {
-                    if (evt.button != 0)
-                    {
-                        return;
-                    }
-
-                    activePointerId = evt.pointerId;
-                    element.CapturePointer(activePointerId);
-                    ApplyTimelineDrag(mode, track, evt.position);
-                    evt.StopPropagation();
-                });
-
-                element.RegisterCallback<PointerMoveEvent>(evt =>
-                {
-                    if (activePointerId != evt.pointerId || !element.HasPointerCapture(evt.pointerId))
-                    {
-                        return;
-                    }
-
-                    ApplyTimelineDrag(mode, track, evt.position);
-                    evt.StopPropagation();
-                });
-
-                element.RegisterCallback<PointerUpEvent>(evt =>
-                {
-                    if (activePointerId != evt.pointerId)
-                    {
-                        return;
-                    }
-
-                    if (element.HasPointerCapture(evt.pointerId))
-                    {
-                        element.ReleasePointer(evt.pointerId);
-                    }
-
-                    activePointerId = PointerId.invalidPointerId;
-                    evt.StopPropagation();
-                });
-
-                element.RegisterCallback<PointerCaptureOutEvent>(_ =>
-                {
-                    activePointerId = PointerId.invalidPointerId;
-                });
-            }
-
-            void RegisterEnterTimeTrackDragHandle(VisualElement track, string tooltip)
-            {
-                if (track == null)
-                {
-                    return;
-                }
-
-                track.tooltip = tooltip;
-                if (!editable || loopEnabled)
-                {
-                    return;
-                }
-
-                int activePointerId = PointerId.invalidPointerId;
-                bool dragging = false;
-
-                track.RegisterCallback<PointerDownEvent>(evt =>
-                {
-                    if (evt.button != 0)
-                    {
-                        return;
-                    }
-
-                    if (!TryGetTrackTime(track, evt.position, out float targetSeconds))
-                    {
-                        return;
-                    }
-
-                    if (lastNextStateDurationSeconds <= 0f ||
-                        targetSeconds < lastNextStateStartSeconds ||
-                        targetSeconds > lastNextStateEndSeconds)
-                    {
-                        return;
-                    }
-
-                    dragging = true;
-                    activePointerId = evt.pointerId;
-                    track.CapturePointer(activePointerId);
-                    ApplyTimelineDrag(AutoTransitionTimelineDragMode.EnterTime, track, evt.position);
-                    evt.StopPropagation();
-                });
-
-                track.RegisterCallback<PointerMoveEvent>(evt =>
-                {
-                    if (!dragging || activePointerId != evt.pointerId || !track.HasPointerCapture(evt.pointerId))
-                    {
-                        return;
-                    }
-
-                    ApplyTimelineDrag(AutoTransitionTimelineDragMode.EnterTime, track, evt.position);
-                    evt.StopPropagation();
-                });
-
-                track.RegisterCallback<PointerUpEvent>(evt =>
-                {
-                    if (!dragging || activePointerId != evt.pointerId)
-                    {
-                        return;
-                    }
-
-                    if (track.HasPointerCapture(evt.pointerId))
-                    {
-                        track.ReleasePointer(evt.pointerId);
-                    }
-
-                    dragging = false;
-                    activePointerId = PointerId.invalidPointerId;
-                    evt.StopPropagation();
-                });
-
-                track.RegisterCallback<PointerCaptureOutEvent>(_ =>
-                {
-                    dragging = false;
-                    activePointerId = PointerId.invalidPointerId;
-                });
-            }
-
-            void SyncTimingControls()
-            {
-                suppressTimingCallbacks = true;
-                exitTimeField.SetValueWithoutNotify(currentExitTime);
-                exitTimeSlider.SetValueWithoutNotify(currentExitTime);
-                transitionDurationField.SetValueWithoutNotify(currentTransitionDuration);
-                transitionDurationSlider.highValue = GetAutoTransitionDurationSliderMax(lastNextStateDurationSeconds);
-                transitionDurationSlider.SetValueWithoutNotify(Mathf.Min(currentTransitionDuration, transitionDurationSlider.highValue));
-                enterTimeField.SetValueWithoutNotify(currentEnterTime);
-                enterTimeSlider.SetValueWithoutNotify(currentEnterTime);
-                SyncTimelinePreview();
-                suppressTimingCallbacks = false;
-            }
-
-            void ApplyTimingChange(float exitTime, float transitionDuration, float enterTime, string statusText)
+            timelineEditor.TimingChanged += (exitTime, transitionDuration, enterTime) =>
             {
                 if (m_Session == null || !m_Session.IsLoaded)
                 {
@@ -1035,9 +1207,10 @@ namespace XAnimationEditor
                 m_Session.SetAutoTransitionTiming(preStateKey, currentExitTime, currentTransitionDuration, currentEnterTime, save: false);
                 ScheduleAssetSave();
                 RefreshChannelStates();
-                SyncTimingControls();
-                SetStatus($"{preStateKey} {statusText}");
-            }
+            };
+            timelineEditor.DragStatusChanged += statusText => SetStatus($"{preStateKey} {statusText}");
+            RefreshTimelineEditor();
+            card.Content.Add(timelineEditor);
 
             preStateField.RegisterValueChangedCallback(evt =>
             {
@@ -1075,86 +1248,14 @@ namespace XAnimationEditor
                 m_Session.SetAutoTransitionNextState(preStateKey, newNextStateKey, save: false);
                 ScheduleAssetSave();
                 RefreshChannelStates();
-                SyncTimelinePreview();
+                RefreshTimelineEditor();
                 SetStatus(string.IsNullOrWhiteSpace(newNextStateKey)
                     ? $"{preStateKey} auto next = None。"
                     : $"{preStateKey} auto next = {newNextStateKey}。");
             };
 
-            exitTimeField.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(evt.newValue, currentTransitionDuration, currentEnterTime, $"ExitTime = {Mathf.Clamp01(evt.newValue):0.###}。");
-            });
-            exitTimeSlider.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(evt.newValue, currentTransitionDuration, currentEnterTime, $"ExitTime = {evt.newValue:0.###}。");
-            });
-
-            transitionDurationField.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(currentExitTime, evt.newValue, currentEnterTime, $"TransitionDuration = {Mathf.Max(0f, evt.newValue):0.###}。");
-            });
-            transitionDurationSlider.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(currentExitTime, evt.newValue, currentEnterTime, $"TransitionDuration = {evt.newValue:0.###}。");
-            });
-
-            enterTimeField.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(currentExitTime, currentTransitionDuration, evt.newValue, $"EnterTime = {Mathf.Clamp01(evt.newValue):0.###}。");
-            });
-            enterTimeSlider.RegisterValueChangedCallback(evt =>
-            {
-                if (suppressTimingCallbacks)
-                {
-                    return;
-                }
-
-                ApplyTimingChange(currentExitTime, currentTransitionDuration, evt.newValue, $"EnterTime = {evt.newValue:0.###}。");
-            });
-
-            const string exitMarkerTooltip = "左右拖拽，直接调整 ExitTime。";
-            const string durationMarkerTooltip = "左右拖拽，直接调整 TransitionDuration。";
-            const string enterRegionTooltip = "左右拖拽目标 state 区块，直接调整 EnterTime。";
-            RegisterTimelineDragHandle(rulerTransitionStartLine, rulerTrack, AutoTransitionTimelineDragMode.ExitTime, exitMarkerTooltip);
-            RegisterTimelineDragHandle(preTransitionStartLine, preStateTrack, AutoTransitionTimelineDragMode.ExitTime, exitMarkerTooltip);
-            RegisterTimelineDragHandle(nextTransitionStartLine, nextStateTrack, AutoTransitionTimelineDragMode.ExitTime, exitMarkerTooltip);
-            RegisterTimelineDragHandle(rulerTransitionEndLine, rulerTrack, AutoTransitionTimelineDragMode.TransitionDuration, durationMarkerTooltip);
-            RegisterTimelineDragHandle(preTransitionEndLine, preStateTrack, AutoTransitionTimelineDragMode.TransitionDuration, durationMarkerTooltip);
-            RegisterTimelineDragHandle(nextTransitionEndLine, nextStateTrack, AutoTransitionTimelineDragMode.TransitionDuration, durationMarkerTooltip);
-            nextStateFill.tooltip = enterRegionTooltip;
-            nextStatePlayedFill.tooltip = enterRegionTooltip;
-            RegisterEnterTimeTrackDragHandle(nextStateTrack, enterRegionTooltip);
-
-            SyncTimingControls();
             return card.Root;
         }
-
         private bool IsAutoTransitionExpanded(string preStateKey)
         {
             return m_CollapsedAutoTransitionKeys.Contains(preStateKey);
@@ -1255,17 +1356,26 @@ namespace XAnimationEditor
 
         private static string FormatDefaultTransitionPairSummary(XAnimationDefaultTransitionConfig config)
         {
-            XAnimationTransitionPairConfig[] pairs = config?.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
-            if (pairs.Length == 0)
+            if (config == null)
             {
-                return "0 pairs";
+                return "Invalid";
             }
 
-            XAnimationTransitionPairConfig firstPair = pairs[0];
-            string first = firstPair == null
-                ? "invalid"
-                : $"{firstPair.preStateKey} -> {firstPair.nextStateKey}";
-            return pairs.Length == 1 ? first : $"{first} +{pairs.Length - 1}";
+            string channelName = string.IsNullOrWhiteSpace(config.channelName) ? "?" : config.channelName;
+            string preStateKey = string.IsNullOrWhiteSpace(config.preStateKey) ? "?" : config.preStateKey;
+            string nextStateKey = string.IsNullOrWhiteSpace(config.nextStateKey) ? "?" : config.nextStateKey;
+            return $"{channelName}: {preStateKey} -> {nextStateKey}";
+        }
+
+        private static string FormatDefaultTransitionDisplayName(XAnimationDefaultTransitionConfig config, int transitionIndex)
+        {
+            if (config == null)
+            {
+                return $"Default Transition {transitionIndex + 1}";
+            }
+
+            string channelName = string.IsNullOrWhiteSpace(config.channelName) ? "?" : config.channelName;
+            return $"{channelName} #{transitionIndex + 1}";
         }
 
         private static void ConfigureAutoTransitionHeaderDropdown(DropdownField field, float minWidth)
@@ -1281,145 +1391,38 @@ namespace XAnimationEditor
             field.style.marginRight = 2;
         }
 
-        private static VisualElement CreateAutoTransitionTimelineRow(string labelText, out Label label, out VisualElement track)
+        private static float GetDefaultTransitionDuration(XAnimationDefaultTransitionConfig config)
         {
-            VisualElement row = new();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-            row.style.marginTop = 4;
-            row.style.minWidth = 0;
-
-            label = new(labelText);
-            label.style.width = 56;
-            label.style.minWidth = 56;
-            label.style.maxWidth = 56;
-            label.style.flexShrink = 0;
-            label.style.marginRight = 6;
-            label.style.color = TextMuted;
-            label.style.fontSize = 10;
-            label.style.unityTextAlign = TextAnchor.MiddleLeft;
-            label.style.whiteSpace = WhiteSpace.NoWrap;
-            label.style.overflow = Overflow.Hidden;
-            label.style.textOverflow = TextOverflow.Ellipsis;
-            label.tooltip = labelText;
-            row.Add(label);
-
-            track = new VisualElement();
-            track.style.position = Position.Relative;
-            track.style.flexGrow = 1;
-            track.style.flexShrink = 1;
-            track.style.minWidth = 0;
-            track.style.height = 16;
-            track.style.backgroundColor = new Color(0.10f, 0.10f, 0.11f, 1f);
-            track.style.borderTopWidth = 1;
-            track.style.borderBottomWidth = 1;
-            track.style.borderLeftWidth = 1;
-            track.style.borderRightWidth = 1;
-            track.style.borderTopColor = SectionDivider;
-            track.style.borderBottomColor = SectionDivider;
-            track.style.borderLeftColor = SectionDivider;
-            track.style.borderRightColor = SectionDivider;
-            track.style.borderTopLeftRadius = 2;
-            track.style.borderTopRightRadius = 2;
-            track.style.borderBottomLeftRadius = 2;
-            track.style.borderBottomRightRadius = 2;
-            row.Add(track);
-            return row;
-        }
-
-        private static VisualElement CreateAutoTransitionTimingRow(FloatField field, Slider slider)
-        {
-            VisualElement row = new();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-            row.style.marginTop = 4;
-            row.style.minWidth = 0;
-
-            field.style.width = 170;
-            field.style.minWidth = 170;
-            field.style.maxWidth = 170;
-            field.style.flexShrink = 0;
-            row.Add(field);
-
-            slider.style.flexGrow = 1;
-            slider.style.flexShrink = 1;
-            slider.style.minWidth = 0;
-            slider.style.marginLeft = 8;
-            row.Add(slider);
-            return row;
-        }
-
-        private static VisualElement CreateDefaultTransitionOptionRow()
-        {
-            VisualElement row = new();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
-            row.style.marginTop = 6;
-            row.style.minWidth = 0;
-            return row;
-        }
-
-        private static FloatField CreateDefaultTransitionFloatField(string label, float value, bool editable)
-        {
-            FloatField field = new(label) { value = value };
-            ConfigureDefaultTransitionField(field, editable);
-            return field;
-        }
-
-        private static void ConfigureDefaultTransitionField(BaseField<float> field, bool editable)
-        {
-            field.style.width = 150;
-            field.style.minWidth = 150;
-            field.style.maxWidth = 150;
-            field.style.flexShrink = 0;
-            field.style.marginRight = 8;
-            ConfigureDefaultTransitionFieldLabel(field.labelElement);
-            field.SetEnabled(editable);
-        }
-
-        private static void ConfigureDefaultTransitionField(IntegerField field, bool editable)
-        {
-            field.style.width = 150;
-            field.style.minWidth = 150;
-            field.style.maxWidth = 150;
-            field.style.flexShrink = 0;
-            field.style.marginRight = 8;
-            ConfigureDefaultTransitionFieldLabel(field.labelElement);
-            field.SetEnabled(editable);
-        }
-
-        private static void ConfigureDefaultTransitionToggleField(Toggle toggle, bool editable)
-        {
-            toggle.SetEnabled(editable);
-            toggle.style.width = 150;
-            toggle.style.minWidth = 150;
-            toggle.style.maxWidth = 150;
-            toggle.style.flexShrink = 0;
-            toggle.style.marginRight = 8;
-            ConfigureDefaultTransitionFieldLabel(toggle.labelElement, 88);
-        }
-
-        private static void ConfigureDefaultTransitionFieldLabel(VisualElement labelElement, float width = 66)
-        {
-            if (labelElement == null)
+            if (config == null)
             {
-                return;
+                return 0f;
             }
 
-            labelElement.style.minWidth = width;
-            labelElement.style.width = width;
-            labelElement.style.maxWidth = width;
-            labelElement.style.marginRight = 4;
+            return Mathf.Max(0f, Mathf.Max(config.fadeIn, config.fadeOut));
         }
 
-        private static float GetAutoTransitionDurationSliderMax(float duration)
+        private float ResolveTimelineStateDuration(string stateKey, float fallbackSeconds)
         {
-            return Mathf.Max(1f, Mathf.Ceil(Mathf.Max(0f, duration) * 10f) / 10f);
+            if (m_Session != null &&
+                m_Session.IsLoaded &&
+                !string.IsNullOrWhiteSpace(stateKey) &&
+                m_Session.CompiledAsset.TryGetStateDuration(stateKey, out float durationSeconds) &&
+                durationSeconds > 0f)
+            {
+                return durationSeconds;
+            }
+
+            return fallbackSeconds;
         }
 
-        private static string GetAutoTransitionTimelineStateLabel(string stateKey)
+        private static string GetDefaultTransitionTimelineNextStateKey(XAnimationDefaultTransitionConfig config)
         {
-            return string.IsNullOrWhiteSpace(stateKey) ? "None" : stateKey;
+            return config?.nextStateKey ?? string.Empty;
+        }
+
+        private static string GetDefaultTransitionTimelinePreStateKey(XAnimationDefaultTransitionConfig config)
+        {
+            return config?.preStateKey ?? string.Empty;
         }
 
         private string GetFallbackNextState(string preStateKey)
@@ -1442,123 +1445,633 @@ namespace XAnimationEditor
             return string.Empty;
         }
 
-        private static VisualElement CreateAutoTransitionTimelineFill(Color color, float opacity)
+        private sealed class XAnimationDefaultTransitionGraphElement : VisualElement
         {
-            VisualElement fill = new();
-            fill.style.position = Position.Absolute;
-            fill.style.top = 2;
-            fill.style.bottom = 2;
-            fill.style.backgroundColor = color;
-            fill.style.opacity = opacity;
-            fill.style.borderTopLeftRadius = 2;
-            fill.style.borderTopRightRadius = 2;
-            fill.style.borderBottomLeftRadius = 2;
-            fill.style.borderBottomRightRadius = 2;
-            return fill;
-        }
-
-        private static VisualElement CreateAutoTransitionTimelineMarkerLine(Color color)
-        {
-            VisualElement line = new();
-            line.style.position = Position.Absolute;
-            line.style.top = 0;
-            line.style.bottom = 0;
-            line.style.width = 2;
-            line.style.backgroundColor = color;
-            return line;
-        }
-
-        private static void UpdateAutoTransitionTimelineSegment(
-            VisualElement segment,
-            float startSeconds,
-            float endSeconds,
-            float axisDurationSeconds)
-        {
-            if (segment == null)
+            public readonly struct PairViewData
             {
-                return;
+                public PairViewData(
+                    int transitionIndex,
+                    int pairIndex,
+                    string preStateKey,
+                    string nextStateKey,
+                    string transitionName,
+                    float fadeIn,
+                    float fadeOut,
+                    int priority,
+                    bool isInState,
+                    bool isSelected,
+                    bool isWaitingSwitch,
+                    bool canDelete)
+                {
+                    TransitionIndex = transitionIndex;
+                    PairIndex = pairIndex;
+                    PreStateKey = preStateKey ?? string.Empty;
+                    NextStateKey = nextStateKey ?? string.Empty;
+                    TransitionName = transitionName ?? string.Empty;
+                    FadeIn = fadeIn;
+                    FadeOut = fadeOut;
+                    Priority = priority;
+                    IsInState = isInState;
+                    IsSelected = isSelected;
+                    IsWaitingSwitch = isWaitingSwitch;
+                    CanDelete = canDelete;
+                }
+
+                public int TransitionIndex { get; }
+                public int PairIndex { get; }
+                public string PreStateKey { get; }
+                public string NextStateKey { get; }
+                public string TransitionName { get; }
+                public float FadeIn { get; }
+                public float FadeOut { get; }
+                public int Priority { get; }
+                public bool IsInState { get; }
+                public bool IsSelected { get; }
+                public bool IsWaitingSwitch { get; }
+                public bool CanDelete { get; }
+                public string StateKey => IsInState ? PreStateKey : NextStateKey;
             }
 
-            float safeAxisDuration = Mathf.Max(0.0001f, axisDurationSeconds);
-            float clampedStart = Mathf.Clamp(startSeconds, 0f, safeAxisDuration);
-            float clampedEnd = Mathf.Clamp(endSeconds, 0f, safeAxisDuration);
-            if (clampedEnd <= clampedStart)
+            private readonly struct EdgeLayout
             {
-                segment.style.display = DisplayStyle.None;
-                return;
+                public EdgeLayout(Rect from, Rect to, PairViewData pair)
+                {
+                    From = from;
+                    To = to;
+                    Pair = pair;
+                }
+
+                public Rect From { get; }
+                public Rect To { get; }
+                public PairViewData Pair { get; }
             }
 
-            segment.style.display = DisplayStyle.Flex;
-            segment.style.left = Length.Percent((clampedStart / safeAxisDuration) * 100f);
-            segment.style.width = Length.Percent(((clampedEnd - clampedStart) / safeAxisDuration) * 100f);
-        }
+            private const float MinZoom = 0.45f;
+            private const float MaxZoom = 1.85f;
+            private const float WheelZoomBase = 1.12f;
+            private const float CanvasPadding = 46f;
+            private const float NodeWidth = 166f;
+            private const float NodeHeight = 66f;
+            private const float CenterNodeWidth = 178f;
+            private const float CenterNodeHeight = 76f;
+            private const float ColumnPitch = 248f;
+            private const float RowPitch = 86f;
+            private const float MinCanvasWidth = 720f;
+            private const float MinCanvasHeight = 360f;
 
-        private static void UpdateAutoTransitionTimelineMarker(
-            VisualElement marker,
-            float timeSeconds,
-            float axisDurationSeconds)
-        {
-            if (marker == null)
+            private static readonly Color CanvasBg = new(0.095f, 0.10f, 0.115f, 1f);
+            private static readonly Color CanvasGrid = new(0.78f, 0.79f, 0.80f, 0.075f);
+            private static readonly Color CanvasGridMajor = new(0.78f, 0.79f, 0.80f, 0.13f);
+            private static readonly Color NodeBg = new(0.18f, 0.19f, 0.21f, 0.98f);
+            private static readonly Color CurrentNodeBg = new(0.16f, 0.24f, 0.34f, 0.98f);
+            private static readonly Color NodeBorder = new(0.34f, 0.35f, 0.38f, 1f);
+            private static readonly Color SelectedBorder = new(0.48f, 0.74f, 1f, 1f);
+            private static readonly Color EdgeColor = new(0.48f, 0.72f, 1f, 0.64f);
+            private static readonly Color EdgeSelected = new(0.58f, 0.86f, 1f, 0.96f);
+
+            private readonly List<PairViewData> m_Pairs = new();
+            private readonly List<EdgeLayout> m_Edges = new();
+            private readonly Dictionary<string, int> m_InStateRows = new(StringComparer.Ordinal);
+            private readonly Dictionary<string, int> m_OutStateRows = new(StringComparer.Ordinal);
+
+            private ScrollView m_ScrollView;
+            private VisualElement m_Canvas;
+            private VisualElement m_EdgeCanvas;
+            private VisualElement m_NodeLayer;
+            private Label m_EmptyLabel;
+            private string m_EditingStateKey = string.Empty;
+            private float m_Zoom = 1f;
+            private float m_BaseCanvasWidth = MinCanvasWidth;
+            private float m_BaseCanvasHeight = MinCanvasHeight;
+            private float m_CanvasWidth = MinCanvasWidth;
+            private float m_CanvasHeight = MinCanvasHeight;
+            private Vector2 m_CanvasOrigin = Vector2.zero;
+            private Vector2 m_PanOffset = Vector2.zero;
+            private bool m_IsPanning;
+            private int m_PanPointerId = PointerId.invalidPointerId;
+            private Vector2 m_PanStartPointer;
+            private Vector2 m_PanStartOffset;
+
+            public XAnimationDefaultTransitionGraphElement()
             {
-                return;
+                style.flexGrow = 1;
+                style.minHeight = 0;
+                style.backgroundColor = CanvasBg;
+                BuildUi();
             }
 
-            float safeAxisDuration = Mathf.Max(0.0001f, axisDurationSeconds);
-            float clampedTime = Mathf.Clamp(timeSeconds, 0f, safeAxisDuration);
-            marker.style.left = Length.Percent((clampedTime / safeAxisDuration) * 100f);
-        }
+            public event Action<int, int> PairSelected;
+            public event Action<int, int> PairDeleteRequested;
+            public event Action<string> StateEditRequested;
+            public event Action<float> ZoomChanged;
 
-        private static void RebuildAutoTransitionTimelineRuler(VisualElement rulerTicksLayer, float durationSeconds)
-        {
-            if (rulerTicksLayer == null)
+            public float Zoom => m_Zoom;
+
+            public void SetData(string editingStateKey, IReadOnlyList<PairViewData> pairs)
             {
-                return;
+                m_EditingStateKey = editingStateKey ?? string.Empty;
+                m_Pairs.Clear();
+                if (pairs != null)
+                {
+                    for (int i = 0; i < pairs.Count; i++)
+                    {
+                        m_Pairs.Add(pairs[i]);
+                    }
+                }
+
+                RebuildGraph();
             }
 
-            rulerTicksLayer.Clear();
-            float safeDuration = Mathf.Max(0.1f, durationSeconds);
-            float step = GetAutoTransitionRulerStep(safeDuration);
-            int tickCount = Mathf.Max(1, Mathf.CeilToInt(safeDuration / step));
-            for (int i = 0; i <= tickCount; i++)
+            public void SetEmpty(string message)
             {
-                float time = Mathf.Min(i * step, safeDuration);
-                float ratio = time / safeDuration;
-
-                VisualElement tick = new();
-                tick.style.position = Position.Absolute;
-                tick.style.left = Length.Percent(ratio * 100f);
-                tick.style.top = 0;
-                tick.style.width = 1;
-                tick.style.height = 10;
-                tick.style.backgroundColor = SectionDivider;
-                rulerTicksLayer.Add(tick);
-
-                Label tickLabel = new($"{time:0.##}s");
-                tickLabel.style.position = Position.Absolute;
-                tickLabel.style.left = Length.Percent(ratio * 100f);
-                tickLabel.style.top = 10;
-                tickLabel.style.width = 32;
-                tickLabel.style.marginLeft = -16;
-                tickLabel.style.fontSize = 9;
-                tickLabel.style.color = TextMuted;
-                tickLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
-                rulerTicksLayer.Add(tickLabel);
+                m_EditingStateKey = string.Empty;
+                m_Pairs.Clear();
+                RebuildGraph(message);
             }
-        }
 
-        private static float GetAutoTransitionRulerStep(float durationSeconds)
-        {
-            float roughStep = Mathf.Max(0.1f, durationSeconds / 8f);
-            float magnitude = Mathf.Pow(10f, Mathf.Floor(Mathf.Log10(roughStep)));
-            float normalized = roughStep / magnitude;
-            float stepBase = normalized <= 1f
-                ? 1f
-                : normalized <= 2f
-                    ? 2f
-                    : normalized <= 5f
-                        ? 5f
-                        : 10f;
-            return stepBase * magnitude;
+            public void ResetZoom()
+            {
+                SetZoom(1f);
+            }
+
+            private void BuildUi()
+            {
+                m_ScrollView = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
+                m_ScrollView.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+                m_ScrollView.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+                m_ScrollView.style.flexGrow = 1;
+                m_ScrollView.style.minHeight = 0;
+                m_ScrollView.RegisterCallback<GeometryChangedEvent>(_ => RefreshCanvasViewport());
+                Add(m_ScrollView);
+
+                m_Canvas = new VisualElement();
+                m_Canvas.style.position = Position.Relative;
+                m_Canvas.style.backgroundColor = CanvasBg;
+                m_Canvas.focusable = true;
+                m_Canvas.RegisterCallback<WheelEvent>(OnWheel);
+                m_Canvas.RegisterCallback<PointerDownEvent>(OnPointerDown);
+                m_Canvas.RegisterCallback<PointerMoveEvent>(OnPointerMove);
+                m_Canvas.RegisterCallback<PointerUpEvent>(OnPointerUp);
+                m_Canvas.RegisterCallback<PointerCancelEvent>(OnPointerCancel);
+                m_Canvas.RegisterCallback<PointerCaptureOutEvent>(_ => EndPan());
+                m_ScrollView.Add(m_Canvas);
+
+                m_EdgeCanvas = new VisualElement();
+                m_EdgeCanvas.style.position = Position.Absolute;
+                m_EdgeCanvas.style.left = 0;
+                m_EdgeCanvas.style.top = 0;
+                m_EdgeCanvas.pickingMode = PickingMode.Ignore;
+                m_EdgeCanvas.generateVisualContent += OnGenerateVisualContent;
+                m_Canvas.Add(m_EdgeCanvas);
+
+                m_NodeLayer = new VisualElement();
+                m_NodeLayer.style.position = Position.Absolute;
+                m_NodeLayer.style.left = 0;
+                m_NodeLayer.style.top = 0;
+                m_Canvas.Add(m_NodeLayer);
+
+                m_EmptyLabel = new Label();
+                m_EmptyLabel.style.position = Position.Absolute;
+                m_EmptyLabel.style.left = 14;
+                m_EmptyLabel.style.top = 14;
+                m_EmptyLabel.style.color = TextMuted;
+                m_EmptyLabel.style.fontSize = 11;
+                m_Canvas.Add(m_EmptyLabel);
+            }
+
+            private void RebuildGraph(string emptyMessage = null)
+            {
+                m_InStateRows.Clear();
+                m_OutStateRows.Clear();
+                m_Edges.Clear();
+                m_NodeLayer.Clear();
+
+                if (string.IsNullOrWhiteSpace(m_EditingStateKey))
+                {
+                    ApplyCanvasSize(MinCanvasWidth, MinCanvasHeight);
+                    m_EmptyLabel.text = string.IsNullOrWhiteSpace(emptyMessage) ? "No editing state" : emptyMessage;
+                    m_EmptyLabel.style.display = DisplayStyle.Flex;
+                    m_EdgeCanvas?.MarkDirtyRepaint();
+                    return;
+                }
+
+                int inStateCount = CountUniqueStates(true);
+                int outStateCount = CountUniqueStates(false);
+                float inHeight = inStateCount == 0 ? NodeHeight : inStateCount * RowPitch - (RowPitch - NodeHeight);
+                float outHeight = outStateCount == 0 ? NodeHeight : outStateCount * RowPitch - (RowPitch - NodeHeight);
+                float graphHeight = Mathf.Max(CenterNodeHeight, inHeight, outHeight);
+                float graphWidth = CenterNodeWidth + ColumnPitch * 2f;
+                m_CanvasOrigin = new Vector2(CanvasPadding, CanvasPadding);
+                ApplyCanvasSize(Mathf.Max(MinCanvasWidth, graphWidth + CanvasPadding * 2f), Mathf.Max(MinCanvasHeight, graphHeight + CanvasPadding * 2f));
+                m_EmptyLabel.style.display = DisplayStyle.None;
+
+                float centerX = CanvasPadding + ColumnPitch;
+                float centerY = CanvasPadding + graphHeight * 0.5f - CenterNodeHeight * 0.5f;
+                Rect centerRect = new(centerX, centerY, CenterNodeWidth, CenterNodeHeight);
+                CreateNode(centerRect, m_EditingStateKey, "Editing State", true, false, null);
+
+                for (int i = 0; i < m_Pairs.Count; i++)
+                {
+                    PairViewData pair = m_Pairs[i];
+                    if (pair.IsInState)
+                    {
+                        Rect nodeRect = GetStateNodeRect(pair.StateKey, true, graphHeight);
+                        CreateNode(nodeRect, pair.StateKey, BuildPairSummary(pair), false, pair.IsSelected, pair);
+                        m_Edges.Add(new EdgeLayout(nodeRect, centerRect, pair));
+                    }
+                    else
+                    {
+                        Rect nodeRect = GetStateNodeRect(pair.StateKey, false, graphHeight);
+                        CreateNode(nodeRect, pair.StateKey, BuildPairSummary(pair), false, pair.IsSelected, pair);
+                        m_Edges.Add(new EdgeLayout(centerRect, nodeRect, pair));
+                    }
+                }
+
+                if (m_Pairs.Count == 0)
+                {
+                    m_EmptyLabel.text = "No pairs for current state";
+                    m_EmptyLabel.style.display = DisplayStyle.Flex;
+                }
+
+                m_EdgeCanvas?.MarkDirtyRepaint();
+            }
+
+            private Rect GetStateNodeRect(string stateKey, bool inState, float graphHeight)
+            {
+                Dictionary<string, int> rows = inState ? m_InStateRows : m_OutStateRows;
+                if (!rows.TryGetValue(stateKey, out int row))
+                {
+                    row = rows.Count;
+                    rows[stateKey] = row;
+                }
+
+                int rowCount = Mathf.Max(1, inState ? CountUniqueStates(true) : CountUniqueStates(false));
+                float columnHeight = rowCount * RowPitch - (RowPitch - NodeHeight);
+                float startY = CanvasPadding + graphHeight * 0.5f - columnHeight * 0.5f;
+                float x = inState ? CanvasPadding : CanvasPadding + ColumnPitch * 2f;
+                return new Rect(x, startY + row * RowPitch, NodeWidth, NodeHeight);
+            }
+
+            private void CreateNode(Rect graphRect, string title, string detail, bool isCurrent, bool selected, PairViewData? pair)
+            {
+                string stateKey = title ?? string.Empty;
+                Rect rect = ScaleRect(graphRect);
+                VisualElement node = new();
+                node.style.position = Position.Absolute;
+                node.style.left = rect.x;
+                node.style.top = rect.y;
+                node.style.width = rect.width;
+                node.style.height = rect.height;
+                node.style.paddingLeft = 8;
+                node.style.paddingRight = 8;
+                node.style.paddingTop = 6;
+                node.style.paddingBottom = 6;
+                node.style.backgroundColor = isCurrent ? CurrentNodeBg : NodeBg;
+                node.style.borderTopWidth = selected ? 2 : 1;
+                node.style.borderBottomWidth = selected ? 2 : 1;
+                node.style.borderLeftWidth = selected ? 2 : 1;
+                node.style.borderRightWidth = selected ? 2 : 1;
+                Color border = selected ? SelectedBorder : NodeBorder;
+                node.style.borderTopColor = border;
+                node.style.borderBottomColor = border;
+                node.style.borderLeftColor = border;
+                node.style.borderRightColor = border;
+                node.style.borderTopLeftRadius = 6;
+                node.style.borderTopRightRadius = 6;
+                node.style.borderBottomLeftRadius = 6;
+                node.style.borderBottomRightRadius = 6;
+
+                Label titleLabel = new(title);
+                titleLabel.style.color = TextNormal;
+                titleLabel.style.fontSize = Mathf.Max(10f, 12f * Mathf.Clamp(m_Zoom, 0.72f, 1f));
+                titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                titleLabel.style.overflow = Overflow.Hidden;
+                titleLabel.style.textOverflow = TextOverflow.Ellipsis;
+                node.Add(titleLabel);
+
+                Label detailLabel = new(detail);
+                detailLabel.style.color = TextMuted;
+                detailLabel.style.fontSize = Mathf.Max(9f, 10f * Mathf.Clamp(m_Zoom, 0.72f, 1f));
+                detailLabel.style.marginTop = 2;
+                detailLabel.style.overflow = Overflow.Hidden;
+                detailLabel.style.textOverflow = TextOverflow.Ellipsis;
+                node.Add(detailLabel);
+
+                node.RegisterCallback<MouseDownEvent>(evt =>
+                {
+                    if (evt.button != 0)
+                    {
+                        return;
+                    }
+
+                    if (evt.clickCount >= 2)
+                    {
+                        StateEditRequested?.Invoke(stateKey);
+                        evt.StopPropagation();
+                        return;
+                    }
+
+                    if (pair.HasValue)
+                    {
+                        PairViewData pairValue = pair.Value;
+                        PairSelected?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex);
+                        evt.StopPropagation();
+                    }
+                });
+
+                if (pair.HasValue)
+                {
+                    PairViewData pairValue = pair.Value;
+                    VisualElement actions = new();
+                    actions.style.flexDirection = FlexDirection.Row;
+                    actions.style.justifyContent = Justify.FlexEnd;
+                    actions.style.marginTop = 3;
+                    node.Add(actions);
+
+                    Button delete = CreateIconButton("x", () => PairDeleteRequested?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex));
+                    delete.tooltip = pairValue.CanDelete ? "删除这组 pair。" : "Override 资源不可编辑。";
+                    delete.SetEnabled(pairValue.CanDelete);
+                    actions.Add(delete);
+                }
+
+                m_NodeLayer.Add(node);
+            }
+
+            private static Button CreateIconButton(string text, Action clicked)
+            {
+                Button button = new(clicked) { text = text };
+                button.style.width = 22;
+                button.style.height = 18;
+                button.style.marginLeft = 3;
+                button.style.paddingLeft = 0;
+                button.style.paddingRight = 0;
+                button.style.paddingTop = 0;
+                button.style.paddingBottom = 0;
+                button.style.fontSize = 10;
+                return button;
+            }
+
+            private void OnGenerateVisualContent(MeshGenerationContext context)
+            {
+                Painter2D painter = context.painter2D;
+                DrawGrid(painter, new Rect(0f, 0f, m_CanvasWidth, m_CanvasHeight), 32f * m_Zoom, m_CanvasOrigin * m_Zoom + m_PanOffset);
+                for (int i = 0; i < m_Edges.Count; i++)
+                {
+                    DrawEdge(painter, m_Edges[i]);
+                }
+            }
+
+            private void DrawEdge(Painter2D painter, EdgeLayout edge)
+            {
+                Rect fromRect = ScaleRect(edge.From);
+                Rect toRect = ScaleRect(edge.To);
+                Vector2 from = new(fromRect.xMax, fromRect.center.y);
+                Vector2 to = new(toRect.xMin, toRect.center.y);
+                float tangent = Mathf.Clamp((to.x - from.x) * 0.44f, 42f * m_Zoom, 110f * m_Zoom);
+                Vector2 c1 = from + new Vector2(tangent, 0f);
+                Vector2 c2 = to - new Vector2(tangent, 0f);
+
+                painter.lineWidth = (edge.Pair.IsSelected ? 3.25f : 1.7f) * Mathf.Clamp(m_Zoom, 0.65f, 1.25f);
+                painter.strokeColor = edge.Pair.IsSelected ? EdgeSelected : EdgeColor;
+                painter.BeginPath();
+                painter.MoveTo(from);
+                for (int i = 1; i <= 18; i++)
+                {
+                    float t = i / 18f;
+                    painter.LineTo(EvaluateCubic(from, c1, c2, to, t));
+                }
+                painter.Stroke();
+
+                Color color = edge.Pair.IsSelected ? EdgeSelected : EdgeColor;
+                DrawFilledCircle(painter, from, 3f * Mathf.Clamp(m_Zoom, 0.72f, 1.2f), color);
+                DrawFilledCircle(painter, to, 3f * Mathf.Clamp(m_Zoom, 0.72f, 1.2f), color);
+            }
+
+            private static void DrawGrid(Painter2D painter, Rect rect, float gridSize, Vector2 origin)
+            {
+                if (rect.width <= 0f || rect.height <= 0f || gridSize <= 0.01f)
+                {
+                    return;
+                }
+
+                DrawGridLines(painter, rect, gridSize, origin, CanvasGrid, 1f);
+                DrawGridLines(painter, rect, gridSize * 5f, origin, CanvasGridMajor, 1.15f);
+            }
+
+            private static void DrawGridLines(Painter2D painter, Rect rect, float gridSize, Vector2 origin, Color color, float lineWidth)
+            {
+                float startX = origin.x + Mathf.Floor((rect.xMin - origin.x) / gridSize) * gridSize;
+                float startY = origin.y + Mathf.Floor((rect.yMin - origin.y) / gridSize) * gridSize;
+                painter.strokeColor = color;
+                painter.lineWidth = lineWidth;
+                for (float x = startX; x <= rect.xMax; x += gridSize)
+                {
+                    painter.BeginPath();
+                    painter.MoveTo(new Vector2(x, rect.yMin));
+                    painter.LineTo(new Vector2(x, rect.yMax));
+                    painter.Stroke();
+                }
+
+                for (float y = startY; y <= rect.yMax; y += gridSize)
+                {
+                    painter.BeginPath();
+                    painter.MoveTo(new Vector2(rect.xMin, y));
+                    painter.LineTo(new Vector2(rect.xMax, y));
+                    painter.Stroke();
+                }
+            }
+
+            private void OnWheel(WheelEvent evt)
+            {
+                float previousZoom = m_Zoom;
+                float nextZoom = Mathf.Clamp(previousZoom * Mathf.Pow(WheelZoomBase, -evt.delta.y), MinZoom, MaxZoom);
+                if (Mathf.Approximately(previousZoom, nextZoom))
+                {
+                    evt.StopPropagation();
+                    return;
+                }
+
+                Vector2 viewportPoint = m_Canvas.WorldToLocal(evt.mousePosition);
+                Vector2 graphPoint = (viewportPoint - m_PanOffset) / previousZoom;
+                m_Zoom = nextZoom;
+                m_PanOffset = viewportPoint - graphPoint * nextZoom;
+                RebuildGraph();
+                ZoomChanged?.Invoke(m_Zoom);
+                evt.StopPropagation();
+            }
+
+            private void OnPointerDown(PointerDownEvent evt)
+            {
+                if (evt.button != 0 && evt.button != 2)
+                {
+                    return;
+                }
+
+                m_IsPanning = true;
+                m_PanPointerId = evt.pointerId;
+                m_PanStartPointer = new Vector2(evt.position.x, evt.position.y);
+                m_PanStartOffset = m_PanOffset;
+                m_Canvas.CapturePointer(evt.pointerId);
+                m_Canvas.Focus();
+                evt.StopPropagation();
+            }
+
+            private void OnPointerMove(PointerMoveEvent evt)
+            {
+                if (!m_IsPanning || m_PanPointerId != evt.pointerId || !m_Canvas.HasPointerCapture(evt.pointerId))
+                {
+                    return;
+                }
+
+                Vector2 pointerPosition = new(evt.position.x, evt.position.y);
+                Vector2 delta = pointerPosition - m_PanStartPointer;
+                m_PanOffset = m_PanStartOffset + delta;
+                RebuildGraph();
+                evt.StopPropagation();
+            }
+
+            private void OnPointerUp(PointerUpEvent evt)
+            {
+                if (!m_IsPanning || m_PanPointerId != evt.pointerId)
+                {
+                    return;
+                }
+
+                if (m_Canvas.HasPointerCapture(evt.pointerId))
+                {
+                    m_Canvas.ReleasePointer(evt.pointerId);
+                }
+
+                EndPan();
+                evt.StopPropagation();
+            }
+
+            private void OnPointerCancel(PointerCancelEvent evt)
+            {
+                if (m_Canvas.HasPointerCapture(evt.pointerId))
+                {
+                    m_Canvas.ReleasePointer(evt.pointerId);
+                }
+
+                EndPan();
+            }
+
+            private void EndPan()
+            {
+                m_IsPanning = false;
+                m_PanPointerId = PointerId.invalidPointerId;
+                m_PanStartPointer = Vector2.zero;
+                m_PanStartOffset = Vector2.zero;
+            }
+
+            private void SetZoom(float value)
+            {
+                float nextZoom = Mathf.Clamp(value, MinZoom, MaxZoom);
+                if (Mathf.Approximately(m_Zoom, nextZoom))
+                {
+                    return;
+                }
+
+                m_Zoom = nextZoom;
+                RebuildGraph();
+                ZoomChanged?.Invoke(m_Zoom);
+            }
+
+            private void ApplyCanvasSize(float width, float height)
+            {
+                m_BaseCanvasWidth = width;
+                m_BaseCanvasHeight = height;
+                Vector2 viewportSize = GetViewportSize();
+                m_CanvasWidth = Mathf.Max(width * m_Zoom, viewportSize.x);
+                m_CanvasHeight = Mathf.Max(height * m_Zoom, viewportSize.y);
+                m_Canvas.style.width = m_CanvasWidth;
+                m_Canvas.style.height = m_CanvasHeight;
+                m_Canvas.style.minWidth = m_CanvasWidth;
+                m_Canvas.style.minHeight = m_CanvasHeight;
+                m_EdgeCanvas.style.width = m_CanvasWidth;
+                m_EdgeCanvas.style.height = m_CanvasHeight;
+                m_NodeLayer.style.width = m_CanvasWidth;
+                m_NodeLayer.style.height = m_CanvasHeight;
+                m_EdgeCanvas?.MarkDirtyRepaint();
+                if (m_ScrollView != null)
+                {
+                    m_ScrollView.scrollOffset = Vector2.zero;
+                }
+            }
+
+            private void RefreshCanvasViewport()
+            {
+                ApplyCanvasSize(m_BaseCanvasWidth, m_BaseCanvasHeight);
+                m_EdgeCanvas?.MarkDirtyRepaint();
+            }
+
+            private Vector2 GetViewportSize()
+            {
+                if (m_ScrollView == null)
+                {
+                    return Vector2.zero;
+                }
+
+                Rect viewport = m_ScrollView.contentViewport?.layout ?? Rect.zero;
+                if (viewport.width > 0f && viewport.height > 0f)
+                {
+                    return viewport.size;
+                }
+
+                Rect layout = m_ScrollView.layout;
+                Vector2 size = new(Mathf.Max(0f, layout.width), Mathf.Max(0f, layout.height));
+                Rect selfLayout = this.layout;
+                if (selfLayout.width > 0f || selfLayout.height > 0f)
+                {
+                    size.x = Mathf.Max(size.x, selfLayout.width);
+                    size.y = Mathf.Max(size.y, selfLayout.height);
+                }
+
+                return size;
+            }
+
+            private Rect ScaleRect(Rect rect)
+            {
+                return new Rect(rect.x * m_Zoom + m_PanOffset.x, rect.y * m_Zoom + m_PanOffset.y, rect.width * m_Zoom, rect.height * m_Zoom);
+            }
+
+            private int CountUniqueStates(bool inState)
+            {
+                HashSet<string> states = new(StringComparer.Ordinal);
+                for (int i = 0; i < m_Pairs.Count; i++)
+                {
+                    PairViewData pair = m_Pairs[i];
+                    if (pair.IsInState == inState)
+                    {
+                        states.Add(pair.StateKey);
+                    }
+                }
+
+                return states.Count;
+            }
+
+            private static string BuildPairSummary(PairViewData pair)
+            {
+                string name = string.IsNullOrWhiteSpace(pair.TransitionName) ? "Default Transition" : pair.TransitionName;
+                return $"{name}  fade {pair.FadeIn:0.###}/{pair.FadeOut:0.###}  p{pair.Priority}";
+            }
+
+            private static Vector2 EvaluateCubic(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
+            {
+                float u = 1f - t;
+                return u * u * u * p0 +
+                       3f * u * u * t * p1 +
+                       3f * u * t * t * p2 +
+                       t * t * t * p3;
+            }
+
+            private static void DrawFilledCircle(Painter2D painter, Vector2 center, float radius, Color color)
+            {
+                painter.fillColor = color;
+                painter.BeginPath();
+                painter.Arc(center, radius, 0f, 360f);
+                painter.Fill();
+            }
         }
 
     }

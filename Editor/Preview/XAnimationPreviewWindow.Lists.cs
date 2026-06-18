@@ -354,6 +354,7 @@ namespace XAnimationEditor
         {
             if (m_DefaultTransitionsEditorView == null)
             {
+                RebuildDefaultTransitionTab();
                 return;
             }
 
@@ -362,6 +363,7 @@ namespace XAnimationEditor
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 SetDefaultTransitionButtonsEnabled(false);
+                RebuildDefaultTransitionTab();
                 RefreshSearchIndex();
                 return;
             }
@@ -378,6 +380,7 @@ namespace XAnimationEditor
                 emptyLabel.style.fontSize = BodyFontSize;
                 emptyLabel.style.marginLeft = 4;
                 m_DefaultTransitionsEditorView.Add(emptyLabel);
+                RebuildDefaultTransitionTab();
                 RefreshSearchIndex();
                 return;
             }
@@ -410,8 +413,39 @@ namespace XAnimationEditor
                 }
             }
 
+            HashSet<int> renderedTransitionIndices = new();
+            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
+            for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
+            {
+                string channelName = channels[channelIndex].Name;
+                int groupStartChildCount = m_DefaultTransitionsEditorView.childCount;
+                AddDefaultTransitionChannelHeader(channelName);
+                for (int i = 0; i < defaultTransitions.Count; i++)
+                {
+                    XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
+                    if (transition != null &&
+                        string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal))
+                    {
+                        m_DefaultTransitionsEditorView.Add(CreateDefaultTransitionEditor(i, transition.Config));
+                        renderedTransitionIndices.Add(i);
+                    }
+                }
+
+                if (m_DefaultTransitionsEditorView.childCount == groupStartChildCount + 1)
+                {
+                    m_DefaultTransitionsEditorView.RemoveAt(groupStartChildCount);
+                }
+            }
+
+            int otherGroupStartChildCount = m_DefaultTransitionsEditorView.childCount;
+            AddDefaultTransitionChannelHeader("Other");
             for (int i = 0; i < defaultTransitions.Count; i++)
             {
+                if (renderedTransitionIndices.Contains(i))
+                {
+                    continue;
+                }
+
                 XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
                 if (transition != null)
                 {
@@ -419,7 +453,25 @@ namespace XAnimationEditor
                 }
             }
 
+            if (m_DefaultTransitionsEditorView.childCount == otherGroupStartChildCount + 1)
+            {
+                m_DefaultTransitionsEditorView.RemoveAt(otherGroupStartChildCount);
+            }
+
+            RebuildDefaultTransitionTab();
             RefreshSearchIndex();
+        }
+
+        private void AddDefaultTransitionChannelHeader(string channelName)
+        {
+            Label label = new(channelName);
+            label.style.marginTop = 6;
+            label.style.marginBottom = 3;
+            label.style.marginLeft = 2;
+            label.style.color = TextMuted;
+            label.style.fontSize = BodyFontSize;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            m_DefaultTransitionsEditorView.Add(label);
         }
 
         private void ScheduleDefaultTransitionsEditorRebuild()
@@ -2169,6 +2221,8 @@ namespace XAnimationEditor
 
             if (expanded)
             {
+                SetDefaultTransitionEditingState(stateKey);
+
                 if (m_ExpandedStateKeys.Count == 1 && m_ExpandedStateKeys.Contains(stateKey))
                 {
                     if (m_StateEditorMap.TryGetValue(stateKey, out VisualElement currentEditor))
@@ -2544,18 +2598,23 @@ namespace XAnimationEditor
             }
         }
 
-        private void RenameDefaultTransition(int transitionIndex, string oldName, string newName, EditableLabel label)
+        private void ChangeDefaultTransitionChannel(
+            int transitionIndex,
+            string channelName,
+            DropdownField changedField,
+            string previousValue)
         {
             try
             {
-                m_Session.SetDefaultTransitionName(transitionIndex, newName, save: false);
+                m_Session.SetDefaultTransitionChannel(transitionIndex, channelName, save: false);
                 ScheduleAssetSave();
-                SetStatus($"Default Transition {transitionIndex + 1} name = {newName}。");
-                RefreshSearchIndex();
+                RebuildDefaultTransitionsEditor();
+                RefreshChannelStates();
+                SetStatus($"Default Transition channel = {channelName}。");
             }
             catch (Exception ex)
             {
-                label.text = oldName;
+                changedField?.SetValueWithoutNotify(previousValue);
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }

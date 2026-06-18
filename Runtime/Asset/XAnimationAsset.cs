@@ -292,17 +292,11 @@ namespace XAnimationEngine
     }
 
     [Serializable]
-    public class XAnimationTransitionPairConfig
-    {
-        public string preStateKey;
-        public string nextStateKey;
-    }
-
-    [Serializable]
     public class XAnimationDefaultTransitionConfig
     {
-        public string editorName;
-        public XAnimationTransitionPairConfig[] pairs = Array.Empty<XAnimationTransitionPairConfig>();
+        public string channelName;
+        public string preStateKey;
+        public string nextStateKey;
         public float fadeIn;
         public float fadeOut;
         public float enterTime;
@@ -602,8 +596,9 @@ namespace XAnimationEngine
         }
 
         public XAnimationDefaultTransitionConfig Config { get; }
-        public string EditorName => Config.editorName;
-        public IReadOnlyList<XAnimationTransitionPairConfig> Pairs => Config.pairs ?? Array.Empty<XAnimationTransitionPairConfig>();
+        public string ChannelName => Config.channelName;
+        public string PreStateKey => Config.preStateKey;
+        public string NextStateKey => Config.nextStateKey;
 
         public XAnimationTransitionOptions CreateTransitionOptions()
         {
@@ -910,13 +905,15 @@ namespace XAnimationEngine
         }
 
         public bool TryGetDefaultTransition(
+            string channelName,
             string preStateKey,
             string nextStateKey,
             out XAnimationCompiledDefaultTransition transition)
         {
-            if (string.IsNullOrWhiteSpace(preStateKey) ||
+            if (string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(preStateKey) ||
                 string.IsNullOrWhiteSpace(nextStateKey) ||
-                !m_DefaultTransitionIndexByPairKey.TryGetValue(BuildTransitionPairKey(preStateKey, nextStateKey), out int transitionIndex))
+                !m_DefaultTransitionIndexByPairKey.TryGetValue(BuildTransitionPairKey(channelName, preStateKey, nextStateKey), out int transitionIndex))
             {
                 transition = null;
                 return false;
@@ -1000,9 +997,9 @@ namespace XAnimationEngine
             return transition;
         }
 
-        public static string BuildTransitionPairKey(string preStateKey, string nextStateKey)
+        public static string BuildTransitionPairKey(string channelName, string preStateKey, string nextStateKey)
         {
-            return $"{preStateKey}\u001F{nextStateKey}";
+            return $"{channelName}\u001F{preStateKey}\u001F{nextStateKey}";
         }
 
         public float GetStateDuration(string stateKey)

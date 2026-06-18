@@ -193,7 +193,7 @@ namespace XAnimationEngine
                 runtimeChannel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance currentPlayback) &&
                 currentPlayback != null &&
                 !currentPlayback.IsTemporaryState &&
-                CompiledAsset.TryGetDefaultTransition(currentPlayback.StateKey, state.Key, out XAnimationCompiledDefaultTransition defaultTransition))
+                CompiledAsset.TryGetDefaultTransition(channel.Name, currentPlayback.StateKey, state.Key, out XAnimationCompiledDefaultTransition defaultTransition))
             {
                 return defaultTransition.CreateTransitionOptions();
             }
@@ -212,7 +212,7 @@ namespace XAnimationEngine
                 runtimeChannel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance currentPlayback) &&
                 currentPlayback != null &&
                 !currentPlayback.IsTemporaryState &&
-                CompiledAsset.TryGetDefaultTransition(currentPlayback.StateKey, state.Key, out _))
+                CompiledAsset.TryGetDefaultTransition(channel.Name, currentPlayback.StateKey, state.Key, out _))
             {
                 return XAnimationTransitionRequestSource.DefaultTransition;
             }
