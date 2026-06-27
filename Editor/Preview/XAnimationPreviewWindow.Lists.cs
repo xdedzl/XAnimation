@@ -19,9 +19,8 @@ namespace XAnimationEditor
         {
             m_ClipListView.Clear();
             m_ClipLabelMap.Clear();
-            m_ClipGroupLabelMap.Clear();
             m_ClipRowMap.Clear();
-            m_ClipGroupRowMap.Clear();
+            m_ClipPathRowMap.Clear();
             m_ClipVisualStateMap.Clear();
             m_ClipButtonMap.Clear();
             m_CueRowMap.Clear();
@@ -46,78 +45,139 @@ namespace XAnimationEditor
                 return;
             }
 
-            List<ClipGroupBucket> buckets = new();
-            for (int clipIndex = 0; clipIndex < clips.Count; clipIndex++)
-            {
-                XAnimationCompiledClip clip = clips[clipIndex];
-                string groupName = NormalizeClipEditorGroupName(clip?.Config?.editorGroupName);
-                ClipGroupBucket bucket = FindClipGroupBucket(buckets, groupName);
-                if (bucket == null)
-                {
-                    bucket = new ClipGroupBucket(groupName);
-                    buckets.Add(bucket);
-                }
-
-                bucket.Clips.Add(clip);
-            }
+            ClipPathNode root = BuildClipPathTree(clips);
 
             int rowIndex = 0;
-            bool hasUngroupedBucket = false;
-            for (int i = 0; i < buckets.Count; i++)
+            bool hasRootClips = root.Clips.Count > 0;
+            if (hasRootClips)
             {
-                ClipGroupBucket bucket = buckets[i];
-                if (bucket == null)
+                VisualElement rootClipContainer = new VisualElement();
+                rootClipContainer.style.marginBottom = 2;
+                RegisterClipPathDropTarget(rootClipContainer, rootClipContainer, string.Empty);
+                for (int i = 0; i < root.Clips.Count; i++)
                 {
-                    continue;
+                    ClipPathInfo pathInfo = root.Clips[i];
+                    VisualElement row = CreateClipRow(pathInfo.Clip, rowIndex++);
+                    RegisterClipRowDropTarget(row, pathInfo.ClipKey, string.Empty);
+                    rootClipContainer.Add(row);
                 }
 
-                if (bucket.IsUngrouped)
-                {
-                    hasUngroupedBucket = true;
-                    VisualElement ungroupedContainer = new VisualElement();
-                    ungroupedContainer.style.marginBottom = 3;
-                    RegisterClipGroupDropTarget(ungroupedContainer, ungroupedContainer, string.Empty);
-                    for (int clipIndex = 0; clipIndex < bucket.Clips.Count; clipIndex++)
-                    {
-                        XAnimationCompiledClip clip = bucket.Clips[clipIndex];
-                        VisualElement row = CreateClipRow(clip, rowIndex++);
-                        RegisterClipRowDropTarget(row, clip.Key, string.Empty);
-                        ungroupedContainer.Add(row);
-                    }
-
-                    m_ClipListView.Add(ungroupedContainer);
-
-                    continue;
-                }
-
-                m_ClipListView.Add(CreateClipEditorGroup(bucket, ref rowIndex));
+                m_ClipListView.Add(rootClipContainer);
             }
 
-            if (!hasUngroupedBucket)
+            for (int i = 0; i < root.Children.Count; i++)
             {
-                VisualElement ungroupedDropZone = new VisualElement();
-                ungroupedDropZone.style.minHeight = 18;
-                ungroupedDropZone.style.marginBottom = 3;
-                ungroupedDropZone.style.borderTopWidth = 1;
-                ungroupedDropZone.style.borderBottomWidth = 1;
-                ungroupedDropZone.style.borderLeftWidth = 1;
-                ungroupedDropZone.style.borderRightWidth = 1;
-                ungroupedDropZone.style.borderTopColor = SectionDivider;
-                ungroupedDropZone.style.borderBottomColor = SectionDivider;
-                ungroupedDropZone.style.borderLeftColor = SectionDivider;
-                ungroupedDropZone.style.borderRightColor = SectionDivider;
-                Label dropLabel = new("Drop Here To Ungroup");
-                dropLabel.style.color = TextMuted;
-                dropLabel.style.fontSize = 10;
-                dropLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
-                dropLabel.style.flexGrow = 1;
-                ungroupedDropZone.Add(dropLabel);
-                RegisterClipGroupDropTarget(ungroupedDropZone, ungroupedDropZone, string.Empty);
-                m_ClipListView.Add(ungroupedDropZone);
+                m_ClipListView.Add(CreateClipPathGroup(root.Children[i], ref rowIndex));
+            }
+
+            if (!hasRootClips)
+            {
+                VisualElement rootDropZone = CreateClipRootDropZone();
+                m_ClipListView.Add(rootDropZone);
             }
 
             TryBeginPendingRename();
             RefreshSearchIndex();
+        }
+
+        private ClipPathNode BuildClipPathTree(IReadOnlyList<XAnimationCompiledClip> clips)
+        {
+            ClipPathNode root = new(string.Empty, string.Empty);
+            if (clips == null)
+            {
+                return root;
+            }
+
+            for (int clipIndex = 0; clipIndex < clips.Count; clipIndex++)
+            {
+                XAnimationCompiledClip clip = clips[clipIndex];
+                if (clip == null)
+                {
+                    continue;
+                }
+
+                AddClipPathInfo(root, BuildClipPathInfo(clip));
+            }
+
+            return root;
+        }
+
+        private static void AddClipPathInfo(ClipPathNode root, ClipPathInfo pathInfo)
+        {
+            if (root == null || pathInfo.Clip == null)
+            {
+                return;
+            }
+
+            List<string> segments = SplitClipPathSegments(pathInfo.FullPath);
+            if (segments.Count <= 1)
+            {
+                root.Clips.Add(pathInfo);
+                return;
+            }
+
+            ClipPathNode current = root;
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count - 1; i++)
+            {
+                currentPath = string.IsNullOrWhiteSpace(currentPath)
+                    ? segments[i]
+                    : $"{currentPath}/{segments[i]}";
+                ClipPathNode child = FindClipPathChild(current, segments[i], currentPath);
+                if (child == null)
+                {
+                    child = new ClipPathNode(segments[i], currentPath);
+                    current.Children.Add(child);
+                }
+
+                current = child;
+            }
+
+            current.Clips.Add(pathInfo);
+        }
+
+        private static ClipPathNode FindClipPathChild(ClipPathNode node, string name, string fullPath)
+        {
+            if (node == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                ClipPathNode child = node.Children[i];
+                if (child != null &&
+                    string.Equals(child.Name, name, StringComparison.Ordinal) &&
+                    string.Equals(child.FullPath, fullPath, StringComparison.Ordinal))
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private VisualElement CreateClipRootDropZone()
+        {
+            VisualElement rootDropZone = new VisualElement();
+            rootDropZone.style.minHeight = 18;
+            rootDropZone.style.marginBottom = 2;
+            rootDropZone.style.borderTopWidth = 1;
+            rootDropZone.style.borderBottomWidth = 1;
+            rootDropZone.style.borderLeftWidth = 1;
+            rootDropZone.style.borderRightWidth = 1;
+            rootDropZone.style.borderTopColor = SectionDivider;
+            rootDropZone.style.borderBottomColor = SectionDivider;
+            rootDropZone.style.borderLeftColor = SectionDivider;
+            rootDropZone.style.borderRightColor = SectionDivider;
+            Label dropLabel = new("Drop Here To Root");
+            dropLabel.style.color = TextMuted;
+            dropLabel.style.fontSize = 10;
+            dropLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+            dropLabel.style.flexGrow = 1;
+            rootDropZone.Add(dropLabel);
+            RegisterClipPathDropTarget(rootDropZone, rootDropZone, string.Empty);
+            return rootDropZone;
         }
 
         private void RebuildStateList()
@@ -140,7 +200,16 @@ namespace XAnimationEditor
 
             if (m_ExpandedStateKeys.Count > 1)
             {
-                TryGetExpandedStateKey(out string expandedStateKey);
+                string expandedStateKey = null;
+                foreach (string key in m_ExpandedStateKeys)
+                {
+                    if (!string.IsNullOrWhiteSpace(key))
+                    {
+                        expandedStateKey = key;
+                        break;
+                    }
+                }
+
                 m_ExpandedStateKeys.Clear();
                 if (!string.IsNullOrWhiteSpace(expandedStateKey))
                 {
@@ -270,7 +339,7 @@ namespace XAnimationEditor
             bool hasTransitions = autoTransitions.Count > 0;
             if (!hasTransitions)
             {
-                m_SelectedAutoTransitionStateKey = string.Empty;
+                m_SelectedAutoTransitionStateUiKey = string.Empty;
                 SetAutoTransitionButtonsEnabled(CanAddAutoTransition());
                 Label emptyLabel = new("No auto transitions");
                 emptyLabel.style.color = TextMuted;
@@ -281,15 +350,15 @@ namespace XAnimationEditor
                 return;
             }
 
-            if (string.IsNullOrWhiteSpace(m_SelectedAutoTransitionStateKey) ||
-                !HasAutoTransition(m_SelectedAutoTransitionStateKey))
+            if (string.IsNullOrWhiteSpace(m_SelectedAutoTransitionStateUiKey) ||
+                !HasAutoTransition(m_SelectedAutoTransitionStateUiKey))
             {
-                m_SelectedAutoTransitionStateKey = GetDefaultAutoTransitionStateKey(states);
+                m_SelectedAutoTransitionStateUiKey = GetDefaultAutoTransitionStateUiKey(states);
             }
 
             if (m_CollapsedAutoTransitionKeys.Count > 1)
             {
-                string expandedPreStateKey = null;
+                string expandedStateUiKey = null;
                 foreach (XAnimationCompiledAutoTransition transition in autoTransitions)
                 {
                     if (transition == null)
@@ -297,38 +366,37 @@ namespace XAnimationEditor
                         continue;
                     }
 
-                    if (m_CollapsedAutoTransitionKeys.Contains(transition.PreStateKey))
+                    string stateUiKey = BuildAutoTransitionUiKey(transition);
+                    if (m_CollapsedAutoTransitionKeys.Contains(stateUiKey))
                     {
-                        expandedPreStateKey = transition.PreStateKey;
+                        expandedStateUiKey = stateUiKey;
                         break;
                     }
                 }
 
                 m_CollapsedAutoTransitionKeys.Clear();
-                if (!string.IsNullOrWhiteSpace(expandedPreStateKey))
+                if (!string.IsNullOrWhiteSpace(expandedStateUiKey))
                 {
-                    m_CollapsedAutoTransitionKeys.Add(expandedPreStateKey);
+                    m_CollapsedAutoTransitionKeys.Add(expandedStateUiKey);
                 }
             }
 
             SetAutoTransitionButtonsEnabled(CanAddAutoTransition());
 
             int renderedCount = 0;
-            for (int i = 0; i < autoTransitions.Count; i++)
+            HashSet<int> renderedTransitionIndices = new();
+            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
+            for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
             {
-                XAnimationCompiledAutoTransition transition = autoTransitions[i];
-                if (transition == null)
-                {
-                    continue;
-                }
-
-                m_AutoTransitionEditorView.Add(CreateAutoTransitionEditor(transition));
-                renderedCount++;
+                string channelName = channels[channelIndex].Name;
+                renderedCount += AddAutoTransitionChannelGroup(channelName, autoTransitions, renderedTransitionIndices);
             }
+
+            renderedCount += AddAutoTransitionOtherChannelGroup(autoTransitions, renderedTransitionIndices);
 
             if (renderedCount == 0)
             {
-                m_SelectedAutoTransitionStateKey = string.Empty;
+                m_SelectedAutoTransitionStateUiKey = string.Empty;
                 Label emptyLabel = new("No auto transitions");
                 emptyLabel.style.color = TextMuted;
                 emptyLabel.style.fontSize = BodyFontSize;
@@ -337,6 +405,154 @@ namespace XAnimationEditor
             }
 
             RefreshSearchIndex();
+        }
+
+        private int AddAutoTransitionChannelGroup(
+            string channelName,
+            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
+            HashSet<int> renderedTransitionIndices)
+        {
+            int count = CountAutoTransitionsInChannel(autoTransitions, channelName, renderedTransitionIndices, includeRendered: false);
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            VisualElement content = AddAutoTransitionChannelGroupHeader(channelName, count);
+            if (IsAutoTransitionChannelCollapsed(channelName))
+            {
+                return count;
+            }
+
+            for (int i = 0; i < autoTransitions.Count; i++)
+            {
+                if (renderedTransitionIndices.Contains(i))
+                {
+                    continue;
+                }
+
+                XAnimationCompiledAutoTransition transition = autoTransitions[i];
+                if (transition != null &&
+                    string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal))
+                {
+                    content.Add(CreateAutoTransitionEditor(transition));
+                    renderedTransitionIndices.Add(i);
+                }
+            }
+
+            return count;
+        }
+
+        private int AddAutoTransitionOtherChannelGroup(
+            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
+            HashSet<int> renderedTransitionIndices)
+        {
+            int count = CountAutoTransitionsInChannel(autoTransitions, null, renderedTransitionIndices, includeRendered: false);
+            if (count == 0)
+            {
+                return 0;
+            }
+
+            string channelName = "Other";
+            VisualElement content = AddAutoTransitionChannelGroupHeader(channelName, count);
+            if (IsAutoTransitionChannelCollapsed(channelName))
+            {
+                return count;
+            }
+
+            for (int i = 0; i < autoTransitions.Count; i++)
+            {
+                if (renderedTransitionIndices.Contains(i))
+                {
+                    continue;
+                }
+
+                XAnimationCompiledAutoTransition transition = autoTransitions[i];
+                if (transition != null)
+                {
+                    content.Add(CreateAutoTransitionEditor(transition));
+                    renderedTransitionIndices.Add(i);
+                }
+            }
+
+            return count;
+        }
+
+        private int CountAutoTransitionsInChannel(
+            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
+            string channelName,
+            HashSet<int> renderedTransitionIndices,
+            bool includeRendered)
+        {
+            int count = 0;
+            for (int i = 0; i < autoTransitions.Count; i++)
+            {
+                if (!includeRendered && renderedTransitionIndices.Contains(i))
+                {
+                    continue;
+                }
+
+                XAnimationCompiledAutoTransition transition = autoTransitions[i];
+                if (transition == null)
+                {
+                    continue;
+                }
+
+                bool matches = string.IsNullOrWhiteSpace(channelName)
+                    ? !HasChannel(transition.ChannelName)
+                    : string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal);
+                if (matches)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private VisualElement AddAutoTransitionChannelGroupHeader(string channelName, int count)
+        {
+            bool collapsed = IsAutoTransitionChannelCollapsed(channelName);
+            VisualElement group = CreateListGroup(marginBottom: 2f);
+            group.style.marginTop = 1;
+            VisualElement header = CreateListHeader();
+            header.style.borderBottomWidth = collapsed ? 0f : PrettyBorderWidth;
+
+            Label foldoutLabel = CreateFoldoutGlyph(!collapsed);
+            header.Add(foldoutLabel);
+
+            Label label = new(channelName);
+            label.style.flexGrow = 1;
+            label.style.color = TextMuted;
+            label.style.fontSize = BodyFontSize;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.Add(label);
+
+            Label countLabel = new($"{count}");
+            countLabel.style.color = TextMuted;
+            countLabel.style.fontSize = BodyFontSize;
+            countLabel.style.marginRight = 4;
+            header.Add(countLabel);
+
+            header.tooltip = "点击展开/收起这个 channel 的 Auto Transition 列表。";
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                {
+                    return;
+                }
+
+                SetAutoTransitionChannelCollapsed(channelName, !IsAutoTransitionChannelCollapsed(channelName));
+                ScheduleAutoTransitionEditorRebuild();
+                evt.StopPropagation();
+            });
+            group.Add(header);
+
+            VisualElement content = new() { style = { display = collapsed ? DisplayStyle.None : DisplayStyle.Flex } };
+            ApplyPrettyContentStyle(content);
+            group.Add(content);
+            m_AutoTransitionEditorView.Add(group);
+            return content;
         }
 
         private void ScheduleAutoTransitionEditorRebuild()
@@ -418,60 +634,131 @@ namespace XAnimationEditor
             for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
             {
                 string channelName = channels[channelIndex].Name;
-                int groupStartChildCount = m_DefaultTransitionsEditorView.childCount;
-                AddDefaultTransitionChannelHeader(channelName);
+                int channelCount = CountDefaultTransitionsInChannel(defaultTransitions, channelName, renderedTransitionIndices, includeRendered: false);
+                if (channelCount == 0)
+                {
+                    continue;
+                }
+
+                VisualElement content = AddDefaultTransitionChannelGroupHeader(channelName, channelCount);
                 for (int i = 0; i < defaultTransitions.Count; i++)
                 {
                     XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
                     if (transition != null &&
                         string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal))
                     {
-                        m_DefaultTransitionsEditorView.Add(CreateDefaultTransitionEditor(i, transition.Config));
+                        if (!IsDefaultTransitionChannelCollapsed(channelName))
+                        {
+                            content.Add(CreateDefaultTransitionEditor(i, transition.Config));
+                        }
+
                         renderedTransitionIndices.Add(i);
                     }
                 }
-
-                if (m_DefaultTransitionsEditorView.childCount == groupStartChildCount + 1)
-                {
-                    m_DefaultTransitionsEditorView.RemoveAt(groupStartChildCount);
-                }
             }
 
-            int otherGroupStartChildCount = m_DefaultTransitionsEditorView.childCount;
-            AddDefaultTransitionChannelHeader("Other");
-            for (int i = 0; i < defaultTransitions.Count; i++)
+            const string otherChannelName = "Other";
+            int otherChannelCount = CountDefaultTransitionsInChannel(defaultTransitions, null, renderedTransitionIndices, includeRendered: false);
+            if (otherChannelCount > 0)
             {
-                if (renderedTransitionIndices.Contains(i))
+                VisualElement otherContent = AddDefaultTransitionChannelGroupHeader(otherChannelName, otherChannelCount);
+                for (int i = 0; i < defaultTransitions.Count; i++)
                 {
-                    continue;
-                }
+                    if (renderedTransitionIndices.Contains(i))
+                    {
+                        continue;
+                    }
 
-                XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
-                if (transition != null)
-                {
-                    m_DefaultTransitionsEditorView.Add(CreateDefaultTransitionEditor(i, transition.Config));
+                    XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
+                    if (transition != null)
+                    {
+                        if (!IsDefaultTransitionChannelCollapsed(otherChannelName))
+                        {
+                            otherContent.Add(CreateDefaultTransitionEditor(i, transition.Config));
+                        }
+                    }
                 }
-            }
-
-            if (m_DefaultTransitionsEditorView.childCount == otherGroupStartChildCount + 1)
-            {
-                m_DefaultTransitionsEditorView.RemoveAt(otherGroupStartChildCount);
             }
 
             RebuildDefaultTransitionTab();
             RefreshSearchIndex();
         }
 
-        private void AddDefaultTransitionChannelHeader(string channelName)
+        private int CountDefaultTransitionsInChannel(
+            IReadOnlyList<XAnimationCompiledDefaultTransition> defaultTransitions,
+            string channelName,
+            HashSet<int> renderedTransitionIndices,
+            bool includeRendered)
         {
+            int count = 0;
+            for (int i = 0; i < defaultTransitions.Count; i++)
+            {
+                if (!includeRendered && renderedTransitionIndices.Contains(i))
+                {
+                    continue;
+                }
+
+                XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
+                if (transition == null)
+                {
+                    continue;
+                }
+
+                bool matches = string.IsNullOrWhiteSpace(channelName)
+                    ? !HasChannel(transition.ChannelName)
+                    : string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal);
+                if (matches)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private VisualElement AddDefaultTransitionChannelGroupHeader(string channelName, int count)
+        {
+            bool collapsed = IsDefaultTransitionChannelCollapsed(channelName);
+            VisualElement group = CreateListGroup(marginBottom: 2f);
+            group.style.marginTop = 1;
+            VisualElement header = CreateListHeader();
+            header.style.borderBottomWidth = collapsed ? 0f : PrettyBorderWidth;
+
+            Label foldoutLabel = CreateFoldoutGlyph(!collapsed);
+            header.Add(foldoutLabel);
+
             Label label = new(channelName);
-            label.style.marginTop = 6;
-            label.style.marginBottom = 3;
-            label.style.marginLeft = 2;
+            label.style.flexGrow = 1;
             label.style.color = TextMuted;
             label.style.fontSize = BodyFontSize;
             label.style.unityFontStyleAndWeight = FontStyle.Bold;
-            m_DefaultTransitionsEditorView.Add(label);
+            header.Add(label);
+
+            Label countLabel = new($"{count}");
+            countLabel.style.color = TextMuted;
+            countLabel.style.fontSize = BodyFontSize;
+            countLabel.style.marginRight = 4;
+            header.Add(countLabel);
+
+            header.tooltip = "点击展开/收起这个 channel 的 Default Transition 列表。";
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                {
+                    return;
+                }
+
+                SetDefaultTransitionChannelCollapsed(channelName, !IsDefaultTransitionChannelCollapsed(channelName));
+                ScheduleDefaultTransitionsEditorRebuild();
+                evt.StopPropagation();
+            });
+            group.Add(header);
+
+            VisualElement content = new() { style = { display = collapsed ? DisplayStyle.None : DisplayStyle.Flex } };
+            ApplyPrettyContentStyle(content);
+            group.Add(content);
+            m_DefaultTransitionsEditorView.Add(group);
+            return content;
         }
 
         private void ScheduleDefaultTransitionsEditorRebuild()
@@ -485,7 +772,7 @@ namespace XAnimationEditor
             rootVisualElement.schedule.Execute(RebuildDefaultTransitionsEditor).StartingIn(0);
         }
 
-        private string GetDefaultAutoTransitionStateKey(IReadOnlyList<XAnimationCompiledState> states)
+        private string GetDefaultAutoTransitionStateUiKey(IReadOnlyList<XAnimationCompiledState> states)
         {
             if (m_Session != null && m_Session.IsLoaded)
             {
@@ -493,22 +780,28 @@ namespace XAnimationEditor
                 for (int i = 0; i < autoTransitions.Count; i++)
                 {
                     XAnimationCompiledAutoTransition transition = autoTransitions[i];
-                    if (transition != null && HasState(transition.PreStateKey))
+                    if (transition != null &&
+                        m_Session.CompiledAsset.TryGetStateIndex(transition.ChannelName, transition.PreStateKey, out _))
                     {
-                        return transition.PreStateKey;
+                        return BuildAutoTransitionUiKey(transition);
                     }
                 }
             }
 
-            return states.Count > 0 ? states[0].Key : string.Empty;
+            return states.Count > 0 ? BuildStateUiKey(states[0]) : string.Empty;
         }
 
-        private bool HasAutoTransition(string preStateKey)
+        private bool HasAutoTransition(string stateUiKey)
         {
-            return m_Session != null &&
-                   m_Session.IsLoaded &&
-                   !string.IsNullOrWhiteSpace(preStateKey) &&
-                   m_Session.CompiledAsset.TryGetAutoTransition(preStateKey, out _);
+            if (m_Session == null ||
+                !m_Session.IsLoaded ||
+                string.IsNullOrWhiteSpace(stateUiKey) ||
+                !TryGetCompiledStateByUiKey(stateUiKey, out XAnimationCompiledState state))
+            {
+                return false;
+            }
+
+            return m_Session.CompiledAsset.TryGetAutoTransition(state.Config.channelName, state.Key, out _);
         }
 
         private bool CanAddAutoTransition()
@@ -534,21 +827,8 @@ namespace XAnimationEditor
         private VisualElement CreateParameterRow(XAnimationCompiledParameter parameter, int rowIndex)
         {
             XAnimationParameterConfig config = parameter.Config;
-            VisualElement container = new VisualElement();
-            container.style.marginBottom = 2;
-            container.style.paddingLeft = 4;
-            container.style.paddingRight = 4;
-            container.style.paddingTop = 3;
-            container.style.paddingBottom = 3;
-            container.style.borderTopLeftRadius = 2;
-            container.style.borderTopRightRadius = 2;
-            container.style.borderBottomLeftRadius = 2;
-            container.style.borderBottomRightRadius = 2;
-            container.style.backgroundColor = rowIndex % 2 == 0 ? ListRowEvenBg : ListRowOddBg;
-
-            VisualElement row = new VisualElement();
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
+            VisualElement container = CreateInteractiveRowContainer(rowIndex);
+            VisualElement row = CreateRowContent();
             container.Add(row);
 
             string parameterName = parameter.Name;
@@ -686,7 +966,10 @@ namespace XAnimationEditor
             VisualElement group = CreateListGroup();
             VisualElement groupHeader = CreateListHeader();
 
-            Label groupTitle = CreateBoldLabel($"▾ {channel.Name}");
+            Label groupFoldoutLabel = CreateFoldoutGlyph(true);
+            groupHeader.Add(groupFoldoutLabel);
+
+            Label groupTitle = CreateBoldLabel(channel.Name);
             groupTitle.style.flexGrow = 1;
             groupTitle.style.flexShrink = 1;
             groupTitle.style.minWidth = 0;
@@ -777,7 +1060,7 @@ namespace XAnimationEditor
 
                 bool expanded = statesContainer.style.display != DisplayStyle.None;
                 statesContainer.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
-                groupTitle.text = expanded ? $"▸ {channel.Name}" : $"▾ {channel.Name}";
+                SetFoldoutGlyphText(groupFoldoutLabel, !expanded);
                 evt.StopPropagation();
             });
 
@@ -842,13 +1125,13 @@ namespace XAnimationEditor
             {
                 bool expanded = content.style.display != DisplayStyle.None;
                 content.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
-                foldoutLabel.text = expanded ? "▸" : "▾";
+                SetFoldoutGlyphText(foldoutLabel, !expanded);
                 SetStateGroupCollapsed(groupKey, expanded);
             }
 
             header.RegisterCallback<MouseDownEvent>(evt =>
             {
-                if (evt.button != 0 || groupLabel.IsEditing)
+                if (evt.button != 0)
                 {
                     return;
                 }
@@ -917,54 +1200,62 @@ namespace XAnimationEditor
             return count;
         }
 
-        private VisualElement CreateClipEditorGroup(ClipGroupBucket bucket, ref int rowIndex)
+        private VisualElement CreateClipPathGroup(ClipPathNode node, ref int rowIndex)
         {
             VisualElement group = CreateNestedListGroup();
-            string groupKey = BuildClipGroupKey(bucket.GroupName);
-            m_ClipGroupRowMap[groupKey] = group;
+            string groupKey = BuildClipPathKey(node.FullPath);
+            m_ClipPathRowMap[groupKey] = group;
 
             VisualElement header = CreateListHeader();
-            Label foldoutLabel = CreateFoldoutGlyph(!IsClipGroupCollapsed(groupKey));
+            Label foldoutLabel = CreateFoldoutGlyph(!IsClipPathCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            EditableLabel groupLabel = new(bucket.GroupName);
+            EditableLabel groupLabel = new(node.Name);
             ConfigureEditableNameLabel(groupLabel, 180f);
-            groupLabel.tooltip = "单击展开/收起这个 clip group；右键 Rename 编辑分组名。";
+            groupLabel.tooltip = $"{FormatClipDisplayPath(node.FullPath)}\n单击展开/收起这个 clip folder；右键 Rename 编辑路径层级。";
             groupLabel.SetEditable(!m_Session.IsOverrideAsset, EditableLabelEditTrigger.ContextMenu);
             groupLabel.EditStarted += BeginNameEdit;
             groupLabel.EditEnded += EndNameEdit;
-            groupLabel.ValueCommitted += (_, newValue) => RenameClipGroup(bucket.GroupName, newValue, groupLabel);
-            RegisterClipGroupContextMenu(groupLabel, bucket.GroupName);
-            m_ClipGroupLabelMap[groupKey] = groupLabel;
+            groupLabel.ValueCommitted += (_, newValue) =>
+                RenameClipPath(node.FullPath, BuildRenamedClipFolderPath(node.FullPath, newValue), groupLabel);
+            RegisterClipPathContextMenu(groupLabel, node.FullPath);
             header.Add(groupLabel);
 
             VisualElement spacer = new();
             spacer.style.flexGrow = 1;
             header.Add(spacer);
 
-            Label info = CreateSmallInfoLabel($"{bucket.Clips.Count} clips");
+            int clipCount = CountClipPathNodeClips(node);
+            Label info = CreateSmallInfoLabel($"{clipCount} clips");
             header.Add(info);
 
-            Button addClipButton = new(() => AddClip(bucket.GroupName))
+            Button addClipButton = new(() => AddClip(node.FullPath))
             {
                 text = "+"
             };
-            addClipButton.tooltip = m_Session.IsOverrideAsset ? "Override 资源不能新增 clip。" : "在这个分组下新增一个 clip。";
+            addClipButton.tooltip = m_Session.IsOverrideAsset
+                ? "Override 资源不能新增 clip。"
+                : "在这个 folder 下新增一个 clip。";
             addClipButton.SetEnabled(!m_Session.IsOverrideAsset);
             ApplyClipIconButtonStyle(addClipButton, AccentColor);
             addClipButton.style.marginLeft = 4;
             header.Add(addClipButton);
             group.Add(header);
 
-            RegisterClipGroupDropTarget(group, header, bucket.GroupName);
+            RegisterClipPathDropTarget(group, header, node.FullPath);
 
             VisualElement content = new VisualElement();
-            content.style.display = IsClipGroupCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
-            for (int i = 0; i < bucket.Clips.Count; i++)
+            content.style.display = IsClipPathCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                XAnimationCompiledClip clip = bucket.Clips[i];
-                VisualElement row = CreateClipRow(clip, rowIndex++);
-                RegisterClipRowDropTarget(row, clip.Key, bucket.GroupName);
+                content.Add(CreateClipPathGroup(node.Children[i], ref rowIndex));
+            }
+
+            for (int i = 0; i < node.Clips.Count; i++)
+            {
+                ClipPathInfo pathInfo = node.Clips[i];
+                VisualElement row = CreateClipRow(pathInfo.Clip, rowIndex++);
+                RegisterClipRowDropTarget(row, pathInfo.ClipKey, node.FullPath);
                 content.Add(row);
             }
 
@@ -977,8 +1268,8 @@ namespace XAnimationEditor
 
                 bool expanded = content.style.display != DisplayStyle.None;
                 content.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
-                foldoutLabel.text = expanded ? "▸" : "▾";
-                SetClipGroupCollapsed(groupKey, expanded);
+                SetFoldoutGlyphText(foldoutLabel, !expanded);
+                SetClipPathCollapsed(groupKey, expanded);
                 evt.StopPropagation();
             });
 
@@ -986,37 +1277,47 @@ namespace XAnimationEditor
             return group;
         }
 
-        private static ClipGroupBucket FindClipGroupBucket(List<ClipGroupBucket> buckets, string groupName)
+        private static int CountClipPathNodeClips(ClipPathNode node)
         {
-            if (buckets == null)
+            if (node == null)
             {
-                return null;
+                return 0;
             }
 
-            groupName = NormalizeClipEditorGroupName(groupName);
-            for (int i = 0; i < buckets.Count; i++)
+            int count = node.Clips.Count;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                ClipGroupBucket bucket = buckets[i];
-                if (bucket != null &&
-                    string.Equals(NormalizeClipEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
-                {
-                    return bucket;
-                }
+                count += CountClipPathNodeClips(node.Children[i]);
             }
 
-            return null;
+            return count;
+        }
+
+        private static string BuildRenamedClipFolderPath(string oldPath, string newLeafName)
+        {
+            string normalizedNewLeafName = NormalizeClipPathKey(newLeafName);
+            if (string.IsNullOrWhiteSpace(normalizedNewLeafName))
+            {
+                return string.Empty;
+            }
+
+            string parentPath = GetClipPathParent(oldPath);
+            return string.IsNullOrWhiteSpace(parentPath)
+                ? normalizedNewLeafName
+                : $"{parentPath}/{normalizedNewLeafName}";
         }
 
         private VisualElement CreateStateRow(XAnimationCompiledState state, int rowIndex)
         {
+            string stateUiKey = BuildStateUiKey(state);
             VisualElement wrapper = new VisualElement();
             wrapper.style.flexDirection = FlexDirection.Column;
             wrapper.style.marginBottom = 1;
 
             VisualElement container = CreateInteractiveRowContainer(rowIndex);
             Color baseColor = rowIndex % 2 == 0 ? ListRowEvenBg : ListRowOddBg;
-            m_StateRowMap[state.Key] = container;
-            m_StateChannelMap[state.Key] = state.Config.channelName;
+            m_StateRowMap[stateUiKey] = container;
+            m_StateChannelMap[stateUiKey] = state.Config.channelName;
 
             VisualElement progressFill = CreateRowProgressFill();
             container.Add(progressFill);
@@ -1026,16 +1327,16 @@ namespace XAnimationEditor
                 BaseColor = baseColor,
                 ProgressFill = progressFill,
             };
-            m_StateVisualStateMap[state.Key] = visualState;
+            m_StateVisualStateMap[stateUiKey] = visualState;
             container.RegisterCallback<MouseEnterEvent>(_ =>
             {
                 visualState.Hovered = true;
-                ApplyStateRowVisualState(state.Key);
+                ApplyStateRowVisualState(stateUiKey);
             });
             container.RegisterCallback<MouseLeaveEvent>(_ =>
             {
                 visualState.Hovered = false;
-                ApplyStateRowVisualState(state.Key);
+                ApplyStateRowVisualState(stateUiKey);
             });
 
             VisualElement row = CreateRowContent();
@@ -1056,8 +1357,8 @@ namespace XAnimationEditor
             label.SetEditable(true, EditableLabelEditTrigger.None);
             label.EditStarted += BeginNameEdit;
             label.EditEnded += EndNameEdit;
-            label.ValueCommitted += (_, newValue) => RenameState(stateKey, newValue, label);
-            m_StateLabelMap[stateKey] = label;
+            label.ValueCommitted += (_, newValue) => RenameState(state.Config.channelName, stateKey, newValue, label);
+            m_StateLabelMap[stateUiKey] = label;
             label.style.position = Position.Relative;
             RegisterStateLabelContextMenu(label, state);
             summaryRow.Add(label);
@@ -1082,7 +1383,7 @@ namespace XAnimationEditor
                     return;
                 }
 
-                ChangeStateType(state.Key, stateType, evt.previousValue, stateTypeField);
+                ChangeStateType(state.Config.channelName, state.Key, stateType, evt.previousValue, stateTypeField);
             });
             summaryRow.Add(stateTypeField);
 
@@ -1096,15 +1397,15 @@ namespace XAnimationEditor
                 clipField.style.marginLeft = 6;
                 clipField.style.position = Position.Relative;
                 clipField.tooltip = "Single state 播放的 clipKey。";
-                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(state.Key, newValue, clipField, previousValue);
+                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(state.Config.channelName, state.Key, newValue, clipField, previousValue);
                 AttachClipKeyPingButton(clipField, state.Config.clipKey, enabled: true);
                 summaryRow.Add(clipField);
             }
 
             VisualElement editor = CreateStateEditor(state);
-            m_StateEditorMap[stateKey] = editor;
-            editor.style.display = m_ExpandedStateKeys.Contains(stateKey) ? DisplayStyle.Flex : DisplayStyle.None;
-            RegisterStateNameInteractions(label, editor, stateKey);
+            m_StateEditorMap[stateUiKey] = editor;
+            editor.style.display = m_ExpandedStateKeys.Contains(stateUiKey) ? DisplayStyle.Flex : DisplayStyle.None;
+            RegisterStateNameInteractions(label, editor, stateUiKey, stateKey);
 
             VisualElement actionsRow = new VisualElement();
             actionsRow.style.flexDirection = FlexDirection.Row;
@@ -1122,9 +1423,9 @@ namespace XAnimationEditor
             playButton.style.flexShrink = 0;
             playButton.style.position = Position.Relative;
             actionsRow.Add(playButton);
-            m_StateButtonMap[state.Key] = playButton;
+            m_StateButtonMap[stateUiKey] = playButton;
 
-            Button deleteButton = new(() => DeleteState(stateKey))
+            Button deleteButton = new(() => DeleteState(state.Config.channelName, stateKey))
             {
                 text = "⌫"
             };
@@ -1163,7 +1464,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            MarkFreeformStateInteracted(state.Key);
+            MarkFreeformStateInteracted(state.Config.channelName, state.Key);
 
             XAnimationChannelState channelState = m_Session.GetChannelState(state.Config.channelName);
             bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.Key, StringComparison.Ordinal);
@@ -1183,21 +1484,21 @@ namespace XAnimationEditor
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.Key, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.Config.channelName, state.Key, BuildPreviewTransitionOptions());
             RefreshPlaybackViews();
             SetStatus($"正在播放 state {state.Key}。");
         }
 
-        private void PreviewBlendSample(string stateKey, float threshold)
+        private void PreviewBlendSample(string channelName, string stateKey, float threshold)
         {
             if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateKey))
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
+            MarkFreeformStateInteracted(channelName, stateKey);
 
-            XAnimationCompiledState state = m_Session.CompiledAsset.GetState(stateKey);
+            XAnimationCompiledState state = m_Session.CompiledAsset.GetState(channelName, stateKey);
             if (state is not XAnimationCompiledBlend1DState blendState)
             {
                 return;
@@ -1212,16 +1513,16 @@ namespace XAnimationEditor
             PlayStateForSamplePreview(blendState, $"正在预览 {stateKey} sample，{parameterName} = {threshold:0.###}。");
         }
 
-        private void PreviewDirectionalBlendSample(string stateKey, float positionX, float positionY)
+        private void PreviewDirectionalBlendSample(string channelName, string stateKey, float positionX, float positionY)
         {
             if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateKey))
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
+            MarkFreeformStateInteracted(channelName, stateKey);
 
-            XAnimationCompiledState state = m_Session.CompiledAsset.GetState(stateKey);
+            XAnimationCompiledState state = m_Session.CompiledAsset.GetState(channelName, stateKey);
             if (!TryGetDirectionalBlendSamples(state, out _))
             {
                 return;
@@ -1249,14 +1550,14 @@ namespace XAnimationEditor
                 return;
             }
 
-            MarkFreeformStateInteracted(state.Key);
+            MarkFreeformStateInteracted(state.Config.channelName, state.Key);
 
             m_IsPaused = false;
             m_Session.SetPaused(false);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.Key, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.Config.channelName, state.Key, BuildPreviewTransitionOptions());
 
             RebuildParameterList();
             RefreshPlaybackViews();
@@ -1282,7 +1583,7 @@ namespace XAnimationEditor
         {
             VisualElement row = CreateSubBox();
             row.style.flexDirection = FlexDirection.Column;
-            row.style.marginBottom = 3;
+            row.style.marginBottom = 1;
             row.tooltip = cue.IsReadOnlyDerived
                 ? "这个 Cue 由 AnimationClip 上的 Animation Event 自动派生，只读显示。"
                 : editable
@@ -1294,7 +1595,7 @@ namespace XAnimationEditor
             topRow.style.flexDirection = FlexDirection.Row;
             topRow.style.alignItems = Align.Center;
             topRow.style.minWidth = 0;
-            topRow.style.marginBottom = 2;
+            topRow.style.marginBottom = 1;
             row.Add(topRow);
 
             Label indexLabel = new(cue.IsReadOnlyDerived ? "evt" : $"#{cue.CueIndex}");
@@ -1385,12 +1686,12 @@ namespace XAnimationEditor
         private VisualElement CreateClipCueEditor(XAnimationCompiledClip clip)
         {
             VisualElement box = CreateSubBox();
-            box.style.marginTop = 5;
+            box.style.marginTop = 2;
 
             VisualElement header = new VisualElement();
             header.style.flexDirection = FlexDirection.Row;
             header.style.alignItems = Align.Center;
-            header.style.marginBottom = 3;
+            header.style.marginBottom = 2;
 
             Label title = new("Cues");
             title.style.flexGrow = 1;
@@ -1453,8 +1754,8 @@ namespace XAnimationEditor
                 Label derivedLabel = new("Animation Events");
                 derivedLabel.tooltip = "这些 Cue 由 AnimationClip.events 自动派生，只读显示。";
                 derivedLabel.style.marginLeft = 4;
-                derivedLabel.style.marginTop = cueRows.Count > 0 ? 4 : 1;
-                derivedLabel.style.marginBottom = 2;
+                derivedLabel.style.marginTop = cueRows.Count > 0 ? 2 : 1;
+                derivedLabel.style.marginBottom = 1;
                 derivedLabel.style.color = TextMuted;
                 derivedLabel.style.fontSize = BodyFontSize;
                 derivedLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
@@ -1550,7 +1851,7 @@ namespace XAnimationEditor
         {
             VisualElement box = new();
             box.style.marginTop = 2;
-            box.style.marginBottom = 5;
+            box.style.marginBottom = 2;
 
             VisualElement track = new();
             track.style.position = Position.Relative;
@@ -1936,14 +2237,23 @@ namespace XAnimationEditor
             container.Add(row);
 
             string clipKey = clip.Key;
+            ClipPathInfo clipPathInfo = BuildClipPathInfo(clip);
+            string clipTooltip = string.IsNullOrWhiteSpace(clipPathInfo.DisplayPath)
+                ? clipKey
+                : clipPathInfo.DisplayPath;
+            container.tooltip = clipTooltip;
 
-            EditableLabel label = new(clipKey);
+            string clipDisplayName = string.IsNullOrWhiteSpace(clipPathInfo.LeafName)
+                ? clipKey
+                : clipPathInfo.LeafName;
+            EditableLabel label = new(clipDisplayName);
             ConfigureEditableNameLabel(label, 78f);
-            label.tooltip = "单击展开/收起 clip 配置；右键 Rename 编辑名称。";
+            label.tooltip = $"{clipTooltip}\n单击展开/收起 clip 配置；右键 Rename 编辑名称。";
             label.SetEditable(true, EditableLabelEditTrigger.ContextMenu);
             label.EditStarted += BeginNameEdit;
             label.EditEnded += EndNameEdit;
-            label.ValueCommitted += (_, newValue) => RenameClip(clipKey, newValue, label);
+            label.ValueCommitted += (_, newValue) =>
+                RenameClip(clipKey, BuildClipRenameKey(clipPathInfo.ParentPath, newValue), label, clipDisplayName);
             m_ClipLabelMap[clipKey] = label;
             label.style.position = Position.Relative;
             row.Add(label);
@@ -2121,7 +2431,7 @@ namespace XAnimationEditor
             });
         }
 
-        private void RegisterStateNameInteractions(EditableLabel label, VisualElement editor, string stateKey)
+        private void RegisterStateNameInteractions(EditableLabel label, VisualElement editor, string stateUiKey, string stateKey)
         {
             bool isPressed = false;
             Vector2 startPosition = Vector2.zero;
@@ -2162,7 +2472,7 @@ namespace XAnimationEditor
                 {
                     movedBeyondClickThreshold = true;
                     DragAndDrop.PrepareStartDrag();
-                    DragAndDrop.SetGenericData(StateDragDataKey, stateKey);
+                    DragAndDrop.SetGenericData(StateDragDataKey, stateUiKey);
                     DragAndDrop.StartDrag($"Move {stateKey}");
                     dragStarted = true;
                     evt.StopPropagation();
@@ -2178,7 +2488,7 @@ namespace XAnimationEditor
                 if (!movedBeyondClickThreshold && !label.IsEditing)
                 {
                     bool expanded = editor.style.display == DisplayStyle.None;
-                    SetStateExpanded(stateKey, expanded);
+                    SetStateExpanded(stateUiKey, expanded);
                 }
 
                 if (!dragStarted)
@@ -2212,20 +2522,21 @@ namespace XAnimationEditor
             DragAndDrop.SetGenericData(StateDragDataKey, null);
         }
 
-        private void SetStateExpanded(string stateKey, bool expanded)
+        private void SetStateExpanded(string stateUiKey, bool expanded)
         {
-            if (string.IsNullOrWhiteSpace(stateKey))
+            if (string.IsNullOrWhiteSpace(stateUiKey))
             {
                 return;
             }
 
             if (expanded)
             {
+                string stateKey = ResolveStateKeyFromUiKey(stateUiKey) ?? stateUiKey;
                 SetDefaultTransitionEditingState(stateKey);
 
-                if (m_ExpandedStateKeys.Count == 1 && m_ExpandedStateKeys.Contains(stateKey))
+                if (m_ExpandedStateKeys.Count == 1 && m_ExpandedStateKeys.Contains(stateUiKey))
                 {
-                    if (m_StateEditorMap.TryGetValue(stateKey, out VisualElement currentEditor))
+                    if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement currentEditor))
                     {
                         currentEditor.style.display = DisplayStyle.Flex;
                     }
@@ -2239,14 +2550,14 @@ namespace XAnimationEditor
                     : null;
 
                 m_ExpandedStateKeys.Clear();
-                m_ExpandedStateKeys.Add(stateKey);
+                m_ExpandedStateKeys.Add(stateUiKey);
 
                 if (previouslyExpandedKeys != null)
                 {
                     for (int i = 0; i < previouslyExpandedKeys.Count; i++)
                     {
                         string expandedKey = previouslyExpandedKeys[i];
-                        if (string.Equals(expandedKey, stateKey, StringComparison.Ordinal))
+                        if (string.Equals(expandedKey, stateUiKey, StringComparison.Ordinal))
                         {
                             continue;
                         }
@@ -2258,7 +2569,7 @@ namespace XAnimationEditor
                     }
                 }
 
-                if (m_StateEditorMap.TryGetValue(stateKey, out VisualElement nextEditor))
+                if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement nextEditor))
                 {
                     nextEditor.style.display = DisplayStyle.Flex;
                 }
@@ -2267,8 +2578,8 @@ namespace XAnimationEditor
                 return;
             }
 
-            bool removed = m_ExpandedStateKeys.Remove(stateKey);
-            if (m_StateEditorMap.TryGetValue(stateKey, out VisualElement editor))
+            bool removed = m_ExpandedStateKeys.Remove(stateUiKey);
+            if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement editor))
             {
                 editor.style.display = DisplayStyle.None;
             }
@@ -2294,7 +2605,7 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                stateKey = expandedStateKey;
+                stateKey = ResolveStateKeyFromUiKey(expandedStateKey) ?? expandedStateKey;
                 return true;
             }
 
@@ -2480,12 +2791,22 @@ namespace XAnimationEditor
         {
             try
             {
-                string preStateKey = m_Session.AddAutoTransition(m_SelectedAutoTransitionStateKey);
-                m_SelectedAutoTransitionStateKey = preStateKey;
-                SetAutoTransitionExpanded(preStateKey, true);
+                string preferredChannelName = null;
+                string preferredPreStateKey = null;
+                if (TryGetCompiledStateByUiKey(m_SelectedAutoTransitionStateUiKey, out XAnimationCompiledState selectedState))
+                {
+                    preferredChannelName = selectedState.Config.channelName;
+                    preferredPreStateKey = selectedState.Key;
+                }
+
+                XAnimationCompiledAutoTransition transition = m_Session.AddAutoTransition(preferredChannelName, preferredPreStateKey);
+                string stateUiKey = BuildAutoTransitionUiKey(transition);
+                m_SelectedAutoTransitionStateUiKey = stateUiKey;
+                SetAutoTransitionExpanded(stateUiKey, true);
+                SetAutoTransitionChannelCollapsed(transition.ChannelName, false);
                 RebuildAutoTransitionEditor();
                 RefreshChannelStates();
-                SetStatus($"已新增 Auto Transition {preStateKey}。");
+                SetStatus($"已新增 Auto Transition {transition.ChannelName}: {transition.PreStateKey}。");
             }
             catch (Exception ex)
             {
@@ -2620,16 +2941,18 @@ namespace XAnimationEditor
             }
         }
 
-        private bool PlayDefaultTransitionPairPre(string preStateKey, string nextStateKey)
+        private bool PlayDefaultTransitionPairPre(string channelName, string preStateKey, string nextStateKey)
         {
             if (m_Session == null || !m_Session.IsLoaded ||
+                string.IsNullOrWhiteSpace(channelName) ||
                 string.IsNullOrWhiteSpace(preStateKey) || string.IsNullOrWhiteSpace(nextStateKey))
             {
                 return false;
             }
 
             XAnimationCompiledAsset compiled = m_Session.CompiledAsset;
-            if (!compiled.TryGetStateIndex(preStateKey, out _) || !compiled.TryGetStateIndex(nextStateKey, out _))
+            if (!compiled.TryGetStateIndex(channelName, preStateKey, out _) ||
+                !compiled.TryGetStateIndex(channelName, nextStateKey, out _))
             {
                 SetStatus($"无法预览：state 不存在。", true);
                 return false;
@@ -2641,52 +2964,54 @@ namespace XAnimationEditor
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
 
-            m_Session.PlayState(preStateKey);
+            m_Session.PlayState(channelName, preStateKey);
 
             RefreshPlaybackViews();
             SetStatus($"正在播放 {preStateKey}，点击 ⏭ 切换到 {nextStateKey}。");
             return true;
         }
 
-        private void PlayDefaultTransitionPairNext(string preStateKey, string nextStateKey)
+        private void PlayDefaultTransitionPairNext(string channelName, string preStateKey, string nextStateKey)
         {
             if (m_Session == null || !m_Session.IsLoaded ||
+                string.IsNullOrWhiteSpace(channelName) ||
                 string.IsNullOrWhiteSpace(nextStateKey))
             {
                 return;
             }
 
-            m_Session.PlayState(nextStateKey);
+            m_Session.PlayState(channelName, nextStateKey);
             RefreshPlaybackViews();
             SetStatus($"Default Transition 切换: {preStateKey} -> {nextStateKey}。");
         }
 
-        private void DeleteAutoTransition(string preStateKey)
+        private void DeleteAutoTransition(string channelName, string preStateKey)
         {
+            string stateUiKey = BuildStateUiKey(channelName, preStateKey);
             if (string.IsNullOrWhiteSpace(preStateKey) ||
-                !HasAutoTransition(preStateKey))
+                !HasAutoTransition(stateUiKey))
             {
                 SetStatus("当前没有可删除的 Auto Transition。", true);
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog("删除 Auto Transition", $"确定删除 Auto Transition '{preStateKey}'？", "删除", "取消"))
+            if (!EditorUtility.DisplayDialog("删除 Auto Transition", $"确定删除 Auto Transition '{channelName}: {preStateKey}'？", "删除", "取消"))
             {
                 return;
             }
 
             try
             {
-                m_Session.DeleteAutoTransition(preStateKey);
-                if (string.Equals(m_SelectedAutoTransitionStateKey, preStateKey, StringComparison.Ordinal))
+                m_Session.DeleteAutoTransition(channelName, preStateKey);
+                if (string.Equals(m_SelectedAutoTransitionStateUiKey, stateUiKey, StringComparison.Ordinal))
                 {
-                    m_SelectedAutoTransitionStateKey = null;
+                    m_SelectedAutoTransitionStateUiKey = null;
                 }
 
-                m_CollapsedAutoTransitionKeys.Remove(preStateKey);
+                m_CollapsedAutoTransitionKeys.Remove(stateUiKey);
                 RebuildAutoTransitionEditor();
                 RefreshChannelStates();
-                SetStatus($"已删除 Auto Transition {preStateKey}。");
+                SetStatus($"已删除 Auto Transition {channelName}: {preStateKey}。");
             }
             catch (Exception ex)
             {
@@ -2695,7 +3020,7 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteState(string stateKey)
+        private void DeleteState(string channelName, string stateKey)
         {
             if (!EditorUtility.DisplayDialog("删除 State", $"确定删除 State '{stateKey}'？", "删除", "取消"))
             {
@@ -2704,15 +3029,16 @@ namespace XAnimationEditor
 
             try
             {
-                m_Session.DeleteState(stateKey);
-                if (string.Equals(m_SelectedAutoTransitionStateKey, stateKey, StringComparison.Ordinal))
+                string stateUiKey = BuildStateUiKey(channelName, stateKey);
+                m_Session.DeleteState(channelName, stateKey);
+                if (string.Equals(m_SelectedAutoTransitionStateUiKey, stateUiKey, StringComparison.Ordinal))
                 {
-                    m_SelectedAutoTransitionStateKey = null;
+                    m_SelectedAutoTransitionStateUiKey = null;
                 }
 
-                m_CollapsedAutoTransitionKeys.Remove(stateKey);
+                m_CollapsedAutoTransitionKeys.Remove(stateUiKey);
                 m_SelectedDefaultTransitionIndex = -1;
-                SetStateExpanded(stateKey, false);
+                SetStateExpanded(stateUiKey, false);
                 RebuildStateList();
                 RebuildDefaultTransitionsEditor();
                 RefreshStatePlaybackViews();
@@ -2727,18 +3053,133 @@ namespace XAnimationEditor
 
         private void AddClip()
         {
+            AddClip(string.Empty);
+        }
+
+        private void AddClip(string parentPath)
+        {
             try
             {
-                string clipKey = m_Session.AddClip();
+                string normalizedParentPath = NormalizeClipPathKey(parentPath);
+                string clipKey = m_Session.AddClip(normalizedParentPath);
                 m_PendingClipRenameKey = clipKey;
                 RebuildStructureAndPlaybackViews();
-                SetStatus($"已新增 Clip {clipKey}。");
+                SetStatus(string.IsNullOrWhiteSpace(normalizedParentPath)
+                    ? $"已新增 Clip {clipKey}。"
+                    : $"已在 {normalizedParentPath} 新增 Clip {clipKey}。");
             }
             catch (Exception ex)
             {
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }
+        }
+
+        private void AddClipGroup(string parentPath)
+        {
+            if (!TryPromptForClipPathName("新建 Clip Folder", parentPath, string.Empty, out string groupName))
+            {
+                return;
+            }
+
+            string groupPath = BuildClipRenameKey(parentPath, groupName);
+            try
+            {
+                string clipKey = m_Session.AddClip(groupPath);
+                m_PendingClipRenameKey = clipKey;
+                ExpandClipPath(groupPath);
+                RebuildStructureAndPlaybackViews();
+                SetStatus($"已创建 Clip Folder {groupPath}，并新增 Clip {clipKey}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void RenameClipPath(string oldPath, string newPath, EditableLabel label)
+        {
+            oldPath = NormalizeClipPathKey(oldPath);
+            newPath = NormalizeClipPathKey(newPath);
+            try
+            {
+                if (string.IsNullOrWhiteSpace(newPath))
+                {
+                    throw new XAnimationException("Clip folder path cannot be empty.");
+                }
+
+                m_Session.RenameClipPath(oldPath, newPath);
+                ExpandClipPath(newPath);
+                SetStatus($"Clip Folder {oldPath} 已重命名为 {newPath}。");
+                RebuildStructureAndPlaybackViews();
+            }
+            catch (Exception ex)
+            {
+                label.text = GetClipPathLeafName(oldPath);
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void DeleteClipPath(string path)
+        {
+            path = NormalizeClipPathKey(path);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return;
+            }
+
+            if (!EditorUtility.DisplayDialog("删除 Clip Folder", $"确定删除 Clip Folder '{path}'？\n\n组内 clips 会保留，并移动到上一层。", "删除", "取消"))
+            {
+                return;
+            }
+
+            try
+            {
+                string parentPath = GetClipPathParent(path);
+                m_Session.ClearClipPath(path);
+                ExpandClipPath(parentPath);
+                RebuildStructureAndPlaybackViews();
+                SetStatus(string.IsNullOrWhiteSpace(parentPath)
+                    ? $"已删除 Clip Folder {path}，clips 已移动到根层级。"
+                    : $"已删除 Clip Folder {path}，clips 已移动到 {parentPath}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private bool TryPromptForClipPathName(string title, string parentPath, string currentName, out string pathName)
+        {
+            pathName = null;
+            parentPath = NormalizeClipPathKey(parentPath);
+            string message = string.IsNullOrWhiteSpace(parentPath)
+                ? "输入新的 Clip Folder 名称："
+                : $"在 Clip Folder '{parentPath}' 下输入新的子 Folder 名称：";
+            if (!StringInputPromptWindow.ShowPrompt(title, message, currentName, out string input))
+            {
+                return false;
+            }
+
+            input = NormalizeClipPathKey(input);
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                SetStatus("Clip folder name cannot be empty.", true);
+                return false;
+            }
+
+            string fullPath = BuildClipRenameKey(parentPath, input);
+            if (HasClipPath(fullPath))
+            {
+                SetStatus($"已存在 Clip Folder '{fullPath}'。", true);
+                return false;
+            }
+
+            pathName = input;
+            return true;
         }
 
         private void DeleteClip(string clipKey)
@@ -2982,7 +3423,21 @@ namespace XAnimationEditor
             }
         }
 
-        private void RenameClip(string oldKey, string newKey, EditableLabel label)
+        private static string BuildClipRenameKey(string parentPath, string leafName)
+        {
+            string normalizedLeafName = NormalizeClipPathKey(leafName);
+            if (string.IsNullOrWhiteSpace(normalizedLeafName))
+            {
+                return string.Empty;
+            }
+
+            string normalizedParentPath = NormalizeClipPathKey(parentPath);
+            return string.IsNullOrWhiteSpace(normalizedParentPath)
+                ? normalizedLeafName
+                : $"{normalizedParentPath}/{normalizedLeafName}";
+        }
+
+        private void RenameClip(string oldKey, string newKey, EditableLabel label, string oldDisplayName = null)
         {
             newKey = newKey?.Trim();
             try
@@ -2997,7 +3452,7 @@ namespace XAnimationEditor
             }
             catch (Exception ex)
             {
-                label.text = oldKey;
+                label.text = string.IsNullOrWhiteSpace(oldDisplayName) ? oldKey : oldDisplayName;
                 SetStatus(ex.Message);
                 Debug.LogException(ex);
             }
@@ -3021,29 +3476,31 @@ namespace XAnimationEditor
             }
         }
 
-        private void RenameState(string oldKey, string newKey, EditableLabel label)
+        private void RenameState(string channelName, string oldKey, string newKey, EditableLabel label)
         {
             newKey = newKey?.Trim();
             try
             {
-                m_Session.RenameState(oldKey, newKey);
-                if (string.Equals(m_SelectedAutoTransitionStateKey, oldKey, StringComparison.Ordinal))
+                string oldUiKey = BuildStateUiKey(channelName, oldKey);
+                string newUiKey = BuildStateUiKey(channelName, newKey);
+                m_Session.RenameState(channelName, oldKey, newKey);
+                if (string.Equals(m_SelectedAutoTransitionStateUiKey, oldUiKey, StringComparison.Ordinal))
                 {
-                    m_SelectedAutoTransitionStateKey = newKey;
+                    m_SelectedAutoTransitionStateUiKey = newUiKey;
                 }
 
-                bool autoTransitionWasExpanded = m_CollapsedAutoTransitionKeys.Remove(oldKey);
+                bool autoTransitionWasExpanded = m_CollapsedAutoTransitionKeys.Remove(oldUiKey);
                 if (autoTransitionWasExpanded && !string.IsNullOrWhiteSpace(newKey))
                 {
-                    m_CollapsedAutoTransitionKeys.Add(newKey.Trim());
+                    m_CollapsedAutoTransitionKeys.Add(newUiKey);
                 }
 
                 SetStatus($"State {oldKey} 已重命名为 {newKey}。");
-                bool wasExpanded = m_ExpandedStateKeys.Remove(oldKey);
-                m_StateEditorMap.Remove(oldKey);
+                bool wasExpanded = m_ExpandedStateKeys.Remove(oldUiKey);
+                m_StateEditorMap.Remove(oldUiKey);
                 if (wasExpanded && !string.IsNullOrWhiteSpace(newKey))
                 {
-                    m_ExpandedStateKeys.Add(newKey.Trim());
+                    m_ExpandedStateKeys.Add(newUiKey);
                 }
                 RebuildStateList();
                 RebuildDefaultTransitionsEditor();
@@ -3057,11 +3514,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateType(string stateKey, XAnimationStateType stateType, string previousValue, DropdownField field)
+        private void ChangeStateType(string channelName, string stateKey, XAnimationStateType stateType, string previousValue, DropdownField field)
         {
             try
             {
-                m_Session.SetStateType(stateKey, stateType);
+                m_Session.SetStateType(channelName, stateKey, stateType);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} stateType = {stateType}。");
             }
@@ -3073,13 +3530,13 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateChannel(string stateKey, string channelName, DropdownField field, string previousValue)
+        private void ChangeStateChannel(string sourceChannelName, string stateKey, string targetChannelName, DropdownField field, string previousValue)
         {
             try
             {
-                m_Session.SetStateChannel(stateKey, channelName);
+                m_Session.SetStateChannel(sourceChannelName, stateKey, targetChannelName);
                 RebuildStatePresentation();
-                SetStatus($"{stateKey} channel = {channelName}。");
+                SetStatus($"{stateKey} channel = {targetChannelName}。");
             }
             catch (Exception ex)
             {
@@ -3089,13 +3546,13 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateClipKey(string stateKey, string clipKey, XAnimationEditorSelectionField field, string previousValue)
+        private void ChangeStateClipKey(string channelName, string stateKey, string clipKey, XAnimationEditorSelectionField field, string previousValue)
         {
             try
             {
-                m_Session.SetStateClipKey(stateKey, clipKey);
+                m_Session.SetStateClipKey(channelName, stateKey, clipKey);
                 RebuildStateList();
-                RestartStateIfPlaying(stateKey, null);
+                RestartStateIfPlaying(stateKey, channelName);
                 RefreshStatePlaybackViews();
                 SetStatus($"{stateKey} clipKey = {clipKey}。");
             }
@@ -3107,11 +3564,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateBlendParameter(string stateKey, string parameterName, DropdownField field, string previousValue)
+        private void ChangeStateBlendParameter(string channelName, string stateKey, string parameterName, DropdownField field, string previousValue)
         {
             try
             {
-                m_Session.SetStateBlendParameter(stateKey, parameterName);
+                m_Session.SetStateBlendParameter(channelName, stateKey, parameterName);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} parameter = {parameterName}。");
             }
@@ -3124,6 +3581,7 @@ namespace XAnimationEditor
         }
 
         private void ChangeStateDirectionalBlendParameters(
+            string channelName,
             string stateKey,
             string parameterXName,
             string parameterYName,
@@ -3134,8 +3592,8 @@ namespace XAnimationEditor
         {
             try
             {
-                m_Session.SetStateDirectionalBlendParameters(stateKey, parameterXName, parameterYName);
-                MarkFreeformStateInteracted(stateKey);
+                m_Session.SetStateDirectionalBlendParameters(channelName, stateKey, parameterXName, parameterYName);
+                MarkFreeformStateInteracted(channelName, stateKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} parameters = ({parameterXName}, {parameterYName})。");
             }
@@ -3143,97 +3601,6 @@ namespace XAnimationEditor
             {
                 parameterXField.SetValueWithoutNotify(previousXValue);
                 parameterYField.SetValueWithoutNotify(previousYValue);
-                SetStatus(ex.Message, true);
-                Debug.LogException(ex);
-            }
-        }
-
-        private void AddClip(string groupName)
-        {
-            try
-            {
-                string clipKey = m_Session.AddClip(groupName);
-                m_PendingClipRenameKey = clipKey;
-                RebuildClipPresentation();
-                SetStatus($"已在 {groupName} 新增 Clip {clipKey}。");
-            }
-            catch (Exception ex)
-            {
-                SetStatus(ex.Message, true);
-                Debug.LogException(ex);
-            }
-        }
-
-        private void AddClipGroup()
-        {
-            string[] clipOptions = BuildClipGroupCandidateOptions();
-            if (!TryPromptForClipGroupSetup("新建 Clip Group", out string groupName, out string selectedClipKey, clipOptions))
-            {
-                return;
-            }
-
-            if (!string.IsNullOrWhiteSpace(selectedClipKey))
-            {
-                try
-                {
-                    m_Session.SetClipEditorGroup(selectedClipKey, groupName);
-                    RebuildClipPresentation();
-                    SetStatus($"已创建 Clip Group {groupName}，并加入 clip {selectedClipKey}。");
-                }
-                catch (Exception ex)
-                {
-                    SetStatus(ex.Message, true);
-                    Debug.LogException(ex);
-                }
-
-                return;
-            }
-
-            AddClip(groupName);
-        }
-
-        private void RenameClipGroup(string oldName, string newName, EditableLabel label)
-        {
-            newName = NormalizeClipEditorGroupName(newName);
-            try
-            {
-                if (string.IsNullOrWhiteSpace(newName))
-                {
-                    throw new XAnimationException("Clip group name cannot be empty.");
-                }
-
-                m_Session.RenameClipEditorGroup(oldName, newName);
-                RebuildClipPresentation();
-                SetStatus($"Clip Group {oldName} 已重命名为 {newName}。");
-            }
-            catch (Exception ex)
-            {
-                label.text = oldName;
-                SetStatus(ex.Message, true);
-                Debug.LogException(ex);
-            }
-        }
-
-        private void DeleteClipGroup(string groupName)
-        {
-            if (string.IsNullOrWhiteSpace(groupName))
-            {
-                return;
-            }
-
-            if (!EditorUtility.DisplayDialog("删除 Clip Group", $"确定删除 Clip Group '{groupName}'？\n\n组内 clips 会保留，并回到未分组区域。", "删除", "取消"))
-            {
-                return;
-            }
-
-            try
-            {
-                m_Session.ClearClipEditorGroup(groupName);
-                RebuildClipPresentation();
-                SetStatus($"已删除 Clip Group {groupName}。");
-            }
-            catch (Exception ex)
-            {
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }
@@ -3314,7 +3681,7 @@ namespace XAnimationEditor
             {
                 try
                 {
-                    m_Session.SetStateEditorGroup(selectedStateKey, groupName);
+                    m_Session.SetStateEditorGroup(channelName, selectedStateKey, groupName);
                     RebuildStatePresentation();
                     SetStatus($"已创建 State Group {channelName} / {groupName}，并加入 state {selectedStateKey}。");
                 }
@@ -3395,67 +3762,6 @@ namespace XAnimationEditor
             return true;
         }
 
-        private bool TryPromptForClipGroupSetup(string title, out string groupName, out string selectedClipKey, string[] clipOptions)
-        {
-            groupName = null;
-            selectedClipKey = null;
-            if (!StringInputPromptWindow.ShowPrompt(
-                    title,
-                    "输入新的 Clip Group 名称：",
-                    string.Empty,
-                    "加入现有 Clip",
-                    clipOptions,
-                    clipOptions != null && clipOptions.Length > 0 ? clipOptions[0] : string.Empty,
-                    out string input,
-                    out string selected))
-            {
-                return false;
-            }
-
-            input = NormalizeClipEditorGroupName(input);
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                SetStatus("Clip group name cannot be empty.", true);
-                return false;
-            }
-
-            if (HasClipGroup(input))
-            {
-                SetStatus($"已存在 Clip Group '{input}'。", true);
-                return false;
-            }
-
-            groupName = input;
-            selectedClipKey = NormalizeClipGroupSelectedClip(selected);
-            return true;
-        }
-
-        private string[] BuildClipGroupCandidateOptions()
-        {
-            List<string> options = new() { "<新建一个 clip>" };
-            if (m_Session == null || !m_Session.IsLoaded)
-            {
-                return options.ToArray();
-            }
-
-            IReadOnlyList<XAnimationCompiledClip> clips = m_Session.CompiledAsset.Clips;
-            for (int i = 0; i < clips.Count; i++)
-            {
-                XAnimationCompiledClip clip = clips[i];
-                if (clip != null)
-                {
-                    options.Add(clip.Key);
-                }
-            }
-
-            return options.ToArray();
-        }
-
-        private static string NormalizeClipGroupSelectedClip(string value)
-        {
-            return string.Equals(value, "<新建一个 clip>", StringComparison.Ordinal) ? string.Empty : value ?? string.Empty;
-        }
-
         private string[] BuildChannelStateGroupCandidateOptions(string channelName)
         {
             List<string> options = new() { "<新建一个 state>" };
@@ -3484,11 +3790,11 @@ namespace XAnimationEditor
             return string.Equals(value, "<新建一个 state>", StringComparison.Ordinal) ? string.Empty : value ?? string.Empty;
         }
 
-        private void AddStateAllowedNextState(string stateKey)
+        private void AddStateAllowedNextState(string channelName, string stateKey)
         {
             try
             {
-                m_Session.AddStateAllowedNextState(stateKey);
+                m_Session.AddStateAllowedNextState(channelName, stateKey);
                 RebuildStateList();
                 SetStatus($"{stateKey} allowedNextStateKeys += 1。");
             }
@@ -3499,11 +3805,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void AddStateAllowedPreviousState(string stateKey)
+        private void AddStateAllowedPreviousState(string channelName, string stateKey)
         {
             try
             {
-                m_Session.AddStateAllowedPreviousState(stateKey);
+                m_Session.AddStateAllowedPreviousState(channelName, stateKey);
                 RebuildStateList();
                 SetStatus($"{stateKey} allowedPreviousStateKeys += 1。");
             }
@@ -3514,11 +3820,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteStateAllowedNextState(string stateKey, int index)
+        private void DeleteStateAllowedNextState(string channelName, string stateKey, int index)
         {
             try
             {
-                m_Session.DeleteStateAllowedNextState(stateKey, index);
+                m_Session.DeleteStateAllowedNextState(channelName, stateKey, index);
                 RebuildStateList();
                 SetStatus($"{stateKey} 删除 allowedNextStateKeys[{index}]。");
             }
@@ -3529,11 +3835,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteStateAllowedPreviousState(string stateKey, int index)
+        private void DeleteStateAllowedPreviousState(string channelName, string stateKey, int index)
         {
             try
             {
-                m_Session.DeleteStateAllowedPreviousState(stateKey, index);
+                m_Session.DeleteStateAllowedPreviousState(channelName, stateKey, index);
                 RebuildStateList();
                 SetStatus($"{stateKey} 删除 allowedPreviousStateKeys[{index}]。");
             }
@@ -3544,11 +3850,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateAllowedNextState(string stateKey, int index, string targetStateKey, XAnimationEditorSelectionField field, string previousValue)
+        private void ChangeStateAllowedNextState(string channelName, string stateKey, int index, string targetStateKey, XAnimationEditorSelectionField field, string previousValue)
         {
             try
             {
-                m_Session.SetStateAllowedNextState(stateKey, index, targetStateKey);
+                m_Session.SetStateAllowedNextState(channelName, stateKey, index, targetStateKey);
                 RebuildStateList();
                 SetStatus($"{stateKey} allowedNextStateKeys[{index}] = {targetStateKey}。");
             }
@@ -3560,11 +3866,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeStateAllowedPreviousState(string stateKey, int index, string sourceStateKey, XAnimationEditorSelectionField field, string previousValue)
+        private void ChangeStateAllowedPreviousState(string channelName, string stateKey, int index, string sourceStateKey, XAnimationEditorSelectionField field, string previousValue)
         {
             try
             {
-                m_Session.SetStateAllowedPreviousState(stateKey, index, sourceStateKey);
+                m_Session.SetStateAllowedPreviousState(channelName, stateKey, index, sourceStateKey);
                 RebuildStateList();
                 SetStatus($"{stateKey} allowedPreviousStateKeys[{index}] = {sourceStateKey}。");
             }
@@ -3576,11 +3882,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void AddBlendSample(string stateKey)
+        private void AddBlendSample(string channelName, string stateKey)
         {
             try
             {
-                m_Session.AddBlendSample(stateKey);
+                m_Session.AddBlendSample(channelName, stateKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} 已新增 Blend1D sample。");
             }
@@ -3591,11 +3897,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void AddDirectionalBlendSample(string stateKey)
+        private void AddDirectionalBlendSample(string channelName, string stateKey)
         {
             try
             {
-                m_Session.AddDirectionalBlendSample(stateKey);
+                m_Session.AddDirectionalBlendSample(channelName, stateKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} 已新增 2D directional blend sample。");
             }
@@ -3606,11 +3912,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteBlendSample(string stateKey, int sampleIndex)
+        private void DeleteBlendSample(string channelName, string stateKey, int sampleIndex)
         {
             try
             {
-                m_Session.DeleteBlendSample(stateKey, sampleIndex);
+                m_Session.DeleteBlendSample(channelName, stateKey, sampleIndex);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} 已删除 Blend1D sample #{sampleIndex}。");
             }
@@ -3621,11 +3927,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteDirectionalBlendSample(string stateKey, int sampleIndex)
+        private void DeleteDirectionalBlendSample(string channelName, string stateKey, int sampleIndex)
         {
             try
             {
-                m_Session.DeleteDirectionalBlendSample(stateKey, sampleIndex);
+                m_Session.DeleteDirectionalBlendSample(channelName, stateKey, sampleIndex);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} 已删除 2D directional blend sample #{sampleIndex}。");
             }
@@ -3636,11 +3942,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeBlendSampleClipKey(string stateKey, int sampleIndex, string clipKey, XAnimationEditorSelectionField field, string previousValue)
+        private void ChangeBlendSampleClipKey(string channelName, string stateKey, int sampleIndex, string clipKey, XAnimationEditorSelectionField field, string previousValue)
         {
             try
             {
-                m_Session.SetBlendSampleClipKey(stateKey, sampleIndex, clipKey);
+                m_Session.SetBlendSampleClipKey(channelName, stateKey, sampleIndex, clipKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} sample #{sampleIndex} clip = {clipKey}。");
             }
@@ -3652,11 +3958,11 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeBlendSampleThreshold(string stateKey, int sampleIndex, float threshold, FloatField field, float previousValue)
+        private void ChangeBlendSampleThreshold(string channelName, string stateKey, int sampleIndex, float threshold, FloatField field, float previousValue)
         {
             try
             {
-                m_Session.SetBlendSampleThreshold(stateKey, sampleIndex, threshold);
+                m_Session.SetBlendSampleThreshold(channelName, stateKey, sampleIndex, threshold);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} sample #{sampleIndex} threshold = {threshold:0.###}。");
             }
@@ -3668,12 +3974,12 @@ namespace XAnimationEditor
             }
         }
 
-        private void ChangeDirectionalBlendSampleClipKey(string stateKey, int sampleIndex, string clipKey, XAnimationEditorSelectionField field, string previousValue)
+        private void ChangeDirectionalBlendSampleClipKey(string channelName, string stateKey, int sampleIndex, string clipKey, XAnimationEditorSelectionField field, string previousValue)
         {
             try
             {
-                m_Session.SetDirectionalBlendSampleClipKey(stateKey, sampleIndex, clipKey);
-                MarkFreeformStateInteracted(stateKey);
+                m_Session.SetDirectionalBlendSampleClipKey(channelName, stateKey, sampleIndex, clipKey);
+                MarkFreeformStateInteracted(channelName, stateKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} directional sample #{sampleIndex} clip = {clipKey}。");
             }
@@ -3686,6 +3992,7 @@ namespace XAnimationEditor
         }
 
         private void ChangeDirectionalBlendSamplePosition(
+            string channelName,
             string stateKey,
             int sampleIndex,
             float positionX,
@@ -3697,13 +4004,13 @@ namespace XAnimationEditor
         {
             try
             {
-                XAnimationStateConfig stateConfig = m_Session.CompiledAsset.GetState(stateKey).Config;
+                XAnimationStateConfig stateConfig = m_Session.CompiledAsset.GetState(channelName, stateKey).Config;
                 XAnimationBlend2DSimpleDirectionalSampleConfig sample =
                     stateConfig.directionalSamples[sampleIndex];
                 float newX = isX ? positionX : sample.positionX;
                 float newY = isX ? sample.positionY : positionY;
-                m_Session.SetDirectionalBlendSamplePosition(stateKey, sampleIndex, newX, newY);
-                MarkFreeformStateInteracted(stateKey);
+                m_Session.SetDirectionalBlendSamplePosition(channelName, stateKey, sampleIndex, newX, newY);
+                MarkFreeformStateInteracted(channelName, stateKey);
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} directional sample #{sampleIndex} position = ({newX:0.###}, {newY:0.###})。");
             }
@@ -3719,8 +4026,8 @@ namespace XAnimationEditor
         {
             group.RegisterCallback<DragUpdatedEvent>(evt =>
             {
-                string stateKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
-                if (!CanDropState(stateKey, channelName, groupName))
+                string stateUiKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
+                if (!CanDropState(stateUiKey, channelName, groupName))
                 {
                     return;
                 }
@@ -3732,15 +4039,15 @@ namespace XAnimationEditor
             group.RegisterCallback<DragLeaveEvent>(_ => groupHeader.style.backgroundColor = ListHeaderBg);
             group.RegisterCallback<DragPerformEvent>(evt =>
             {
-                string stateKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
-                if (!CanDropState(stateKey, channelName, groupName))
+                string stateUiKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
+                if (!CanDropState(stateUiKey, channelName, groupName))
                 {
                     return;
                 }
 
                 DragAndDrop.AcceptDrag();
                 groupHeader.style.backgroundColor = ListHeaderBg;
-                MoveState(stateKey, channelName, insertBeforeStateKey: null, groupName);
+                MoveState(stateUiKey, channelName, insertBeforeStateKey: null, groupName);
                 evt.StopPropagation();
             });
         }
@@ -3749,8 +4056,8 @@ namespace XAnimationEditor
         {
             row.RegisterCallback<DragUpdatedEvent>(evt =>
             {
-                string stateKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
-                if (!CanDropState(stateKey, channelName, groupName, insertBeforeStateKey))
+                string stateUiKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
+                if (!CanDropState(stateUiKey, channelName, groupName, insertBeforeStateKey))
                 {
                     return;
                 }
@@ -3767,8 +4074,8 @@ namespace XAnimationEditor
             });
             row.RegisterCallback<DragPerformEvent>(evt =>
             {
-                string stateKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
-                if (!CanDropState(stateKey, channelName, groupName, insertBeforeStateKey))
+                string stateUiKey = DragAndDrop.GetGenericData(StateDragDataKey) as string;
+                if (!CanDropState(stateUiKey, channelName, groupName, insertBeforeStateKey))
                 {
                     return;
                 }
@@ -3776,17 +4083,17 @@ namespace XAnimationEditor
                 DragAndDrop.AcceptDrag();
                 row.style.borderTopColor = Color.clear;
                 row.style.borderTopWidth = 0;
-                MoveState(stateKey, channelName, insertBeforeStateKey, groupName);
+                MoveState(stateUiKey, channelName, insertBeforeStateKey, groupName);
                 evt.StopPropagation();
             });
         }
 
-        private void RegisterClipGroupDropTarget(VisualElement group, VisualElement groupHeader, string groupName)
+        private void RegisterClipPathDropTarget(VisualElement group, VisualElement groupHeader, string path)
         {
             group.RegisterCallback<DragUpdatedEvent>(evt =>
             {
                 string clipKey = DragAndDrop.GetGenericData(ClipDragDataKey) as string;
-                if (!CanDropClip(clipKey, groupName))
+                if (!CanDropClip(clipKey, path))
                 {
                     return;
                 }
@@ -3799,24 +4106,24 @@ namespace XAnimationEditor
             group.RegisterCallback<DragPerformEvent>(evt =>
             {
                 string clipKey = DragAndDrop.GetGenericData(ClipDragDataKey) as string;
-                if (!CanDropClip(clipKey, groupName))
+                if (!CanDropClip(clipKey, path))
                 {
                     return;
                 }
 
                 DragAndDrop.AcceptDrag();
                 groupHeader.style.backgroundColor = ListHeaderBg;
-                MoveClipToGroup(clipKey, groupName);
+                MoveClip(clipKey, path);
                 evt.StopPropagation();
             });
         }
 
-        private void RegisterClipRowDropTarget(VisualElement row, string insertBeforeClipKey, string groupName)
+        private void RegisterClipRowDropTarget(VisualElement row, string insertBeforeClipKey, string path)
         {
             row.RegisterCallback<DragUpdatedEvent>(evt =>
             {
                 string clipKey = DragAndDrop.GetGenericData(ClipDragDataKey) as string;
-                if (!CanDropClip(clipKey, groupName, insertBeforeClipKey))
+                if (!CanDropClip(clipKey, path, insertBeforeClipKey))
                 {
                     return;
                 }
@@ -3834,7 +4141,7 @@ namespace XAnimationEditor
             row.RegisterCallback<DragPerformEvent>(evt =>
             {
                 string clipKey = DragAndDrop.GetGenericData(ClipDragDataKey) as string;
-                if (!CanDropClip(clipKey, groupName, insertBeforeClipKey))
+                if (!CanDropClip(clipKey, path, insertBeforeClipKey))
                 {
                     return;
                 }
@@ -3842,34 +4149,35 @@ namespace XAnimationEditor
                 DragAndDrop.AcceptDrag();
                 row.style.borderTopColor = Color.clear;
                 row.style.borderTopWidth = 0;
-                MoveClipToGroup(clipKey, groupName);
+                MoveClip(clipKey, path, insertBeforeClipKey);
                 evt.StopPropagation();
             });
         }
 
-        private bool CanDropState(string stateKey, string channelName, string groupName, string insertBeforeStateKey = null)
+        private bool CanDropState(string stateUiKey, string channelName, string groupName, string insertBeforeStateKey = null)
         {
             if (m_IsEditingName ||
                 m_Session == null || !m_Session.IsLoaded ||
-                string.IsNullOrWhiteSpace(stateKey) ||
+                string.IsNullOrWhiteSpace(stateUiKey) ||
                 string.IsNullOrWhiteSpace(channelName))
             {
                 return false;
             }
 
-            if (!m_StateChannelMap.TryGetValue(stateKey, out string currentChannel))
+            if (!TryGetCompiledStateByUiKey(stateUiKey, out XAnimationCompiledState sourceState) ||
+                !m_StateChannelMap.TryGetValue(stateUiKey, out string currentChannel))
             {
                 return false;
             }
 
-            string currentGroupName = NormalizeStateEditorGroupName(m_Session.CompiledAsset.GetState(stateKey).Config.editorGroupName);
+            string currentGroupName = NormalizeStateEditorGroupName(sourceState.Config.editorGroupName);
             string targetGroupName = NormalizeStateEditorGroupName(groupName);
-            return !string.Equals(stateKey, insertBeforeStateKey, StringComparison.Ordinal) ||
+            return !string.Equals(sourceState.Key, insertBeforeStateKey, StringComparison.Ordinal) ||
                 !string.Equals(currentChannel, channelName, StringComparison.Ordinal) ||
                 !string.Equals(currentGroupName, targetGroupName, StringComparison.Ordinal);
         }
 
-        private bool CanDropClip(string clipKey, string groupName, string insertBeforeClipKey = null)
+        private bool CanDropClip(string clipKey, string path, string insertBeforeClipKey = null)
         {
             if (m_IsEditingName ||
                 m_Session == null || !m_Session.IsLoaded ||
@@ -3879,27 +4187,52 @@ namespace XAnimationEditor
                 return false;
             }
 
-            XAnimationCompiledClip clip = m_Session.CompiledAsset.GetClip(clipKey);
-            if (clip == null)
+            if (!m_Session.CompiledAsset.TryGetClipIndex(clipKey, out _))
             {
                 return false;
             }
 
-            string currentGroupName = NormalizeClipEditorGroupName(clip.Config.editorGroupName);
-            string targetGroupName = NormalizeClipEditorGroupName(groupName);
+            string currentPath = GetClipPathParent(clipKey);
+            string targetPath = NormalizeClipPathKey(path);
             return !string.Equals(clipKey, insertBeforeClipKey, StringComparison.Ordinal) ||
-                !string.Equals(currentGroupName, targetGroupName, StringComparison.Ordinal);
+                !string.Equals(currentPath, targetPath, StringComparison.Ordinal);
         }
 
-        private void MoveState(string stateKey, string channelName, string insertBeforeStateKey = null, string groupName = null)
+        private void MoveState(string stateUiKey, string channelName, string insertBeforeStateKey = null, string groupName = null)
         {
+            if (!TryGetCompiledStateByUiKey(stateUiKey, out XAnimationCompiledState sourceState))
+            {
+                SetStatus("无法解析要移动的 State。", true);
+                return;
+            }
+
             string normalizedGroup = NormalizeStateEditorGroupName(groupName);
-            m_Session.MoveState(stateKey, channelName, insertBeforeStateKey, normalizedGroup);
-            m_StateChannelMap[stateKey] = channelName;
+            string stateKey = sourceState.Key;
+            m_Session.MoveState(sourceState.Config.channelName, stateKey, channelName, insertBeforeStateKey, normalizedGroup);
+            m_StateChannelMap[BuildStateUiKey(channelName, stateKey)] = channelName;
             RebuildStatePresentation();
             SetStatus(string.IsNullOrWhiteSpace(normalizedGroup)
                 ? $"{stateKey} 已移动到 {channelName}。"
                 : $"{stateKey} 已移动到 {channelName} / {normalizedGroup}。");
+        }
+
+        private void MoveClip(string clipKey, string path, string insertBeforeClipKey = null)
+        {
+            path = NormalizeClipPathKey(path);
+            try
+            {
+                m_Session.MoveClip(clipKey, path, insertBeforeClipKey);
+                ExpandClipPath(path);
+                RebuildStructureAndPlaybackViews();
+                SetStatus(string.IsNullOrWhiteSpace(path)
+                    ? $"{clipKey} 已移动到根层级。"
+                    : $"{clipKey} 已移动到 {path}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
         }
 
         private void TryBeginPendingRename()
@@ -3924,16 +4257,19 @@ namespace XAnimationEditor
                 }).StartingIn(0);
             }
 
-            if (!string.IsNullOrWhiteSpace(m_PendingStateRenameKey) &&
-                m_StateLabelMap.TryGetValue(m_PendingStateRenameKey, out EditableLabel stateLabel))
+            string pendingStateUiKey = !string.IsNullOrWhiteSpace(m_PendingStateRenameKey)
+                ? ResolveStateUiKey(m_PendingStateRenameKey)
+                : null;
+            if (!string.IsNullOrWhiteSpace(pendingStateUiKey) &&
+                m_StateLabelMap.TryGetValue(pendingStateUiKey, out EditableLabel stateLabel))
             {
-                string stateKey = m_PendingStateRenameKey;
+                string stateUiKey = pendingStateUiKey;
                 m_PendingStateRenameKey = null;
                 rootVisualElement.schedule.Execute(() =>
                 {
                     if (stateLabel != null)
                     {
-                        SetStateExpanded(stateKey, false);
+                        SetStateExpanded(stateUiKey, false);
                         stateLabel.BeginEdit();
                     }
                 }).StartingIn(0);

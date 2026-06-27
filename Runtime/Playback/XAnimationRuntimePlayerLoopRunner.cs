@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.LowLevel;
 using UnityEngine.PlayerLoop;
+using Unity.Profiling;
 
 namespace XAnimationEngine
 {
@@ -12,6 +13,8 @@ namespace XAnimationEngine
         private sealed class FinalizeMarker { }
 
         private static readonly List<XAnimationDriverScheduler> s_Schedulers = new();
+        private static readonly ProfilerMarker s_PrepareTickMarker = new("XAnimationRuntimePlayerLoopRunner.XAnimationPrepareTick");
+        private static readonly ProfilerMarker s_FinalizeTickMarker = new("XAnimationRuntimePlayerLoopRunner.XAnimationFinalizeTick");
         private static bool s_Installed;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
@@ -60,34 +63,40 @@ namespace XAnimationEngine
             s_Schedulers.Remove(scheduler);
         }
 
-        private static void PrepareTick()
+        private static void XAnimationPrepareTick()
         {
-            float deltaTime = Time.deltaTime;
-            for (int i = s_Schedulers.Count - 1; i >= 0; i--)
+            using (s_PrepareTickMarker.Auto())
             {
-                XAnimationDriverScheduler scheduler = s_Schedulers[i];
-                if (scheduler == null || !scheduler.IsRegisteredForAutomaticUpdate)
+                float deltaTime = Time.deltaTime;
+                for (int i = s_Schedulers.Count - 1; i >= 0; i--)
                 {
-                    s_Schedulers.RemoveAt(i);
-                    continue;
-                }
+                    XAnimationDriverScheduler scheduler = s_Schedulers[i];
+                    if (scheduler == null || !scheduler.IsRegisteredForAutomaticUpdate)
+                    {
+                        s_Schedulers.RemoveAt(i);
+                        continue;
+                    }
 
-                scheduler.TickPrepareFromScheduler(deltaTime);
+                    scheduler.TickPrepareFromScheduler(deltaTime);
+                }
             }
         }
 
-        private static void FinalizeTick()
+        private static void XAnimationFinalizeTick()
         {
-            for (int i = s_Schedulers.Count - 1; i >= 0; i--)
+            using (s_FinalizeTickMarker.Auto())
             {
-                XAnimationDriverScheduler scheduler = s_Schedulers[i];
-                if (scheduler == null || !scheduler.IsRegisteredForAutomaticUpdate)
+                for (int i = s_Schedulers.Count - 1; i >= 0; i--)
                 {
-                    s_Schedulers.RemoveAt(i);
-                    continue;
-                }
+                    XAnimationDriverScheduler scheduler = s_Schedulers[i];
+                    if (scheduler == null || !scheduler.IsRegisteredForAutomaticUpdate)
+                    {
+                        s_Schedulers.RemoveAt(i);
+                        continue;
+                    }
 
-                scheduler.TickFinalizeFromScheduler();
+                    scheduler.TickFinalizeFromScheduler();
+                }
             }
         }
 
@@ -116,7 +125,7 @@ namespace XAnimationEngine
                 children.Insert(prepareIndex, new PlayerLoopSystem
                 {
                     type = typeof(PrepareMarker),
-                    updateDelegate = PrepareTick,
+                    updateDelegate = XAnimationPrepareTick,
                 });
 
                 int finalizeIndex = FindPreLateUpdateFinalizeIndex(children);
@@ -128,7 +137,7 @@ namespace XAnimationEngine
                 children.Insert(finalizeIndex, new PlayerLoopSystem
                 {
                     type = typeof(FinalizeMarker),
-                    updateDelegate = FinalizeTick,
+                    updateDelegate = XAnimationFinalizeTick,
                 });
                 parent.subSystemList = children.ToArray();
                 root.subSystemList[i] = parent;

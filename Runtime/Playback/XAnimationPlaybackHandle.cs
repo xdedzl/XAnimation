@@ -337,15 +337,26 @@ namespace XAnimationEngine
         internal XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options)
         {
             XAnimationCompiledState state = m_Driver.CompiledAsset.GetState(stateKey);
+            return PlayAction(state, options);
+        }
+
+        internal XAnimationActionHandle PlayAction(string channelName, string stateKey, XAnimationActionOptions options)
+        {
+            XAnimationCompiledState state = m_Driver.CompiledAsset.GetState(channelName, stateKey);
+            return PlayAction(state, options);
+        }
+
+        private XAnimationActionHandle PlayAction(XAnimationCompiledState state, XAnimationActionOptions options)
+        {
             XAnimationCompiledChannel channel = (XAnimationCompiledChannel)m_Driver.CompiledAsset.Channels[state.DefaultChannelIndex];
             string channelName = channel.Name;
             string previousStateKey = ResolvePreviousStateKey(channelName);
 
-            XAnimationPlaybackHandle playbackHandle = m_Driver.PlayState(stateKey, options.transition, options.force);
+            XAnimationPlaybackHandle playbackHandle = m_Driver.PlayState(channelName, state.Key, options.transition, options.force);
             XAnimationActionHandle actionHandle = new(
                 this,
                 m_NextActionId++,
-                stateKey,
+                state.Key,
                 channelName,
                 previousStateKey,
                 options,
@@ -518,7 +529,7 @@ namespace XAnimationEngine
                 return false;
             }
 
-            XAnimationPlaybackHandle returnHandle = m_Driver.PlayState(returnStateKey, action.Options.returnTransition);
+            XAnimationPlaybackHandle returnHandle = m_Driver.PlayState(action.ChannelName, returnStateKey, action.Options.returnTransition);
             return returnHandle != null && returnHandle.IsValid;
         }
 

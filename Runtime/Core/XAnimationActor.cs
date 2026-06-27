@@ -248,9 +248,34 @@ namespace XAnimationEngine
             return m_Driver.PlayState(stateName, transition, force);
         }
 
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName)
+        {
+            return m_Driver.PlayState(channelName, stateName);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, bool force)
+        {
+            return m_Driver.PlayState(channelName, stateName, force);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, XAnimationTransitionOptions transition)
+        {
+            return m_Driver.PlayState(channelName, stateName, transition, false);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, XAnimationTransitionOptions transition, bool force)
+        {
+            return m_Driver.PlayState(channelName, stateName, transition, force);
+        }
+
         public XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options = default)
         {
             return m_Driver.PlayAction(stateKey, options);
+        }
+
+        public XAnimationActionHandle PlayAction(string channelName, string stateKey, XAnimationActionOptions options = default)
+        {
+            return m_Driver.PlayAction(channelName, stateKey, options);
         }
 
         public void Stop(string channelName, float fadeOut = 0)
@@ -361,9 +386,24 @@ namespace XAnimationEngine
             return m_Driver.IsPlaying(stateKey, channelName);
         }
 
+        public bool HasState(string stateKey)
+        {
+            return m_Driver.HasState(stateKey);
+        }
+
+        public bool HasState(string channelName, string stateKey)
+        {
+            return m_Driver.HasState(channelName, stateKey);
+        }
+
         public float GetStateDuration(string stateKey)
         {
             return m_Driver.GetStateDuration(stateKey);
+        }
+
+        public float GetStateDuration(string channelName, string stateKey)
+        {
+            return m_Driver.GetStateDuration(channelName, stateKey);
         }
 
         public float GetClipDuration(string clipKey)
@@ -379,6 +419,11 @@ namespace XAnimationEngine
         public void PreloadState(string stateKey)
         {
             m_Driver.PreloadState(stateKey);
+        }
+
+        public void PreloadState(string channelName, string stateKey)
+        {
+            m_Driver.PreloadState(channelName, stateKey);
         }
 
         public XAnimationDebugGraphSnapshot GetDebugGraphSnapshot()

@@ -152,10 +152,13 @@ namespace XAnimationEngine
 
             XAnimationCompiledState[] compiledStates = new XAnimationCompiledState[asset.states.Length];
             Dictionary<string, int> stateIndexByKey = new(StringComparer.Ordinal);
+            Dictionary<string, int> stateIndexByScopeKey = new(StringComparer.Ordinal);
+            HashSet<string> ambiguousStateKeys = new(StringComparer.Ordinal);
             for (int i = 0; i < asset.states.Length; i++)
             {
                 XAnimationStateConfig stateConfig = asset.states[i];
                 int defaultChannelIndex = channelIndexByName[stateConfig.channelName];
+                string stateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(stateConfig.channelName, stateConfig.key);
                 compiledStates[i] = stateConfig.stateType switch
                 {
                     XAnimationStateType.Single => new XAnimationCompiledSingleState(
@@ -179,17 +182,55 @@ namespace XAnimationEngine
                         parameterIndexByName),
                     _ => throw new XAnimationException($"XAnimation state '{stateConfig.key}' has unsupported stateType '{stateConfig.stateType}'."),
                 };
-                stateIndexByKey[stateConfig.key] = i;
+                if (stateIndexByKey.ContainsKey(stateConfig.key))
+                {
+                    stateIndexByKey.Remove(stateConfig.key);
+                    ambiguousStateKeys.Add(stateConfig.key);
+                }
+                else if (!ambiguousStateKeys.Contains(stateConfig.key))
+                {
+                    stateIndexByKey.Add(stateConfig.key, i);
+                }
+
+                stateIndexByScopeKey[stateScopeKey] = i;
             }
 
             XAnimationAutoTransitionConfig[] autoTransitionConfigs = asset.autoTransitions ?? Array.Empty<XAnimationAutoTransitionConfig>();
             XAnimationCompiledAutoTransition[] compiledAutoTransitions = new XAnimationCompiledAutoTransition[autoTransitionConfigs.Length];
-            Dictionary<string, int> autoTransitionIndexByPreStateKey = new(StringComparer.Ordinal);
+            Dictionary<string, int> autoTransitionIndexByStateScopeKey = new(StringComparer.Ordinal);
             for (int i = 0; i < autoTransitionConfigs.Length; i++)
             {
                 XAnimationAutoTransitionConfig autoTransitionConfig = autoTransitionConfigs[i];
+                string channelName = autoTransitionConfig.channelName;
+                int preStateIndex;
+                if (string.IsNullOrWhiteSpace(channelName))
+                {
+                    if (ambiguousStateKeys.Contains(autoTransitionConfig.preStateKey))
+                    {
+                        throw new XAnimationException($"XAnimation auto transition preStateKey '{autoTransitionConfig.preStateKey}' is ambiguous; add channelName to the auto transition.");
+                    }
+
+                    if (!stateIndexByKey.TryGetValue(autoTransitionConfig.preStateKey, out preStateIndex))
+                    {
+                        throw new XAnimationException($"XAnimation auto transition references unknown preStateKey '{autoTransitionConfig.preStateKey}'.");
+                    }
+
+                    channelName = compiledStates[preStateIndex].Config.channelName;
+                    autoTransitionConfig.channelName = channelName;
+                }
+                else
+                {
+                    string stateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, autoTransitionConfig.preStateKey);
+                    if (!stateIndexByScopeKey.TryGetValue(stateScopeKey, out preStateIndex))
+                    {
+                        throw new XAnimationException($"XAnimation auto transition references unknown preStateKey '{autoTransitionConfig.preStateKey}' in channel '{channelName}'.");
+                    }
+                }
+
+                XAnimationCompiledState preState = compiledStates[preStateIndex];
                 compiledAutoTransitions[i] = new XAnimationCompiledAutoTransition(autoTransitionConfig);
-                autoTransitionIndexByPreStateKey[autoTransitionConfig.preStateKey] = i;
+                string autoTransitionScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, autoTransitionConfig.preStateKey);
+                autoTransitionIndexByStateScopeKey[autoTransitionScopeKey] = i;
             }
 
             XAnimationDefaultTransitionConfig[] defaultTransitionConfigs = asset.defaultTransitions ?? Array.Empty<XAnimationDefaultTransitionConfig>();
@@ -247,7 +288,9 @@ namespace XAnimationEngine
                 clipIndexByKey,
                 parameterIndexByName,
                 stateIndexByKey,
-                autoTransitionIndexByPreStateKey,
+                stateIndexByScopeKey,
+                ambiguousStateKeys,
+                autoTransitionIndexByStateScopeKey,
                 defaultTransitionIndexByPairKey,
                 loadedAssets);
         }
@@ -436,6 +479,7 @@ namespace XAnimationEngine
                     continue;
                 }
 
+                transition.channelName = transition.channelName?.Trim();
                 transition.preStateKey = transition.preStateKey?.Trim();
                 transition.nextStateKey = string.IsNullOrWhiteSpace(transition.nextStateKey)
                     ? string.Empty

@@ -23,6 +23,9 @@ namespace XAnimationEditor
             Header.AddToClassList("xanim-freeform-graph-overlay-drag-handle");
             Root.Add(Header);
 
+            FoldoutLabel = CreateFoldoutGlyph(true);
+            Header.Add(FoldoutLabel);
+
             TitleLabel = new Label("Blend Graph");
             TitleLabel.style.color = TextNormal;
             TitleLabel.style.fontSize = BodyFontSize;
@@ -55,6 +58,7 @@ namespace XAnimationEditor
         public VisualElement Root { get; }
         public VisualElement Header { get; }
         public VisualElement Content { get; }
+        public Label FoldoutLabel { get; }
         public Label TitleLabel { get; }
         public XAnimationDirectionalBlendGraphElement DirectionalGraph { get; }
         public XAnimationBlend1DGraphElement Blend1DGraph { get; }

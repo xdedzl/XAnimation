@@ -172,12 +172,12 @@ namespace XAnimationEngine
 
         public XAnimationPlaybackHandle PlayState(string stateName)
         {
-            return PlayState(stateName, null);
+            return PlayState(stateName, (XAnimationTransitionOptions)null);
         }
 
         public XAnimationPlaybackHandle PlayState(string stateName, bool force)
         {
-            return PlayState(stateName, null, force);
+            return PlayState(stateName, (XAnimationTransitionOptions)null, force);
         }
 
         public XAnimationPlaybackHandle PlayState(string stateName, XAnimationTransitionOptions transition)
@@ -192,10 +192,38 @@ namespace XAnimationEngine
             return CreatePlaybackHandle(startInfo, stateName, string.Empty);
         }
 
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName)
+        {
+            return PlayState(channelName, stateName, null);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, bool force)
+        {
+            return PlayState(channelName, stateName, null, force);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, XAnimationTransitionOptions transition)
+        {
+            return PlayState(channelName, stateName, transition, false);
+        }
+
+        public XAnimationPlaybackHandle PlayState(string channelName, string stateName, XAnimationTransitionOptions transition, bool force)
+        {
+            EnsureInitialized();
+            XAnimationPlaybackStartInfo startInfo = m_Runtime.StartStatePlayback(channelName, stateName, NormalizeTransitionOptions(transition), force);
+            return CreatePlaybackHandle(startInfo, stateName, string.Empty);
+        }
+
         public XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options = default)
         {
             EnsureInitialized();
             return m_ActionManager.PlayAction(stateKey, options);
+        }
+
+        public XAnimationActionHandle PlayAction(string channelName, string stateKey, XAnimationActionOptions options = default)
+        {
+            EnsureInitialized();
+            return m_ActionManager.PlayAction(channelName, stateKey, options);
         }
 
         public void Stop(string channelName, float fadeOut = 0)
@@ -309,10 +337,31 @@ namespace XAnimationEngine
             return m_Runtime.IsPlaying(stateKey, channelName);
         }
 
+        public bool HasState(string stateKey)
+        {
+            return m_Runtime.IsInitialized &&
+                   !string.IsNullOrWhiteSpace(stateKey) &&
+                   m_Runtime.CompiledAsset.TryGetStateIndex(stateKey, out _);
+        }
+
+        public bool HasState(string channelName, string stateKey)
+        {
+            return m_Runtime.IsInitialized &&
+                   !string.IsNullOrWhiteSpace(channelName) &&
+                   !string.IsNullOrWhiteSpace(stateKey) &&
+                   m_Runtime.CompiledAsset.TryGetStateIndex(channelName, stateKey, out _);
+        }
+
         public float GetStateDuration(string stateKey)
         {
             EnsureInitialized();
             return m_Runtime.GetStateDuration(stateKey);
+        }
+
+        public float GetStateDuration(string channelName, string stateKey)
+        {
+            EnsureInitialized();
+            return m_Runtime.GetStateDuration(channelName, stateKey);
         }
 
         public float GetClipDuration(string clipKey)
@@ -331,6 +380,12 @@ namespace XAnimationEngine
         {
             EnsureInitialized();
             m_Runtime.PreloadState(stateKey);
+        }
+
+        public void PreloadState(string channelName, string stateKey)
+        {
+            EnsureInitialized();
+            m_Runtime.PreloadState(channelName, stateKey);
         }
 
         public bool ShouldApplyNativeRootMotion()

@@ -198,6 +198,12 @@ namespace XAnimationEngine
             return m_PlaybackController.StartStatePlayback(stateKey, transition, force);
         }
 
+        internal XAnimationPlaybackStartInfo StartStatePlayback(string channelName, string stateKey, XAnimationTransitionOptions transition, bool force)
+        {
+            ThrowIfDisposed();
+            return m_PlaybackController.StartStatePlayback(channelName, stateKey, transition, force);
+        }
+
         #endregion
 
         #region Runtime Controls
@@ -265,7 +271,7 @@ namespace XAnimationEngine
             }
 
             state.nextStateKey = string.Empty;
-            if (CompiledAsset.TryGetAutoTransition(state.stateKey, out XAnimationCompiledAutoTransition transition))
+            if (CompiledAsset.TryGetAutoTransition(channelName, state.stateKey, out XAnimationCompiledAutoTransition transition))
             {
                 state.nextStateKey = transition.NextStateKey ?? string.Empty;
             }
@@ -317,6 +323,12 @@ namespace XAnimationEngine
             return CompiledAsset.GetStateDuration(stateKey);
         }
 
+        internal float GetStateDuration(string channelName, string stateKey)
+        {
+            ThrowIfDisposed();
+            return CompiledAsset.GetStateDuration(channelName, stateKey);
+        }
+
         internal float GetClipDuration(string clipKey)
         {
             ThrowIfDisposed();
@@ -333,6 +345,12 @@ namespace XAnimationEngine
         {
             ThrowIfDisposed();
             CompiledAsset.PreloadState(stateKey);
+        }
+
+        internal void PreloadState(string channelName, string stateKey)
+        {
+            ThrowIfDisposed();
+            CompiledAsset.PreloadState(channelName, stateKey);
         }
 
         #endregion

@@ -49,7 +49,7 @@ namespace XAnimationEditor
 
             m_SettingGroupButton = CreateToolbarTabButton("Setting", () => SetDebugToolbarGroup(DebugToolbarGroup.Setting));
             m_MainGroupButton = CreateToolbarTabButton("State", () => SetDebugToolbarGroup(DebugToolbarGroup.Main));
-            m_ClipGroupButton = CreateToolbarTabButton("Clips", () => SetDebugToolbarGroup(DebugToolbarGroup.Clip));
+            m_ClipTabButton = CreateToolbarTabButton("Clips", () => SetDebugToolbarGroup(DebugToolbarGroup.Clip));
             m_ChannelsGroupButton = CreateToolbarTabButton("Channels", () => SetDebugToolbarGroup(DebugToolbarGroup.Channels));
             m_ParametersGroupButton = CreateToolbarTabButton("Parameters", () => SetDebugToolbarGroup(DebugToolbarGroup.Parameters));
 
@@ -57,7 +57,7 @@ namespace XAnimationEditor
             tabContainer.Add(CreateToolbarDivider());
             tabContainer.Add(m_MainGroupButton);
             tabContainer.Add(CreateToolbarDivider());
-            tabContainer.Add(m_ClipGroupButton);
+            tabContainer.Add(m_ClipTabButton);
             tabContainer.Add(CreateToolbarDivider());
             tabContainer.Add(m_ChannelsGroupButton);
             tabContainer.Add(CreateToolbarDivider());
@@ -280,7 +280,7 @@ namespace XAnimationEditor
             if (m_SelectedDebugToolbarGroup == group &&
                 m_SettingGroupContainer != null &&
                 m_MainGroupContainer != null &&
-                m_ClipGroupContainer != null &&
+                m_ClipTabContainer != null &&
                 m_ChannelsGroupContainer != null &&
                 m_ParametersGroupContainer != null)
             {
@@ -294,20 +294,20 @@ namespace XAnimationEditor
 
         private void ApplyDebugToolbarGroup()
         {
-            if (m_SettingGroupContainer == null || m_MainGroupContainer == null || m_ClipGroupContainer == null || m_ChannelsGroupContainer == null || m_ParametersGroupContainer == null)
+            if (m_SettingGroupContainer == null || m_MainGroupContainer == null || m_ClipTabContainer == null || m_ChannelsGroupContainer == null || m_ParametersGroupContainer == null)
             {
                 return;
             }
 
             m_SettingGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Setting ? DisplayStyle.Flex : DisplayStyle.None;
             m_MainGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main ? DisplayStyle.Flex : DisplayStyle.None;
-            m_ClipGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip ? DisplayStyle.Flex : DisplayStyle.None;
+            m_ClipTabContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip ? DisplayStyle.Flex : DisplayStyle.None;
             m_ChannelsGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Channels ? DisplayStyle.Flex : DisplayStyle.None;
             m_ParametersGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters ? DisplayStyle.Flex : DisplayStyle.None;
 
             ApplyToolbarTabVisual(m_SettingGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Setting);
             ApplyToolbarTabVisual(m_MainGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main);
-            ApplyToolbarTabVisual(m_ClipGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip);
+            ApplyToolbarTabVisual(m_ClipTabButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip);
             ApplyToolbarTabVisual(m_ChannelsGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Channels);
             ApplyToolbarTabVisual(m_ParametersGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters);
         }
@@ -354,13 +354,13 @@ namespace XAnimationEditor
 
                 string clipKey = clip.Key;
                 string clipPath = clip.Config.clipPath ?? string.Empty;
-                string groupName = NormalizeClipEditorGroupName(clip.Config.editorGroupName);
-                string groupDetail = string.IsNullOrWhiteSpace(groupName) ? string.Empty : $" | group={groupName}";
+                ClipPathInfo clipPathInfo = BuildClipPathInfo(clip);
+                string displayPath = string.IsNullOrWhiteSpace(clipPathInfo.DisplayPath) ? clipKey : clipPathInfo.DisplayPath;
                 AddSearchEntry(
                     SearchEntryType.Clip,
-                    clipKey,
-                    string.IsNullOrWhiteSpace(clipPath) ? $"clip{groupDetail}" : $"{clipPath}{groupDetail}",
-                    $"{clipKey} {clipPath} {clip.Clip?.name} {groupName}",
+                    displayPath,
+                    string.IsNullOrWhiteSpace(clipPath) ? "clip" : clipPath,
+                    $"{clipKey} {displayPath} {clipPath} {clip.Clip?.name}",
                     () => FocusClipInInspector(clipKey));
 
                 for (int cueIndex = 0; cueIndex < cues.Length; cueIndex++)
@@ -375,12 +375,12 @@ namespace XAnimationEditor
                     string cueTitle = string.IsNullOrWhiteSpace(cue.eventKey)
                         ? $"{clipKey} @ {cue.time:0.###}"
                         : $"{cue.eventKey} @ {cue.time:0.###}";
-                    string cueDetail = $"{clipKey} | payload={cue.payload}";
+                    string cueDetail = $"{displayPath} | clipKey={clipKey} | payload={cue.payload}";
                     AddSearchEntry(
                         SearchEntryType.Cue,
                         cueTitle,
                         cueDetail,
-                        $"{clipKey} {cue.eventKey} {cue.payload} {cue.time:0.###}",
+                        $"{clipKey} {displayPath} {cue.eventKey} {cue.payload} {cue.time:0.###}",
                         () => FocusCueInInspector(cueKey, clipKey));
                 }
 
@@ -392,12 +392,12 @@ namespace XAnimationEditor
                     string cueTitle = string.IsNullOrWhiteSpace(cue.EventKey)
                         ? $"{clipKey} evt @ {cue.Time:0.###}"
                         : $"{cue.EventKey} @ {cue.Time:0.###}";
-                    string cueDetail = $"{clipKey} | Animation Event | payload={cue.Payload}";
+                    string cueDetail = $"{displayPath} | clipKey={clipKey} | Animation Event | payload={cue.Payload}";
                     AddSearchEntry(
                         SearchEntryType.Cue,
                         cueTitle,
                         cueDetail,
-                        $"{clipKey} {cue.EventKey} {cue.Payload} {cue.Time:0.###} animation event",
+                        $"{clipKey} {displayPath} {cue.EventKey} {cue.Payload} {cue.Time:0.###} animation event",
                         () => FocusCueInInspector(cueKey, clipKey));
                 }
             }
@@ -411,15 +411,17 @@ namespace XAnimationEditor
                     continue;
                 }
 
+                string channelName = transition.ChannelName;
                 string preStateKey = transition.PreStateKey;
                 string nextStateKey = string.IsNullOrWhiteSpace(transition.Config.nextStateKey) ? "None" : transition.Config.nextStateKey;
+                string title = $"{channelName}: {preStateKey}";
                 string detail = $"{preStateKey} -> {nextStateKey} | exit={transition.Config.exitTime:0.###} | duration={transition.Config.transitionDuration:0.###}";
                 AddSearchEntry(
                     SearchEntryType.Transition,
-                    preStateKey,
+                    title,
                     detail,
-                    $"{preStateKey} {transition.Config.nextStateKey} transition auto exit enter duration",
-                    () => FocusAutoTransitionInInspector(preStateKey));
+                    $"{channelName} {preStateKey} {transition.Config.nextStateKey} transition auto exit enter duration",
+                    () => FocusAutoTransitionInInspector(channelName, preStateKey));
             }
 
             IReadOnlyList<XAnimationCompiledDefaultTransition> defaultTransitions = m_Session.CompiledAsset.DefaultTransitions;

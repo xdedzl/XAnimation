@@ -375,13 +375,31 @@ namespace XAnimationEditor
                 return;
             }
 
+            if (m_Session?.CompiledAsset != null && m_Session.CompiledAsset.IsStateKeyAmbiguous(stateKey))
+            {
+                SetStatus($"State '{stateKey}' 存在于多个 channel，无法通过裸 stateKey 定位。", true);
+                return;
+            }
+
+            string channelName = FindStateChannelName(stateKey);
+            FocusStateInInspector(channelName, stateKey);
+        }
+
+        private void FocusStateInInspector(string channelName, string stateKey)
+        {
+            if (string.IsNullOrWhiteSpace(stateKey))
+            {
+                return;
+            }
+
             SetDebugToolbarGroup(DebugToolbarGroup.Main);
             m_StatesSectionExpanded = true;
             m_StatesCard?.SetExpanded?.Invoke(true);
-            ExpandStateGroupForState(stateKey);
+            ExpandStateGroupForState(channelName, stateKey);
             RebuildStateList();
             RefreshStatePlayingStates();
-            if (m_StateRowMap.TryGetValue(stateKey, out VisualElement stateRow))
+            string stateUiKey = string.IsNullOrWhiteSpace(channelName) ? ResolveStateUiKey(stateKey) : BuildStateUiKey(channelName, stateKey);
+            if (m_StateRowMap.TryGetValue(stateUiKey, out VisualElement stateRow))
             {
                 ScheduleInspectorScrollIntoView(stateRow);
                 FlashElement(stateRow);
@@ -398,7 +416,7 @@ namespace XAnimationEditor
             SetDebugToolbarGroup(DebugToolbarGroup.Clip);
             m_ClipsSectionExpanded = true;
             m_ClipsCard?.SetExpanded?.Invoke(true);
-            ExpandClipGroupForClip(clipKey);
+            ExpandClipPathForClip(clipKey);
             RebuildClipList();
             RefreshClipPlayingStates();
             if (m_ClipRowMap.TryGetValue(clipKey, out VisualElement clipRow))
@@ -408,19 +426,21 @@ namespace XAnimationEditor
             }
         }
 
-        private void FocusAutoTransitionInInspector(string preStateKey)
+        private void FocusAutoTransitionInInspector(string channelName, string preStateKey)
         {
-            if (string.IsNullOrWhiteSpace(preStateKey))
+            if (string.IsNullOrWhiteSpace(channelName) || string.IsNullOrWhiteSpace(preStateKey))
             {
                 return;
             }
 
+            string stateUiKey = BuildStateUiKey(channelName, preStateKey);
             SetDebugToolbarGroup(DebugToolbarGroup.Main);
             m_AutoTransitionSectionExpanded = true;
             m_AutoTransitionCard?.SetExpanded?.Invoke(true);
-            SetAutoTransitionExpanded(preStateKey, true);
+            SetAutoTransitionChannelCollapsed(channelName, false);
+            SetAutoTransitionExpanded(stateUiKey, true);
             RebuildAutoTransitionEditor();
-            if (m_AutoTransitionRowMap.TryGetValue(preStateKey, out VisualElement row))
+            if (m_AutoTransitionRowMap.TryGetValue(stateUiKey, out VisualElement row))
             {
                 ScheduleInspectorScrollIntoView(row);
                 FlashElement(row);
@@ -496,6 +516,7 @@ namespace XAnimationEditor
             m_ClipsCard?.SetExpanded?.Invoke(true);
             if (!string.IsNullOrWhiteSpace(clipKey))
             {
+                ExpandClipPathForClip(clipKey);
                 m_ExpandedClipKeys.Add(clipKey);
             }
 
@@ -616,6 +637,7 @@ namespace XAnimationEditor
             m_ChannelStateLabels.Clear();
             m_DefaultTransitionsEditorView?.Clear();
             m_DefaultTransitionRowMap.Clear();
+            m_CollapsedDefaultTransitionChannelKeys.Clear();
             m_CollapsedDefaultTransitionIndices.Clear();
             m_PendingClipRenameKey = null;
             m_PendingChannelRenameKey = null;

@@ -340,7 +340,7 @@ namespace XAnimationEditor
             }, actions);
             m_ActionDebugCard.Root.style.marginTop = 4;
 
-            VisualElement mainFields = CreateSubBox();
+            VisualElement mainFields = m_ActionDebugCard.Content;
             m_ActionStateField = new DropdownField();
             m_ActionStateField.tooltip = "PlayAction 目标 state。Action 只接受已有 state key。";
             ApplyDropdownFieldStyle(m_ActionStateField);
@@ -419,7 +419,6 @@ namespace XAnimationEditor
             m_ActionStatusLabel.style.color = TextMuted;
             mainFields.Add(m_ActionStatusLabel);
 
-            m_ActionDebugCard.Content.Add(mainFields);
             return m_ActionDebugCard;
         }
 

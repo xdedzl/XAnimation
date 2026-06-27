@@ -123,11 +123,25 @@ namespace XAnimationEditor
             m_Driver.PlayState(stateKey, transition);
         }
 
+        public void PlayState(string channelName, string stateKey, XAnimationTransitionOptions transition = default)
+        {
+            EnsureLoaded();
+            m_Driver.SetPaused(false);
+            m_Driver.PlayState(channelName, stateKey, transition);
+        }
+
         public XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options = default)
         {
             EnsureLoaded();
             m_Driver.SetPaused(false);
             return m_Driver.PlayAction(stateKey, options);
+        }
+
+        public XAnimationActionHandle PlayAction(string channelName, string stateKey, XAnimationActionOptions options = default)
+        {
+            EnsureLoaded();
+            m_Driver.SetPaused(false);
+            return m_Driver.PlayAction(channelName, stateKey, options);
         }
 
         public void PlayClip(string clipKey, string channelName, XAnimationTransitionOptions transition = default)

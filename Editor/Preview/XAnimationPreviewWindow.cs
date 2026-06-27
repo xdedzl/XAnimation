@@ -91,17 +91,44 @@ namespace XAnimationEditor
             public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
-        private sealed class ClipGroupBucket
+        private sealed class ClipPathNode
         {
-            public ClipGroupBucket(string groupName)
+            public ClipPathNode(string name, string fullPath)
             {
-                GroupName = groupName ?? string.Empty;
-                Clips = new List<XAnimationCompiledClip>();
+                Name = name ?? string.Empty;
+                FullPath = fullPath ?? string.Empty;
+                Children = new List<ClipPathNode>();
+                Clips = new List<ClipPathInfo>();
             }
 
-            public string GroupName { get; }
-            public List<XAnimationCompiledClip> Clips { get; }
-            public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
+            public string Name { get; }
+            public string FullPath { get; }
+            public List<ClipPathNode> Children { get; }
+            public List<ClipPathInfo> Clips { get; }
+        }
+
+        private readonly struct ClipPathInfo
+        {
+            public ClipPathInfo(
+                XAnimationCompiledClip clip,
+                string fullPath,
+                string parentPath,
+                string leafName,
+                string displayPath)
+            {
+                Clip = clip;
+                FullPath = fullPath ?? string.Empty;
+                ParentPath = parentPath ?? string.Empty;
+                LeafName = leafName ?? string.Empty;
+                DisplayPath = displayPath ?? string.Empty;
+            }
+
+            public XAnimationCompiledClip Clip { get; }
+            public string FullPath { get; }
+            public string ParentPath { get; }
+            public string LeafName { get; }
+            public string DisplayPath { get; }
+            public string ClipKey => Clip?.Key ?? string.Empty;
         }
 
         private readonly struct StateSelectionItem
@@ -121,20 +148,28 @@ namespace XAnimationEditor
 
         private readonly struct ClipSelectionItem
         {
-            public ClipSelectionItem(string clipKey, string groupName)
+            public ClipSelectionItem(string clipKey, string displayPath, string parentPath)
             {
                 ClipKey = clipKey ?? string.Empty;
-                GroupName = NormalizeClipEditorGroupName(groupName);
+                DisplayPath = displayPath ?? ClipKey;
+                ParentPath = parentPath ?? string.Empty;
             }
 
             public string ClipKey { get; }
-            public string GroupName { get; }
-            public bool IsGrouped => !string.IsNullOrWhiteSpace(GroupName);
+            public string DisplayPath { get; }
+            public string ParentPath { get; }
         }
 
         private readonly struct SearchableSelectionItem
         {
-            public SearchableSelectionItem(string value, string title, string detail, string searchText, string groupKey = null, bool isGroup = false)
+            public SearchableSelectionItem(
+                string value,
+                string title,
+                string detail,
+                string searchText,
+                string groupKey = null,
+                bool isGroup = false,
+                bool isEnabled = true)
             {
                 Value = value ?? string.Empty;
                 Title = title ?? string.Empty;
@@ -142,6 +177,7 @@ namespace XAnimationEditor
                 SearchText = searchText ?? string.Empty;
                 GroupKey = groupKey ?? string.Empty;
                 IsGroup = isGroup;
+                IsEnabled = isEnabled;
             }
 
             public string Value { get; }
@@ -150,6 +186,7 @@ namespace XAnimationEditor
             public string SearchText { get; }
             public string GroupKey { get; }
             public bool IsGroup { get; }
+            public bool IsEnabled { get; }
         }
 
         private readonly struct DefaultTransitionPairEntry
@@ -272,7 +309,7 @@ namespace XAnimationEditor
         private Button m_AddDefaultTransitionButton;
         private Button m_SettingGroupButton;
         private Button m_MainGroupButton;
-        private Button m_ClipGroupButton;
+        private Button m_ClipTabButton;
         private Button m_ChannelsGroupButton;
         private Button m_ParametersGroupButton;
         private Button m_PreviewSceneTabButton;
@@ -293,7 +330,7 @@ namespace XAnimationEditor
         private VisualElement m_DefaultTransitionsEditorView;
         private VisualElement m_PreviewSceneTabView;
         private VisualElement m_DefaultTransitionTabView;
-        private XAnimationEditorSelectionField m_DefaultTransitionEditingStateField;
+        private Button m_DefaultTransitionEditingStateButton;
         private XAnimationDefaultTransitionGraphElement m_DefaultTransitionGraphView;
         private Label m_DefaultTransitionGraphZoomLabel;
         private VisualElement m_DefaultTransitionDetailsView;
@@ -303,7 +340,7 @@ namespace XAnimationEditor
         private VisualElement m_BaseAssetRow;
         private VisualElement m_SettingGroupContainer;
         private VisualElement m_MainGroupContainer;
-        private VisualElement m_ClipGroupContainer;
+        private VisualElement m_ClipTabContainer;
         private VisualElement m_ChannelsGroupContainer;
         private VisualElement m_ParametersGroupContainer;
         private readonly HashSet<string> m_ExpandedStateKeys = new(StringComparer.Ordinal);
@@ -311,6 +348,8 @@ namespace XAnimationEditor
         private readonly HashSet<string> m_CollapsedBlendSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedDirectionalSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedAutoTransitionKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_CollapsedAutoTransitionChannelKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_CollapsedDefaultTransitionChannelKeys = new(StringComparer.Ordinal);
         private readonly HashSet<int> m_CollapsedDefaultTransitionIndices = new();
         private readonly Dictionary<string, EditableLabel> m_StateLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_StateGroupLabelMap = new(StringComparer.Ordinal);
@@ -323,11 +362,10 @@ namespace XAnimationEditor
         private readonly Dictionary<string, EditableLabel> m_ParameterLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ParameterRowMap = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedClipKeys = new(StringComparer.Ordinal);
-        private readonly HashSet<string> m_CollapsedClipGroupKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_CollapsedClipPathKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_ClipLabelMap = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, EditableLabel> m_ClipGroupLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipRowMap = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, VisualElement> m_ClipGroupRowMap = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, VisualElement> m_ClipPathRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, ClipRowVisualState> m_ClipVisualStateMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, RowVisualState> m_BlendSampleRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_ClipButtonMap = new(StringComparer.Ordinal);
@@ -361,9 +399,9 @@ namespace XAnimationEditor
         private string m_PlayTargetChannelName;
         private string m_LastInteractedFreeformStateKey;
         private string m_CurrentFreeformGraphStateKey;
-        private string m_SelectedAutoTransitionStateKey;
+        private string m_SelectedAutoTransitionStateUiKey;
         private int m_SelectedDefaultTransitionIndex = -1;
-        private string m_DefaultTransitionEditingStateKey;
+        private string m_DefaultTransitionEditingStateUiKey;
         private int m_DefaultTransitionTabTransitionIndex = -1;
         private int m_DefaultTransitionTabPairIndex = -1;
         private bool m_DefaultTransitionTabPairWaitingSwitch;
@@ -408,6 +446,7 @@ namespace XAnimationEditor
         private VisualElement m_FreeformBlendGraphOverlayContent;
         private XAnimationDirectionalBlendGraphElement m_FreeformBlendGraphElement;
         private XAnimationBlend1DGraphElement m_Blend1DGraphElement;
+        private Label m_FreeformBlendGraphFoldoutLabel;
         private Label m_FreeformBlendGraphTitleLabel;
         private Label m_FreeformBlendGraphHintLabel;
         private VisualElement m_PlaybackOverlayCard;
@@ -933,6 +972,7 @@ namespace XAnimationEditor
                 if (string.IsNullOrWhiteSpace(query))
                 {
                     string currentGroup = m_GroupStack.Count > 0 ? m_GroupStack.Peek() : string.Empty;
+                    List<string> currentSegments = SplitClipPathSegments(currentGroup);
                     if (m_GroupStack.Count > 0)
                     {
                         m_FilteredItems.Add(new SearchableSelectionItem(string.Empty, "..", "Back", "back previous", isGroup: true));
@@ -942,21 +982,29 @@ namespace XAnimationEditor
                     for (int i = 0; i < m_AllItems.Count; i++)
                     {
                         SearchableSelectionItem item = m_AllItems[i];
-                        if (m_GroupStack.Count == 0)
+                        if (item.IsGroup)
                         {
-                            if (string.IsNullOrWhiteSpace(item.GroupKey))
-                            {
-                                m_FilteredItems.Add(item);
-                            }
-                            else if (addedGroups.Add(item.GroupKey))
-                            {
-                                m_FilteredItems.Add(new SearchableSelectionItem(string.Empty, item.GroupKey, "Open group", item.GroupKey, item.GroupKey, true));
-                            }
+                            continue;
                         }
-                        else if (string.Equals(item.GroupKey, currentGroup, StringComparison.Ordinal))
+
+                        List<string> itemSegments = SplitClipPathSegments(item.Title);
+                        if (itemSegments.Count == 0 || !SelectionPathStartsWith(itemSegments, currentSegments))
                         {
-                            string childTitle = BuildGroupedChildTitle(item);
-                            m_FilteredItems.Add(new SearchableSelectionItem(item.Value, childTitle, item.Detail, item.SearchText, item.GroupKey, item.IsGroup));
+                            continue;
+                        }
+
+                        int nextIndex = currentSegments.Count;
+                        if (itemSegments.Count == nextIndex + 1)
+                        {
+                            string childTitle = itemSegments[nextIndex];
+                            m_FilteredItems.Add(new SearchableSelectionItem(item.Value, childTitle, item.Detail, item.SearchText, item.GroupKey, item.IsGroup, item.IsEnabled));
+                            continue;
+                        }
+
+                        string childGroupPath = BuildSelectionPath(itemSegments, nextIndex + 1);
+                        if (addedGroups.Add(childGroupPath))
+                        {
+                            m_FilteredItems.Add(new SearchableSelectionItem(string.Empty, itemSegments[nextIndex], "Open group", childGroupPath, childGroupPath, true));
                         }
                     }
                 }
@@ -994,16 +1042,20 @@ namespace XAnimationEditor
             {
                 Rect rowRect = EditorGUILayout.GetControlRect(false, string.IsNullOrWhiteSpace(item.Detail) ? 22f : 36f);
                 bool selected = index == m_SelectedIndex;
+                bool itemEnabled = item.IsGroup || item.IsEnabled;
                 if (selected)
                 {
-                    EditorGUI.DrawRect(rowRect, new Color(0.24f, 0.38f, 0.62f, 0.9f));
+                    Color selectedColor = itemEnabled
+                        ? new Color(0.24f, 0.38f, 0.62f, 0.9f)
+                        : new Color(0.30f, 0.30f, 0.32f, 0.9f);
+                    EditorGUI.DrawRect(rowRect, selectedColor);
                 }
                 else if (UEvent.current.type == EventType.Repaint && index % 2 == 0)
                 {
                     EditorGUI.DrawRect(rowRect, new Color(0.20f, 0.20f, 0.22f, 0.35f));
                 }
 
-                if (GUI.Button(rowRect, GUIContent.none, GUIStyle.none))
+                if (itemEnabled && GUI.Button(rowRect, GUIContent.none, GUIStyle.none))
                 {
                     ActivateItem(item);
                     return;
@@ -1011,12 +1063,20 @@ namespace XAnimationEditor
 
                 string displayTitle = item.IsGroup ? $"{item.Title}  >" : item.Title;
                 Rect titleRect = new(rowRect.x + 8f, rowRect.y + 3f, rowRect.width - 16f, 16f);
-                EditorGUI.LabelField(titleRect, displayTitle, EditorStyles.boldLabel);
+                GUIStyle titleStyle = itemEnabled
+                    ? EditorStyles.boldLabel
+                    : new GUIStyle(EditorStyles.boldLabel)
+                    {
+                        normal = { textColor = new Color(0.48f, 0.48f, 0.50f, 1f) }
+                    };
+                EditorGUI.LabelField(titleRect, displayTitle, titleStyle);
                 if (!string.IsNullOrWhiteSpace(item.Detail))
                 {
                     Rect detailRect = new(rowRect.x + 8f, rowRect.y + 18f, rowRect.width - 16f, 14f);
                     GUIStyle detailStyle = new(EditorStyles.miniLabel);
-                    detailStyle.normal.textColor = new Color(0.72f, 0.72f, 0.74f, 1f);
+                    detailStyle.normal.textColor = itemEnabled
+                        ? new Color(0.72f, 0.72f, 0.74f, 1f)
+                        : new Color(0.46f, 0.46f, 0.48f, 1f);
                     EditorGUI.LabelField(detailRect, item.Detail, detailStyle);
                 }
             }
@@ -1047,23 +1107,47 @@ namespace XAnimationEditor
                     return;
                 }
 
+                if (!item.IsEnabled)
+                {
+                    return;
+                }
+
                 SelectItem(item.Value);
             }
 
-            private static string BuildGroupedChildTitle(SearchableSelectionItem item)
+            private static bool SelectionPathStartsWith(List<string> itemSegments, List<string> prefixSegments)
             {
-                if (string.IsNullOrWhiteSpace(item.Title))
+                if (itemSegments == null || prefixSegments == null || itemSegments.Count < prefixSegments.Count)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < prefixSegments.Count; i++)
+                {
+                    if (!string.Equals(itemSegments[i], prefixSegments[i], StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            private static string BuildSelectionPath(List<string> segments, int count)
+            {
+                if (segments == null || count <= 0)
                 {
                     return string.Empty;
                 }
 
-                int slashIndex = item.Title.LastIndexOf('/');
-                if (slashIndex >= 0 && slashIndex + 1 < item.Title.Length)
+                count = Mathf.Min(count, segments.Count);
+                List<string> selectedSegments = new(count);
+                for (int i = 0; i < count; i++)
                 {
-                    return item.Title[(slashIndex + 1)..].Trim();
+                    selectedSegments.Add(segments[i]);
                 }
 
-                return item.Title;
+                return string.Join("/", selectedSegments);
             }
         }
 
@@ -1096,6 +1180,19 @@ namespace XAnimationEditor
         {
             XAnimationPreviewWindow window = ShowWindow(animationAsset, prefab, autoLoad: true);
             window.SetPendingPlaybackRequest(new PendingPlaybackRequest(stateKey, null, null, speed, CloneTransitionOptions(transition)));
+            return window;
+        }
+
+        public static XAnimationPreviewWindow ShowWindowAndPlayState(
+            TextAsset animationAsset,
+            GameObject prefab,
+            string channelName,
+            string stateKey,
+            float speed,
+            XAnimationTransitionOptions transition = null)
+        {
+            XAnimationPreviewWindow window = ShowWindow(animationAsset, prefab, autoLoad: true);
+            window.SetPendingPlaybackRequest(new PendingPlaybackRequest(stateKey, null, channelName, speed, CloneTransitionOptions(transition)));
             return window;
         }
 

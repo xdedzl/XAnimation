@@ -16,10 +16,17 @@ namespace XAnimationEngine
             ValidateChannels(asset.channels);
             ValidateClips(asset.channels, asset.clips);
             ValidateParameters(asset.parameters);
-            Dictionary<string, XAnimationStateConfig> stateMap = ValidateStates(asset.channels, asset.clips, asset.parameters, asset.states);
-            ValidateAutoTransitions(asset.autoTransitions, stateMap);
-            ValidateDefaultTransitions(asset.channels, asset.defaultTransitions, stateMap);
+            StateValidationResult stateValidation = ValidateStates(asset.channels, asset.clips, asset.parameters, asset.states);
+            ValidateAutoTransitions(asset.autoTransitions, stateValidation);
+            ValidateDefaultTransitions(asset.channels, asset.defaultTransitions, stateValidation.StateByScopeKey);
             ValidateCues(asset.clips, asset.cues);
+        }
+
+        private sealed class StateValidationResult
+        {
+            internal readonly Dictionary<string, XAnimationStateConfig> StateByKey = new(StringComparer.Ordinal);
+            internal readonly Dictionary<string, XAnimationStateConfig> StateByScopeKey = new(StringComparer.Ordinal);
+            internal readonly HashSet<string> AmbiguousStateKeys = new(StringComparer.Ordinal);
         }
 
         private static void ValidateChannels(IReadOnlyList<XAnimationChannelConfig> channels)
@@ -179,7 +186,7 @@ namespace XAnimationEngine
             }
         }
 
-        private static Dictionary<string, XAnimationStateConfig> ValidateStates(
+        private static StateValidationResult ValidateStates(
             IReadOnlyList<XAnimationChannelConfig> channels,
             IReadOnlyList<XAnimationClipConfig> clips,
             IReadOnlyList<XAnimationParameterConfig> parameters,
@@ -211,7 +218,7 @@ namespace XAnimationEngine
                 }
             }
 
-            Dictionary<string, XAnimationStateConfig> stateMap = new(StringComparer.Ordinal);
+            StateValidationResult result = new();
             foreach (XAnimationStateConfig state in states)
             {
                 if (state == null)
@@ -224,13 +231,6 @@ namespace XAnimationEngine
                     throw new XAnimationException("XAnimation state key cannot be empty.");
                 }
 
-                if (stateMap.ContainsKey(state.key))
-                {
-                    throw new XAnimationException($"XAnimation state '{state.key}' is duplicated.");
-                }
-
-                stateMap.Add(state.key, state);
-
                 if (string.IsNullOrWhiteSpace(state.channelName))
                 {
                     throw new XAnimationException($"XAnimation state '{state.key}' has an empty channelName.");
@@ -239,6 +239,23 @@ namespace XAnimationEngine
                 if (!channelMap.TryGetValue(state.channelName, out XAnimationChannelConfig channel))
                 {
                     throw new XAnimationException($"XAnimation state '{state.key}' references unknown channel '{state.channelName}'.");
+                }
+
+                string stateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(state.channelName, state.key);
+                if (result.StateByScopeKey.ContainsKey(stateScopeKey))
+                {
+                    throw new XAnimationException($"XAnimation state '{state.key}' is duplicated in channel '{state.channelName}'.");
+                }
+
+                result.StateByScopeKey.Add(stateScopeKey, state);
+                if (result.StateByKey.ContainsKey(state.key))
+                {
+                    result.StateByKey.Remove(state.key);
+                    result.AmbiguousStateKeys.Add(state.key);
+                }
+                else if (!result.AmbiguousStateKeys.Contains(state.key))
+                {
+                    result.StateByKey.Add(state.key, state);
                 }
 
                 switch (state.stateType)
@@ -264,11 +281,11 @@ namespace XAnimationEngine
             {
                 if (state != null)
                 {
-                    ValidateStateTransitionGate(state, stateMap);
+                    ValidateStateTransitionGate(state, result.StateByScopeKey);
                 }
             }
 
-            return stateMap;
+            return result;
         }
 
         private static void ValidateSingleState(
@@ -492,16 +509,17 @@ namespace XAnimationEngine
 
         private static void ValidateStateTransitionGate(
             XAnimationStateConfig state,
-            IReadOnlyDictionary<string, XAnimationStateConfig> stateMap)
+            IReadOnlyDictionary<string, XAnimationStateConfig> stateByScopeKey)
         {
-            ValidateStateKeyList(state.key, state.allowedNextStateKeys, stateMap, "allowedNextStateKeys");
-            ValidateStateKeyList(state.key, state.allowedPreviousStateKeys, stateMap, "allowedPreviousStateKeys");
+            ValidateStateKeyList(state.channelName, state.key, state.allowedNextStateKeys, stateByScopeKey, "allowedNextStateKeys");
+            ValidateStateKeyList(state.channelName, state.key, state.allowedPreviousStateKeys, stateByScopeKey, "allowedPreviousStateKeys");
         }
 
         private static void ValidateStateKeyList(
+            string channelName,
             string stateKey,
             IReadOnlyList<string> values,
-            IReadOnlyDictionary<string, XAnimationStateConfig> stateMap,
+            IReadOnlyDictionary<string, XAnimationStateConfig> stateByScopeKey,
             string fieldName)
         {
             if (values == null)
@@ -522,23 +540,24 @@ namespace XAnimationEngine
                     throw new XAnimationException($"XAnimation state '{stateKey}' cannot include itself in {fieldName}.");
                 }
 
-                if (!stateMap.ContainsKey(candidate))
+                string candidateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, candidate);
+                if (!stateByScopeKey.ContainsKey(candidateScopeKey))
                 {
-                    throw new XAnimationException($"XAnimation state '{stateKey}' {fieldName} references unknown state '{candidate}'.");
+                    throw new XAnimationException($"XAnimation state '{stateKey}' {fieldName} references unknown state '{candidate}' in channel '{channelName}'.");
                 }
             }
         }
 
         private static void ValidateAutoTransitions(
             IReadOnlyList<XAnimationAutoTransitionConfig> autoTransitions,
-            IReadOnlyDictionary<string, XAnimationStateConfig> stateMap)
+            StateValidationResult stateValidation)
         {
             if (autoTransitions == null)
             {
                 return;
             }
 
-            HashSet<string> preStateKeys = new(StringComparer.Ordinal);
+            HashSet<string> preStateScopeKeys = new(StringComparer.Ordinal);
             foreach (XAnimationAutoTransitionConfig transition in autoTransitions)
             {
                 if (transition == null)
@@ -551,16 +570,14 @@ namespace XAnimationEngine
                     throw new XAnimationException("XAnimation auto transition preStateKey cannot be empty.");
                 }
 
-                if (!preStateKeys.Add(transition.preStateKey))
+                string channelName = ResolveAutoTransitionChannelName(transition, stateValidation);
+                string preStateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, transition.preStateKey);
+                if (!preStateScopeKeys.Add(preStateScopeKey))
                 {
-                    throw new XAnimationException($"XAnimation auto transition preState '{transition.preStateKey}' is duplicated.");
+                    throw new XAnimationException($"XAnimation auto transition preState '{transition.preStateKey}' in channel '{channelName}' is duplicated.");
                 }
 
-                if (!stateMap.TryGetValue(transition.preStateKey, out XAnimationStateConfig preState))
-                {
-                    throw new XAnimationException($"XAnimation auto transition references unknown preStateKey '{transition.preStateKey}'.");
-                }
-
+                XAnimationStateConfig preState = stateValidation.StateByScopeKey[preStateScopeKey];
                 if (preState.loop)
                 {
                     throw new XAnimationException($"XAnimation state '{preState.key}' is looping and cannot configure auto transition.");
@@ -586,17 +603,47 @@ namespace XAnimationEngine
                     throw new XAnimationException($"XAnimation state '{transition.preStateKey}' cannot auto-transition to itself.");
                 }
 
-                if (!stateMap.ContainsKey(transition.nextStateKey))
+                string nextStateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, transition.nextStateKey);
+                if (!stateValidation.StateByScopeKey.ContainsKey(nextStateScopeKey))
                 {
-                    throw new XAnimationException($"XAnimation auto transition '{transition.preStateKey}' references unknown nextStateKey '{transition.nextStateKey}'.");
+                    throw new XAnimationException($"XAnimation auto transition '{transition.preStateKey}' references unknown nextStateKey '{transition.nextStateKey}' in channel '{channelName}'.");
                 }
             }
+        }
+
+        private static string ResolveAutoTransitionChannelName(
+            XAnimationAutoTransitionConfig transition,
+            StateValidationResult stateValidation)
+        {
+            string channelName = transition.channelName?.Trim();
+            if (string.IsNullOrWhiteSpace(channelName))
+            {
+                if (stateValidation.AmbiguousStateKeys.Contains(transition.preStateKey))
+                {
+                    throw new XAnimationException($"XAnimation auto transition preStateKey '{transition.preStateKey}' is ambiguous; add channelName to the auto transition.");
+                }
+
+                if (!stateValidation.StateByKey.TryGetValue(transition.preStateKey, out XAnimationStateConfig preState))
+                {
+                    throw new XAnimationException($"XAnimation auto transition references unknown preStateKey '{transition.preStateKey}'.");
+                }
+
+                return preState.channelName;
+            }
+
+            string preStateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, transition.preStateKey);
+            if (!stateValidation.StateByScopeKey.ContainsKey(preStateScopeKey))
+            {
+                throw new XAnimationException($"XAnimation auto transition references unknown preStateKey '{transition.preStateKey}' in channel '{channelName}'.");
+            }
+
+            return channelName;
         }
 
         private static void ValidateDefaultTransitions(
             IReadOnlyList<XAnimationChannelConfig> channels,
             IReadOnlyList<XAnimationDefaultTransitionConfig> defaultTransitions,
-            IReadOnlyDictionary<string, XAnimationStateConfig> stateMap)
+            IReadOnlyDictionary<string, XAnimationStateConfig> stateByScopeKey)
         {
             if (defaultTransitions == null)
             {
@@ -660,14 +707,16 @@ namespace XAnimationEngine
                     throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' cannot transition state '{transition.preStateKey}' to itself.");
                 }
 
-                if (!stateMap.ContainsKey(transition.preStateKey))
+                string preStateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(transition.channelName, transition.preStateKey);
+                if (!stateByScopeKey.ContainsKey(preStateScopeKey))
                 {
-                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown preStateKey '{transition.preStateKey}'.");
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown preStateKey '{transition.preStateKey}' in channel '{transition.channelName}'.");
                 }
 
-                if (!stateMap.ContainsKey(transition.nextStateKey))
+                string nextStateScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(transition.channelName, transition.nextStateKey);
+                if (!stateByScopeKey.ContainsKey(nextStateScopeKey))
                 {
-                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown nextStateKey '{transition.nextStateKey}'.");
+                    throw new XAnimationException($"XAnimation default transition '{GetDefaultTransitionName(transition, transitionIndex)}' references unknown nextStateKey '{transition.nextStateKey}' in channel '{transition.channelName}'.");
                 }
 
                 string pairKey = XAnimationCompiledAsset.BuildTransitionPairKey(transition.channelName, transition.preStateKey, transition.nextStateKey);

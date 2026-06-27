@@ -33,17 +33,20 @@ namespace XAnimationEditor
             public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
-        private sealed class ClipGroupBucket
+        private sealed class ClipPathNode
         {
-            public ClipGroupBucket(string groupName)
+            public ClipPathNode(string name, string fullPath)
             {
-                GroupName = groupName ?? string.Empty;
+                Name = name ?? string.Empty;
+                FullPath = fullPath ?? string.Empty;
+                Children = new List<ClipPathNode>();
                 Clips = new List<XAnimationClipConfig>();
             }
 
-            public string GroupName { get; }
+            public string Name { get; }
+            public string FullPath { get; }
+            public List<ClipPathNode> Children { get; }
             public List<XAnimationClipConfig> Clips { get; }
-            public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
         private sealed class ChannelNameOption
@@ -61,6 +64,7 @@ namespace XAnimationEditor
         private readonly Dictionary<string, VisualElement> m_StateRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_StateButtonMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, RowVisualState> m_StateVisualStateMap = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_CollapsedStateChannelKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedStateGroupKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_ClipButtonMap = new(StringComparer.Ordinal);
@@ -364,7 +368,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            List<ClipGroupBucket> buckets = new();
+            ClipPathNode root = new(string.Empty, string.Empty);
             for (int i = 0; i < asset.clips.Length; i++)
             {
                 XAnimationClipConfig clip = asset.clips[i];
@@ -373,63 +377,95 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                string groupName = NormalizeClipEditorGroupName(clip.editorGroupName);
-                ClipGroupBucket bucket = FindClipGroupBucket(buckets, groupName);
-                if (bucket == null)
-                {
-                    bucket = new ClipGroupBucket(groupName);
-                    buckets.Add(bucket);
-                }
-
-                bucket.Clips.Add(clip);
+                AddClipPathNode(root, clip);
             }
 
             int rowIndex = 0;
-            for (int i = 0; i < buckets.Count; i++)
+            for (int i = 0; i < root.Clips.Count; i++)
             {
-                ClipGroupBucket bucket = buckets[i];
-                if (bucket == null)
-                {
-                    continue;
-                }
+                m_ClipsListView.Add(CreateClipRow(root.Clips[i], rowIndex++));
+            }
 
-                if (bucket.IsUngrouped)
-                {
-                    for (int clipIndex = 0; clipIndex < bucket.Clips.Count; clipIndex++)
-                    {
-                        m_ClipsListView.Add(CreateClipRow(bucket.Clips[clipIndex], rowIndex++));
-                    }
-
-                    continue;
-                }
-
-                m_ClipsListView.Add(CreateClipEditorGroup(bucket, ref rowIndex));
+            for (int i = 0; i < root.Children.Count; i++)
+            {
+                m_ClipsListView.Add(CreateClipPathGroup(root.Children[i], ref rowIndex));
             }
         }
 
-        private VisualElement CreateClipEditorGroup(ClipGroupBucket bucket, ref int rowIndex)
+        private static void AddClipPathNode(ClipPathNode root, XAnimationClipConfig clip)
+        {
+            List<string> segments = SplitClipPathSegments(clip.key);
+            if (segments.Count <= 1)
+            {
+                root.Clips.Add(clip);
+                return;
+            }
+
+            ClipPathNode current = root;
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count - 1; i++)
+            {
+                currentPath = string.IsNullOrWhiteSpace(currentPath)
+                    ? segments[i]
+                    : $"{currentPath}/{segments[i]}";
+                ClipPathNode child = FindClipPathChild(current, segments[i], currentPath);
+                if (child == null)
+                {
+                    child = new ClipPathNode(segments[i], currentPath);
+                    current.Children.Add(child);
+                }
+
+                current = child;
+            }
+
+            current.Clips.Add(clip);
+        }
+
+        private static ClipPathNode FindClipPathChild(ClipPathNode node, string name, string fullPath)
+        {
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                ClipPathNode child = node.Children[i];
+                if (child != null &&
+                    string.Equals(child.Name, name, StringComparison.Ordinal) &&
+                    string.Equals(child.FullPath, fullPath, StringComparison.Ordinal))
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private VisualElement CreateClipPathGroup(ClipPathNode node, ref int rowIndex)
         {
             VisualElement group = CreateNestedListGroup();
-            string groupKey = BuildClipGroupKey(bucket.GroupName);
+            string groupKey = BuildClipPathKey(node.FullPath);
 
             VisualElement header = CreateListHeader();
-            Label foldoutLabel = CreateFoldoutGlyph(!IsClipGroupCollapsed(groupKey));
+            Label foldoutLabel = CreateFoldoutGlyph(!IsClipPathCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            Label title = CreateBoldLabel(bucket.GroupName);
+            Label title = CreateBoldLabel(node.Name);
+            title.tooltip = FormatClipDisplayPath(node.FullPath);
             title.style.flexGrow = 1;
             title.style.minWidth = 0;
             header.Add(title);
 
-            Label info = CreateSmallInfoLabel($"{bucket.Clips.Count} clips");
+            Label info = CreateSmallInfoLabel($"{CountClipPathNodeClips(node)} clips");
             header.Add(info);
             group.Add(header);
 
             VisualElement content = new VisualElement();
-            content.style.display = IsClipGroupCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
-            for (int i = 0; i < bucket.Clips.Count; i++)
+            content.style.display = IsClipPathCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                content.Add(CreateClipRow(bucket.Clips[i], rowIndex++));
+                content.Add(CreateClipPathGroup(node.Children[i], ref rowIndex));
+            }
+
+            for (int i = 0; i < node.Clips.Count; i++)
+            {
+                content.Add(CreateClipRow(node.Clips[i], rowIndex++));
             }
 
             header.RegisterCallback<MouseDownEvent>(evt =>
@@ -442,12 +478,23 @@ namespace XAnimationEditor
                 bool expanded = content.style.display != DisplayStyle.None;
                 content.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
                 foldoutLabel.text = expanded ? "▸" : "▾";
-                SetClipGroupCollapsed(groupKey, expanded);
+                SetClipPathCollapsed(groupKey, expanded);
                 evt.StopPropagation();
             });
 
             group.Add(content);
             return group;
+        }
+
+        private static int CountClipPathNodeClips(ClipPathNode node)
+        {
+            int count = node.Clips.Count;
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                count += CountClipPathNodeClips(node.Children[i]);
+            }
+
+            return count;
         }
 
         private VisualElement CreateClipRow(XAnimationClipConfig clip, int rowIndex)
@@ -475,7 +522,9 @@ namespace XAnimationEditor
             VisualElement row = CreateRowContent();
             container.Add(row);
 
-            Label nameLabel = new(clip.key);
+            string clipDisplayName = GetClipPathLeafName(clip.key);
+            Label nameLabel = new(string.IsNullOrWhiteSpace(clipDisplayName) ? clip.key : clipDisplayName);
+            nameLabel.tooltip = FormatClipDisplayPath(clip.key);
             nameLabel.style.width = 140;
             nameLabel.style.flexShrink = 0;
             nameLabel.style.color = TextNormal;
@@ -624,11 +673,18 @@ namespace XAnimationEditor
         private VisualElement CreateStateChannelGroup(XAnimationChannelConfig channel, List<StateGroupBucket> channelStates)
         {
             VisualElement group = CreateListGroup();
+            string channelKey = BuildStateChannelKey(channel.name);
+            bool collapsed = IsStateChannelCollapsed(channelKey);
+
             VisualElement header = CreateListHeader();
+            Label foldoutLabel = CreateFoldoutGlyph(!collapsed);
+            header.Add(foldoutLabel);
+
             group.Add(header);
 
             Label title = CreateBoldLabel(channel.name);
             title.style.flexGrow = 1;
+            title.style.minWidth = 0;
             header.Add(title);
 
             int stateCount = CountStatesInBuckets(channelStates);
@@ -637,6 +693,9 @@ namespace XAnimationEditor
                 ? $"{channel.layerType} | {stateCount} states | {groupedCount} groups"
                 : $"{channel.layerType} | {stateCount} states");
             header.Add(info);
+
+            VisualElement content = new VisualElement();
+            content.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
 
             int rowIndex = 0;
             for (int i = 0; i < channelStates.Count; i++)
@@ -651,20 +710,35 @@ namespace XAnimationEditor
                 {
                     for (int stateIndex = 0; stateIndex < bucket.States.Count; stateIndex++)
                     {
-                        group.Add(CreateStateRow(bucket.States[stateIndex], rowIndex++));
+                        content.Add(CreateStateRow(bucket.States[stateIndex], rowIndex++));
                     }
 
                     continue;
                 }
 
-                group.Add(CreateStateEditorGroup(channel.name, bucket, ref rowIndex));
+                content.Add(CreateStateEditorGroup(channel.name, bucket, ref rowIndex));
             }
 
             if (stateCount == 0)
             {
-                AddEmptyLabel(group, "No states");
+                AddEmptyLabel(content, "No states");
             }
 
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0)
+                {
+                    return;
+                }
+
+                bool expanded = content.style.display != DisplayStyle.None;
+                content.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
+                foldoutLabel.text = expanded ? "▸" : "▾";
+                SetStateChannelCollapsed(channelKey, expanded);
+                evt.StopPropagation();
+            });
+
+            group.Add(content);
             return group;
         }
 
@@ -713,6 +787,7 @@ namespace XAnimationEditor
 
         private VisualElement CreateStateRow(XAnimationStateConfig state, int rowIndex)
         {
+            string stateUiKey = BuildStateUiKey(state);
             VisualElement container = CreateRowContainer(rowIndex);
             VisualElement progressFill = CreateRowProgressFill();
             container.Add(progressFill);
@@ -721,16 +796,16 @@ namespace XAnimationEditor
                 BaseColor = RowBaseColor(rowIndex),
                 ProgressFill = progressFill,
             };
-            m_StateVisualStateMap[state.key] = visualState;
+            m_StateVisualStateMap[stateUiKey] = visualState;
             container.RegisterCallback<MouseEnterEvent>(_ =>
             {
                 visualState.Hovered = true;
-                ApplyStateRowVisualState(state.key);
+                ApplyStateRowVisualState(stateUiKey);
             });
             container.RegisterCallback<MouseLeaveEvent>(_ =>
             {
                 visualState.Hovered = false;
-                ApplyStateRowVisualState(state.key);
+                ApplyStateRowVisualState(stateUiKey);
             });
             VisualElement row = CreateRowContent();
             container.Add(row);
@@ -775,8 +850,8 @@ namespace XAnimationEditor
             playButton.SetEnabled(true);
             row.Add(playButton);
 
-            m_StateRowMap[state.key] = container;
-            m_StateButtonMap[state.key] = playButton;
+            m_StateRowMap[stateUiKey] = container;
+            m_StateButtonMap[stateUiKey] = playButton;
             return container;
         }
 
@@ -808,7 +883,7 @@ namespace XAnimationEditor
                 else
                 {
                     actor.GlobalSpeed = GetPlaybackSpeed();
-                    actor.PlayState(state.key, BuildTransitionOptions());
+                    actor.PlayState(state.channelName, state.key, BuildTransitionOptions());
                     SetCurrentPlayback(channelName, state.key, null);
                     SetStatus($"正在播放 state {state.key}。");
                 }
@@ -918,10 +993,11 @@ namespace XAnimationEditor
                         XAnimationChannelState state = GetChannelState(actor, channel.name);
                         if (state != null && !string.IsNullOrWhiteSpace(state.stateKey))
                         {
+                            string stateUiKey = BuildStateUiKey(state.channelName, state.stateKey);
                             playingStateKeys ??= new HashSet<string>(StringComparer.Ordinal);
-                            playingStateKeys.Add(state.stateKey);
+                            playingStateKeys.Add(stateUiKey);
                             stateProgressByKey ??= new Dictionary<string, float>(StringComparer.Ordinal);
-                            stateProgressByKey[state.stateKey] = Mathf.Clamp01(state.normalizedTime);
+                            stateProgressByKey[stateUiKey] = Mathf.Clamp01(state.normalizedTime);
                         }
                     }
                 }
@@ -1036,8 +1112,13 @@ namespace XAnimationEditor
             return null;
         }
 
-        private void OpenPreviewAndPlayState(XAnimationActor actor, string stateKey)
+        private void OpenPreviewAndPlayState(XAnimationActor actor, XAnimationStateConfig state)
         {
+            if (state == null)
+            {
+                return;
+            }
+
             if (!TryGetPreviewSelection(actor, out TextAsset animationAsset, out GameObject prefab))
             {
                 return;
@@ -1048,10 +1129,11 @@ namespace XAnimationEditor
                 XAnimationPreviewWindow.ShowWindowAndPlayState(
                     animationAsset,
                     prefab,
-                    stateKey,
+                    state.channelName,
+                    state.key,
                     GetPlaybackSpeed(),
                     BuildTransitionOptions());
-                SetStatus($"已在预览窗口打开并播放 state {stateKey}。");
+                SetStatus($"已在预览窗口打开并播放 state {state.key}。");
             }
             catch (Exception ex)
             {
@@ -1951,10 +2033,20 @@ namespace XAnimationEditor
             m_StatusLabel.style.color = isError ? DangerColor : TextMuted;
         }
 
-        private void ApplyStateRowVisualState(string stateKey)
+        private static string BuildStateUiKey(XAnimationStateConfig state)
         {
-            if (!m_StateRowMap.TryGetValue(stateKey, out VisualElement row) ||
-                !m_StateVisualStateMap.TryGetValue(stateKey, out RowVisualState visualState))
+            return state == null ? string.Empty : BuildStateUiKey(state.channelName, state.key);
+        }
+
+        private static string BuildStateUiKey(string channelName, string stateKey)
+        {
+            return XAnimationCompiledAsset.BuildStateScopeKey(channelName, stateKey);
+        }
+
+        private void ApplyStateRowVisualState(string stateUiKey)
+        {
+            if (!m_StateRowMap.TryGetValue(stateUiKey, out VisualElement row) ||
+                !m_StateVisualStateMap.TryGetValue(stateUiKey, out RowVisualState visualState))
             {
                 return;
             }
@@ -1979,20 +2071,24 @@ namespace XAnimationEditor
             return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
         }
 
-        private static string NormalizeClipEditorGroupName(string groupName)
-        {
-            groupName = groupName?.Trim();
-            return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
-        }
-
         private static string BuildStateGroupKey(string channelName, string groupName)
         {
             return $"{channelName ?? string.Empty}::{NormalizeStateEditorGroupName(groupName)}";
         }
 
-        private static string BuildClipGroupKey(string groupName)
+        private static string BuildStateChannelKey(string channelName)
         {
-            return NormalizeClipEditorGroupName(groupName);
+            return $"state-channel::{channelName ?? string.Empty}";
+        }
+
+        private static string BuildClipPathKey(string groupName)
+        {
+            return NormalizeClipPathKey(groupName);
+        }
+
+        private bool IsStateChannelCollapsed(string channelKey)
+        {
+            return !string.IsNullOrWhiteSpace(channelKey) && m_CollapsedStateChannelKeys.Contains(channelKey);
         }
 
         private bool IsStateGroupCollapsed(string groupKey)
@@ -2000,9 +2096,26 @@ namespace XAnimationEditor
             return !string.IsNullOrWhiteSpace(groupKey) && !m_CollapsedStateGroupKeys.Contains(groupKey);
         }
 
-        private bool IsClipGroupCollapsed(string groupKey)
+        private bool IsClipPathCollapsed(string groupKey)
         {
             return !string.IsNullOrWhiteSpace(groupKey) && !m_CollapsedStateGroupKeys.Contains($"clip::{groupKey}");
+        }
+
+        private void SetStateChannelCollapsed(string channelKey, bool collapsed)
+        {
+            if (string.IsNullOrWhiteSpace(channelKey))
+            {
+                return;
+            }
+
+            if (collapsed)
+            {
+                m_CollapsedStateChannelKeys.Add(channelKey);
+            }
+            else
+            {
+                m_CollapsedStateChannelKeys.Remove(channelKey);
+            }
         }
 
         private void SetStateGroupCollapsed(string groupKey, bool collapsed)
@@ -2022,7 +2135,7 @@ namespace XAnimationEditor
             }
         }
 
-        private void SetClipGroupCollapsed(string groupKey, bool collapsed)
+        private void SetClipPathCollapsed(string groupKey, bool collapsed)
         {
             if (string.IsNullOrWhiteSpace(groupKey))
             {
@@ -2061,25 +2174,46 @@ namespace XAnimationEditor
             return null;
         }
 
-        private static ClipGroupBucket FindClipGroupBucket(List<ClipGroupBucket> buckets, string groupName)
+        private static string NormalizeClipPathKey(string path)
         {
-            if (buckets == null)
-            {
-                return null;
-            }
+            List<string> segments = SplitClipPathSegments(path);
+            return segments.Count == 0 ? string.Empty : string.Join("/", segments);
+        }
 
-            groupName = NormalizeClipEditorGroupName(groupName);
-            for (int i = 0; i < buckets.Count; i++)
+        private static string FormatClipDisplayPath(string path)
+        {
+            string normalizedPath = NormalizeClipPathKey(path);
+            return string.IsNullOrWhiteSpace(normalizedPath)
+                ? string.Empty
+                : normalizedPath.Replace("/", " / ");
+        }
+
+        private static List<string> SplitClipPathSegments(string path)
+        {
+            List<string> segments = new();
+            if (!string.IsNullOrWhiteSpace(path))
             {
-                ClipGroupBucket bucket = buckets[i];
-                if (bucket != null &&
-                    string.Equals(NormalizeClipEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
+                string[] rawSegments = path.Split('/');
+                for (int i = 0; i < rawSegments.Length; i++)
                 {
-                    return bucket;
+                    string segment = rawSegments[i]?.Trim();
+                    if (!string.IsNullOrWhiteSpace(segment))
+                    {
+                        segments.Add(segment);
+                    }
                 }
             }
 
-            return null;
+            return segments;
+        }
+
+        private static string GetClipPathLeafName(string path)
+        {
+            string normalizedPath = NormalizeClipPathKey(path);
+            int slashIndex = normalizedPath.LastIndexOf('/');
+            return slashIndex >= 0 && slashIndex + 1 < normalizedPath.Length
+                ? normalizedPath[(slashIndex + 1)..]
+                : normalizedPath;
         }
 
         private static int CountStatesInBuckets(List<StateGroupBucket> buckets)

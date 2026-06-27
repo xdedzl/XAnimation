@@ -152,6 +152,23 @@ namespace XAnimationEditor
             m_TrailingContainer.Insert(m_TrailingContainer.childCount - 1, element);
         }
 
+        public void ApplyInlineSeparatorStyle()
+        {
+            m_InputContainer.style.backgroundColor = Color.clear;
+            m_InputContainer.style.borderTopWidth = 0f;
+            m_InputContainer.style.borderBottomWidth = 0f;
+            m_InputContainer.style.borderLeftWidth = 1f;
+            m_InputContainer.style.borderRightWidth = 1f;
+            m_InputContainer.style.borderLeftColor = XAnimationEditorUi.PaneBorder;
+            m_InputContainer.style.borderRightColor = XAnimationEditorUi.PaneBorder;
+            m_InputContainer.style.borderTopLeftRadius = 0f;
+            m_InputContainer.style.borderTopRightRadius = 0f;
+            m_InputContainer.style.borderBottomLeftRadius = 0f;
+            m_InputContainer.style.borderBottomRightRadius = 0f;
+            m_Button.style.paddingLeft = 8;
+            m_Button.style.paddingRight = 8;
+        }
+
         private void OnTrailingContainerMouseDown(MouseDownEvent evt)
         {
             if (evt == null || evt.button != 0 || !enabledInHierarchy)

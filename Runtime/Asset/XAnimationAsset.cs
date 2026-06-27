@@ -236,7 +236,6 @@ namespace XAnimationEngine
     public class XAnimationClipConfig
     {
         public string key;
-        public string editorGroupName;
         public string clipPath;
     }
 
@@ -281,6 +280,7 @@ namespace XAnimationEngine
     [Serializable]
     public class XAnimationAutoTransitionConfig
     {
+        public string channelName;
         public string preStateKey;
         public string nextStateKey;
         [JsonProperty("ExitTime")]
@@ -580,6 +580,7 @@ namespace XAnimationEngine
         }
 
         public XAnimationAutoTransitionConfig Config { get; }
+        public string ChannelName => Config.channelName;
         public string PreStateKey => Config.preStateKey;
         public string NextStateKey => Config.nextStateKey;
         public float ExitTime => Config.exitTime;
@@ -784,7 +785,9 @@ namespace XAnimationEngine
         private readonly Dictionary<string, int> m_ClipIndexByKey;
         private readonly Dictionary<string, int> m_ParameterIndexByName;
         private readonly Dictionary<string, int> m_StateIndexByKey;
-        private readonly Dictionary<string, int> m_AutoTransitionIndexByPreStateKey;
+        private readonly Dictionary<string, int> m_StateIndexByScopeKey;
+        private readonly HashSet<string> m_AmbiguousStateKeys;
+        private readonly Dictionary<string, int> m_AutoTransitionIndexByStateScopeKey;
         private readonly Dictionary<string, int> m_DefaultTransitionIndexByPairKey;
         private readonly XAnimationLoadedAssetRegistry m_LoadedAssets;
 
@@ -801,7 +804,7 @@ namespace XAnimationEngine
             Dictionary<string, int> clipIndexByKey,
             Dictionary<string, int> parameterIndexByName,
             Dictionary<string, int> stateIndexByKey,
-            Dictionary<string, int> autoTransitionIndexByPreStateKey,
+            Dictionary<string, int> autoTransitionIndexByStateScopeKey,
             Dictionary<string, int> defaultTransitionIndexByPairKey)
             : this(
                 asset,
@@ -816,7 +819,46 @@ namespace XAnimationEngine
                 clipIndexByKey,
                 parameterIndexByName,
                 stateIndexByKey,
-                autoTransitionIndexByPreStateKey,
+                null,
+                null,
+                autoTransitionIndexByStateScopeKey,
+                defaultTransitionIndexByPairKey,
+                null)
+        {
+        }
+
+        public XAnimationCompiledAsset(
+            XAnimationAsset asset,
+            XAnimationCompiledChannel[] channels,
+            XAnimationCompiledClip[] clips,
+            XAnimationCompiledState[] states,
+            XAnimationCompiledAutoTransition[] autoTransitions,
+            XAnimationCompiledDefaultTransition[] defaultTransitions,
+            XAnimationCompiledParameter[] parameters,
+            Dictionary<string, List<XAnimationCompiledCue>> cuesByClipKey,
+            Dictionary<string, int> channelIndexByName,
+            Dictionary<string, int> clipIndexByKey,
+            Dictionary<string, int> parameterIndexByName,
+            Dictionary<string, int> stateIndexByKey,
+            Dictionary<string, int> stateIndexByScopeKey,
+            Dictionary<string, int> autoTransitionIndexByStateScopeKey,
+            Dictionary<string, int> defaultTransitionIndexByPairKey)
+            : this(
+                asset,
+                channels,
+                clips,
+                states,
+                autoTransitions,
+                defaultTransitions,
+                parameters,
+                cuesByClipKey,
+                channelIndexByName,
+                clipIndexByKey,
+                parameterIndexByName,
+                stateIndexByKey,
+                stateIndexByScopeKey,
+                null,
+                autoTransitionIndexByStateScopeKey,
                 defaultTransitionIndexByPairKey,
                 null)
         {
@@ -835,7 +877,9 @@ namespace XAnimationEngine
             Dictionary<string, int> clipIndexByKey,
             Dictionary<string, int> parameterIndexByName,
             Dictionary<string, int> stateIndexByKey,
-            Dictionary<string, int> autoTransitionIndexByPreStateKey,
+            Dictionary<string, int> stateIndexByScopeKey,
+            HashSet<string> ambiguousStateKeys,
+            Dictionary<string, int> autoTransitionIndexByStateScopeKey,
             Dictionary<string, int> defaultTransitionIndexByPairKey,
             XAnimationLoadedAssetRegistry loadedAssets)
         {
@@ -851,7 +895,9 @@ namespace XAnimationEngine
             m_ClipIndexByKey = clipIndexByKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_ParameterIndexByName = parameterIndexByName ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_StateIndexByKey = stateIndexByKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
-            m_AutoTransitionIndexByPreStateKey = autoTransitionIndexByPreStateKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
+            m_StateIndexByScopeKey = stateIndexByScopeKey ?? CreateStateIndexByScopeKey(States);
+            m_AmbiguousStateKeys = ambiguousStateKeys ?? CreateAmbiguousStateKeys(States);
+            m_AutoTransitionIndexByStateScopeKey = autoTransitionIndexByStateScopeKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_DefaultTransitionIndexByPairKey = defaultTransitionIndexByPairKey ?? new Dictionary<string, int>(StringComparer.Ordinal);
             m_LoadedAssets = loadedAssets;
         }
@@ -888,13 +934,37 @@ namespace XAnimationEngine
 
         public bool TryGetStateIndex(string stateKey, out int stateIndex)
         {
+            if (IsStateKeyAmbiguous(stateKey))
+            {
+                stateIndex = -1;
+                return false;
+            }
+
             return m_StateIndexByKey.TryGetValue(stateKey, out stateIndex);
         }
 
-        public bool TryGetAutoTransition(string preStateKey, out XAnimationCompiledAutoTransition transition)
+        public bool IsStateKeyAmbiguous(string stateKey)
         {
-            if (string.IsNullOrWhiteSpace(preStateKey) ||
-                !m_AutoTransitionIndexByPreStateKey.TryGetValue(preStateKey, out int transitionIndex))
+            return !string.IsNullOrWhiteSpace(stateKey) && m_AmbiguousStateKeys.Contains(stateKey);
+        }
+
+        public bool TryGetStateIndex(string channelName, string stateKey, out int stateIndex)
+        {
+            if (string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(stateKey))
+            {
+                stateIndex = -1;
+                return false;
+            }
+
+            return m_StateIndexByScopeKey.TryGetValue(BuildStateScopeKey(channelName, stateKey), out stateIndex);
+        }
+
+        public bool TryGetAutoTransition(string channelName, string preStateKey, out XAnimationCompiledAutoTransition transition)
+        {
+            if (string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(preStateKey) ||
+                !m_AutoTransitionIndexByStateScopeKey.TryGetValue(BuildStateScopeKey(channelName, preStateKey), out int transitionIndex))
             {
                 transition = null;
                 return false;
@@ -954,6 +1024,17 @@ namespace XAnimationEngine
         public void PreloadState(string stateKey)
         {
             XAnimationCompiledState state = GetState(stateKey);
+            PreloadState(state);
+        }
+
+        public void PreloadState(string channelName, string stateKey)
+        {
+            XAnimationCompiledState state = GetState(channelName, stateKey);
+            PreloadState(state);
+        }
+
+        private void PreloadState(XAnimationCompiledState state)
+        {
             if (state.DirectClip != null)
             {
                 state.DirectClip.Preload();
@@ -979,6 +1060,11 @@ namespace XAnimationEngine
 
         public XAnimationCompiledState GetState(string stateKey)
         {
+            if (IsStateKeyAmbiguous(stateKey))
+            {
+                throw new XAnimationException($"XAnimation state '{stateKey}' is ambiguous; use channelName.");
+            }
+
             if (!TryGetStateIndex(stateKey, out int stateIndex))
             {
                 throw new XAnimationException($"XAnimation state '{stateKey}' does not exist.");
@@ -987,14 +1073,80 @@ namespace XAnimationEngine
             return States[stateIndex];
         }
 
-        public XAnimationCompiledAutoTransition GetAutoTransition(string preStateKey)
+        public XAnimationCompiledState GetState(string channelName, string stateKey)
         {
-            if (!TryGetAutoTransition(preStateKey, out XAnimationCompiledAutoTransition transition))
+            if (!TryGetStateIndex(channelName, stateKey, out int stateIndex))
             {
-                throw new XAnimationException($"XAnimation auto transition for state '{preStateKey}' does not exist.");
+                throw new XAnimationException($"XAnimation state '{stateKey}' in channel '{channelName}' does not exist.");
+            }
+
+            return States[stateIndex];
+        }
+
+        public XAnimationCompiledAutoTransition GetAutoTransition(string channelName, string preStateKey)
+        {
+            if (!TryGetAutoTransition(channelName, preStateKey, out XAnimationCompiledAutoTransition transition))
+            {
+                throw new XAnimationException($"XAnimation auto transition for state '{preStateKey}' in channel '{channelName}' does not exist.");
             }
 
             return transition;
+        }
+
+        public static string BuildStateScopeKey(string channelName, string stateKey)
+        {
+            return $"{channelName}\u001F{stateKey}";
+        }
+
+        private static Dictionary<string, int> CreateStateIndexByScopeKey(IReadOnlyList<XAnimationCompiledState> states)
+        {
+            Dictionary<string, int> stateIndexByScopeKey = new(StringComparer.Ordinal);
+            if (states == null)
+            {
+                return stateIndexByScopeKey;
+            }
+
+            for (int i = 0; i < states.Count; i++)
+            {
+                XAnimationCompiledState state = states[i];
+                string channelName = state?.Config.channelName;
+                string stateKey = state?.Key;
+                if (string.IsNullOrWhiteSpace(channelName) ||
+                    string.IsNullOrWhiteSpace(stateKey))
+                {
+                    continue;
+                }
+
+                stateIndexByScopeKey[BuildStateScopeKey(channelName, stateKey)] = i;
+            }
+
+            return stateIndexByScopeKey;
+        }
+
+        private static HashSet<string> CreateAmbiguousStateKeys(IReadOnlyList<XAnimationCompiledState> states)
+        {
+            HashSet<string> seenStateKeys = new(StringComparer.Ordinal);
+            HashSet<string> ambiguousStateKeys = new(StringComparer.Ordinal);
+            if (states == null)
+            {
+                return ambiguousStateKeys;
+            }
+
+            for (int i = 0; i < states.Count; i++)
+            {
+                string stateKey = states[i]?.Key;
+                if (string.IsNullOrWhiteSpace(stateKey))
+                {
+                    continue;
+                }
+
+                if (!seenStateKeys.Add(stateKey))
+                {
+                    ambiguousStateKeys.Add(stateKey);
+                }
+            }
+
+            return ambiguousStateKeys;
         }
 
         public static string BuildTransitionPairKey(string channelName, string preStateKey, string nextStateKey)
@@ -1012,9 +1164,30 @@ namespace XAnimationEngine
             return duration;
         }
 
+        public float GetStateDuration(string channelName, string stateKey)
+        {
+            if (!TryGetStateDuration(channelName, stateKey, out float duration))
+            {
+                throw new XAnimationException($"XAnimation state '{stateKey}' in channel '{channelName}' does not provide a fixed duration.");
+            }
+
+            return duration;
+        }
+
         public bool TryGetStateDuration(string stateKey, out float duration)
         {
             XAnimationCompiledState state = GetState(stateKey);
+            return TryGetStateDuration(state, out duration);
+        }
+
+        public bool TryGetStateDuration(string channelName, string stateKey, out float duration)
+        {
+            XAnimationCompiledState state = GetState(channelName, stateKey);
+            return TryGetStateDuration(state, out duration);
+        }
+
+        private bool TryGetStateDuration(XAnimationCompiledState state, out float duration)
+        {
             float speed = Mathf.Approximately(state.Config.speed, 0f) ? 1f : state.Config.speed;
             float maxClipLength = 0f;
 

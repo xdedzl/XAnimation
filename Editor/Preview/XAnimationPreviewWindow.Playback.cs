@@ -107,10 +107,18 @@ namespace XAnimationEditor
                     SetPauseButtonState(true, false);
                     SetStepForwardButtonEnabled(true);
                     m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-                    m_Session.PlayState(request.StateKey, hasExplicitTransition ? CloneTransitionOptions(request.Transition) : null);
+                    XAnimationTransitionOptions transition = hasExplicitTransition ? CloneTransitionOptions(request.Transition) : null;
+                    if (string.IsNullOrWhiteSpace(request.ChannelName))
+                    {
+                        m_Session.PlayState(request.StateKey, transition);
+                    }
+                    else
+                    {
+                        m_Session.PlayState(request.ChannelName, request.StateKey, transition);
+                    }
 
                     RefreshPlaybackViews();
-                    FocusStateInInspector(request.StateKey);
+                    FocusStateInInspector(request.ChannelName, request.StateKey);
                     SetStatus($"正在播放 state {request.StateKey}。");
                     return;
                 }
@@ -296,7 +304,7 @@ namespace XAnimationEditor
                 return false;
             }
 
-            m_Session.PlayState(stateKey, BuildPreviewTransitionOptions());
+            m_Session.PlayState(playingChannelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             return true;
         }
@@ -415,38 +423,14 @@ namespace XAnimationEditor
             }
         }
 
-        private void MoveClipToGroup(string clipKey, string groupName)
-        {
-            string normalizedGroup = NormalizeClipEditorGroupName(groupName);
-            m_Session.SetClipEditorGroup(clipKey, normalizedGroup);
-            RebuildClipPresentation();
-        }
-
         private VisualElement CreateClipEditor(XAnimationCompiledClip clip)
         {
             XAnimationClipConfig config = clip.Config;
-            VisualElement editor = new VisualElement();
+            VisualElement editor = CreateSubBox();
             editor.style.marginLeft = 4;
             editor.style.marginRight = 4;
             editor.style.marginTop = 1;
-            editor.style.marginBottom = 3;
-            editor.style.paddingLeft = 6;
-            editor.style.paddingRight = 6;
-            editor.style.paddingTop = 4;
-            editor.style.paddingBottom = 4;
-            editor.style.backgroundColor = new Color(0.12f, 0.12f, 0.13f, 1f);
-            editor.style.borderTopWidth = 1;
-            editor.style.borderBottomWidth = 1;
-            editor.style.borderLeftWidth = 1;
-            editor.style.borderRightWidth = 1;
-            editor.style.borderTopColor = SectionDivider;
-            editor.style.borderBottomColor = SectionDivider;
-            editor.style.borderLeftColor = SectionDivider;
-            editor.style.borderRightColor = SectionDivider;
-            editor.style.borderTopLeftRadius = 3;
-            editor.style.borderTopRightRadius = 3;
-            editor.style.borderBottomLeftRadius = 3;
-            editor.style.borderBottomRightRadius = 3;
+            editor.style.marginBottom = 2;
 
             if (m_Session != null && m_Session.IsOverrideAsset)
             {
@@ -502,24 +486,22 @@ namespace XAnimationEditor
 
         private void SetAddClipButtonEnabled(bool enabled)
         {
-            if (m_AddClipButton == null)
+            if (m_AddClipButton != null)
             {
-                return;
+                m_AddClipButton.SetEnabled(enabled);
+                m_AddClipButton.style.opacity = enabled ? 1f : 0.45f;
+                m_AddClipButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
+                    ? "Override 资源不能新增 clip。"
+                    : "新增一个全局 clip 资源叶子。";
             }
-
-            m_AddClipButton.SetEnabled(enabled);
-            m_AddClipButton.style.opacity = enabled ? 1f : 0.45f;
-            m_AddClipButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 clip。"
-                : "新增一个全局 clip 资源叶子。";
 
             if (m_AddClipGroupButton != null)
             {
                 m_AddClipGroupButton.SetEnabled(enabled);
                 m_AddClipGroupButton.style.opacity = enabled ? 1f : 0.45f;
                 m_AddClipGroupButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
-                    ? "Override 资源不能新增 clip group。"
-                    : "新建一个 clip group。";
+                    ? "Override 资源不能新增 clip folder。"
+                    : "在根层级新增一个 clip folder。";
             }
         }
 
@@ -585,10 +567,10 @@ namespace XAnimationEditor
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(firstState.Key, BuildPreviewTransitionOptions());
+            m_Session.PlayState(firstState.Config.channelName, firstState.Key, BuildPreviewTransitionOptions());
 
             RefreshPlaybackViews();
-            FocusStateInInspector(firstState.Key);
+            FocusStateInInspector(firstState.Config.channelName, firstState.Key);
             SetStatus($"正在播放 state {firstState.Key}。");
             return true;
         }
@@ -716,9 +698,10 @@ namespace XAnimationEditor
                     if (state != null && !string.IsNullOrEmpty(state.stateKey))
                     {
                         playingStateKeys ??= new HashSet<string>(StringComparer.Ordinal);
-                        playingStateKeys.Add(state.stateKey);
+                        string stateUiKey = BuildStateUiKey(state.channelName, state.stateKey);
+                        playingStateKeys.Add(stateUiKey);
                         stateProgressByKey ??= new Dictionary<string, float>(StringComparer.Ordinal);
-                        stateProgressByKey[state.stateKey] = Mathf.Clamp01(state.normalizedTime);
+                        stateProgressByKey[stateUiKey] = Mathf.Clamp01(state.normalizedTime);
                     }
                 }
             }
@@ -1020,10 +1003,69 @@ namespace XAnimationEditor
             Repaint();
         }
 
-        private void ApplyStateRowVisualState(string stateKey)
+        private static string BuildStateUiKey(XAnimationCompiledState state)
         {
-            if (!m_StateRowMap.TryGetValue(stateKey, out VisualElement row) ||
-                !m_StateVisualStateMap.TryGetValue(stateKey, out RowVisualState visualState))
+            return state == null
+                ? string.Empty
+                : BuildStateUiKey(state.Config.channelName, state.Key);
+        }
+
+        private static string BuildStateUiKey(string channelName, string stateKey)
+        {
+            return XAnimationCompiledAsset.BuildStateScopeKey(channelName, stateKey);
+        }
+
+        private bool TryGetCompiledStateByUiKey(string stateUiKey, out XAnimationCompiledState state)
+        {
+            state = null;
+            if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateUiKey))
+            {
+                return false;
+            }
+
+            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
+            for (int i = 0; i < states.Count; i++)
+            {
+                XAnimationCompiledState candidate = states[i];
+                if (candidate != null && string.Equals(BuildStateUiKey(candidate), stateUiKey, StringComparison.Ordinal))
+                {
+                    state = candidate;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private string ResolveStateKeyFromUiKey(string stateUiKey)
+        {
+            return TryGetCompiledStateByUiKey(stateUiKey, out XAnimationCompiledState state) ? state.Key : null;
+        }
+
+        private string ResolveStateUiKey(string stateKey)
+        {
+            if (m_Session?.CompiledAsset?.States == null)
+            {
+                return stateKey;
+            }
+
+            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
+            for (int i = 0; i < states.Count; i++)
+            {
+                XAnimationCompiledState state = states[i];
+                if (state != null && string.Equals(state.Key, stateKey, StringComparison.Ordinal))
+                {
+                    return BuildStateUiKey(state);
+                }
+            }
+
+            return stateKey;
+        }
+
+        private void ApplyStateRowVisualState(string stateUiKey)
+        {
+            if (!m_StateRowMap.TryGetValue(stateUiKey, out VisualElement row) ||
+                !m_StateVisualStateMap.TryGetValue(stateUiKey, out RowVisualState visualState))
             {
                 return;
             }
@@ -1060,6 +1102,7 @@ namespace XAnimationEditor
                         }
 
                         if (!TryFindBlendSampleRowKey(
+                                channels[i].Name,
                                 channelState.stateKey,
                                 blendClip.clipKey,
                                 blendClip.positionX,
@@ -1077,10 +1120,11 @@ namespace XAnimationEditor
                         }
 
                         sampleWeightsByState ??= new Dictionary<string, Dictionary<int, float>>(StringComparer.Ordinal);
-                        if (!sampleWeightsByState.TryGetValue(channelState.stateKey, out Dictionary<int, float> stateWeights))
+                        string stateUiKey = BuildStateUiKey(channels[i].Name, channelState.stateKey);
+                        if (!sampleWeightsByState.TryGetValue(stateUiKey, out Dictionary<int, float> stateWeights))
                         {
                             stateWeights = new Dictionary<int, float>();
-                            sampleWeightsByState[channelState.stateKey] = stateWeights;
+                            sampleWeightsByState[stateUiKey] = stateWeights;
                         }
 
                         float clampedWeight = Mathf.Clamp01(blendClip.weight);
@@ -1106,17 +1150,28 @@ namespace XAnimationEditor
             RefreshGlobalBlendGraph(sampleWeightsByState);
         }
 
-        private bool TryFindBlendSampleRowKey(string stateKey, string clipKey, float positionX, float positionY, out string rowKey, out int sampleIndex)
+        private bool TryFindBlendSampleRowKey(
+            string channelName,
+            string stateKey,
+            string clipKey,
+            float positionX,
+            float positionY,
+            out string rowKey,
+            out int sampleIndex)
         {
             rowKey = null;
             sampleIndex = -1;
-            if (string.IsNullOrWhiteSpace(clipKey) ||
-                !TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState compiledState))
+            if (string.IsNullOrWhiteSpace(clipKey))
             {
                 return false;
             }
 
-            if (compiledState is XAnimationCompiledBlend1DState blendState)
+            if (!TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState scopedState))
+            {
+                return false;
+            }
+
+            if (scopedState is XAnimationCompiledBlend1DState blendState)
             {
                 for (int i = 0; i < blendState.Samples.Count; i++)
                 {
@@ -1128,14 +1183,14 @@ namespace XAnimationEditor
                     }
 
                     sampleIndex = i;
-                    rowKey = BuildBlendSampleRuntimeKey(stateKey, i);
+                    rowKey = BuildBlendSampleRuntimeKey(channelName, stateKey, i);
                     return true;
                 }
 
                 return false;
             }
 
-            if (!TryGetDirectionalBlendSamples(compiledState, out IReadOnlyList<XAnimationCompiledBlend2DSimpleDirectionalSample> samples))
+            if (!TryGetDirectionalBlendSamples(scopedState, out IReadOnlyList<XAnimationCompiledBlend2DSimpleDirectionalSample> samples))
             {
                 return false;
             }
@@ -1151,7 +1206,7 @@ namespace XAnimationEditor
                 }
 
                 sampleIndex = i;
-                rowKey = BuildBlendSampleRuntimeKey(stateKey, i);
+                rowKey = BuildBlendSampleRuntimeKey(channelName, stateKey, i);
                 return true;
             }
 
@@ -1165,7 +1220,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            if (!TryResolveBlendGraphStateKey(out string stateKey))
+            if (!TryResolveBlendGraphState(out XAnimationCompiledState resolvedState))
             {
                 m_CurrentFreeformGraphStateKey = null;
                 SetBlendGraphOverlayTitle("Blend Graph");
@@ -1178,17 +1233,14 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_CurrentFreeformGraphStateKey = stateKey;
+            string stateKey = resolvedState.Key;
+            string stateUiKey = BuildStateUiKey(resolvedState);
+            m_CurrentFreeformGraphStateKey = stateUiKey;
             m_FreeformBlendGraphOverlay.style.display = DisplayStyle.Flex;
-            Dictionary<int, float> stateSampleWeights = sampleWeightsByState != null && sampleWeightsByState.TryGetValue(stateKey, out Dictionary<int, float> stateWeights)
+            Dictionary<int, float> stateSampleWeights = sampleWeightsByState != null && sampleWeightsByState.TryGetValue(stateUiKey, out Dictionary<int, float> stateWeights)
                 ? stateWeights
                 : null;
-            if (!TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState compiledState))
-            {
-                m_CurrentFreeformGraphStateKey = null;
-                m_FreeformBlendGraphOverlay.style.display = DisplayStyle.None;
-                return;
-            }
+            XAnimationCompiledState compiledState = resolvedState;
 
             if (compiledState is XAnimationCompiledBlend1DState blend1DState)
             {
@@ -1277,8 +1329,8 @@ namespace XAnimationEditor
                 minValue,
                 maxValue,
                 hasParameter,
-                hasParameter ? () => BeginBlend1DDragPreview(stateKey) : null,
-                hasParameter ? value => UpdateBlend1DPreviewValue(stateKey, config, value) : null));
+                hasParameter ? () => BeginBlend1DDragPreview(config.channelName, stateKey) : null,
+                hasParameter ? value => UpdateBlend1DPreviewValue(config.channelName, stateKey, config, value) : null));
         }
 
         private void UpdateDirectionalBlendGraph(
@@ -1334,13 +1386,13 @@ namespace XAnimationEditor
                 sampleViews,
                 currentPosition,
                 hasParameters,
-                hasParameters ? () => BeginFreeformDirectionalDragPreview(stateKey) : null,
-                hasParameters ? position => UpdateFreeformDirectionalPreviewPosition(stateKey, config, position) : null));
+                hasParameters ? () => BeginFreeformDirectionalDragPreview(config.channelName, stateKey) : null,
+                hasParameters ? position => UpdateFreeformDirectionalPreviewPosition(config.channelName, stateKey, config, position) : null));
         }
 
-        private bool TryResolveBlendGraphStateKey(out string stateKey)
+        private bool TryResolveBlendGraphState(out XAnimationCompiledState state)
         {
-            stateKey = null;
+            state = null;
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 return false;
@@ -1355,30 +1407,47 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                if (!IsBlendGraphCompatibleState(channelState.stateKey))
+                if (!TryGetCompiledBlendGraphState(channels[i].Name, channelState.stateKey, out XAnimationCompiledState channelCompiledState) ||
+                    !IsBlendGraphCompatibleState(channelCompiledState))
                 {
                     continue;
                 }
 
-                stateKey = channelState.stateKey;
+                state = channelCompiledState;
                 return true;
             }
 
-            if (TryGetExpandedStateKey(out string expandedStateKey) &&
-                IsBlendGraphCompatibleState(expandedStateKey))
+            foreach (string expandedStateUiKey in m_ExpandedStateKeys)
             {
-                stateKey = expandedStateKey;
-                return true;
+                if (TryGetCompiledStateByUiKey(expandedStateUiKey, out XAnimationCompiledState expandedState) &&
+                    IsBlendGraphCompatibleState(expandedState))
+                {
+                    state = expandedState;
+                    return true;
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(m_LastInteractedFreeformStateKey) &&
-                IsBlendGraphCompatibleState(m_LastInteractedFreeformStateKey))
+                TryGetCompiledStateByUiKey(m_LastInteractedFreeformStateKey, out XAnimationCompiledState interactedState) &&
+                IsBlendGraphCompatibleState(interactedState))
             {
-                stateKey = m_LastInteractedFreeformStateKey;
+                state = interactedState;
                 return true;
             }
 
             return false;
+        }
+
+        private bool TryResolveBlendGraphStateKey(out string stateKey)
+        {
+            stateKey = null;
+            if (!TryResolveBlendGraphState(out XAnimationCompiledState state))
+            {
+                return false;
+            }
+
+            stateKey = state.Key;
+            return true;
         }
 
         private bool TryGetCompiledBlendGraphState(string stateKey, out XAnimationCompiledState compiledState)
@@ -1391,6 +1460,27 @@ namespace XAnimationEditor
 
             XAnimationCompiledAsset compiledAsset = m_Session.CompiledAsset;
             if (compiledAsset == null || !compiledAsset.TryGetStateIndex(stateKey, out int stateIndex))
+            {
+                return false;
+            }
+
+            compiledState = compiledAsset.States[stateIndex];
+            return compiledState != null;
+        }
+
+        private bool TryGetCompiledBlendGraphState(string channelName, string stateKey, out XAnimationCompiledState compiledState)
+        {
+            compiledState = null;
+            if (m_Session == null ||
+                !m_Session.IsLoaded ||
+                string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(stateKey))
+            {
+                return false;
+            }
+
+            XAnimationCompiledAsset compiledAsset = m_Session.CompiledAsset;
+            if (compiledAsset == null || !compiledAsset.TryGetStateIndex(channelName, stateKey, out int stateIndex))
             {
                 return false;
             }
@@ -1415,6 +1505,17 @@ namespace XAnimationEditor
             };
         }
 
+        private static bool IsBlendGraphCompatibleState(XAnimationCompiledState compiledState)
+        {
+            return compiledState switch
+            {
+                XAnimationCompiledBlend1DState blend1DState => blend1DState.Samples.Count > 0,
+                XAnimationCompiledBlend2DSimpleDirectionalState simpleDirectionalState => simpleDirectionalState.Samples.Count > 0,
+                XAnimationCompiledBlend2DFreeformDirectionalState freeformState => freeformState.Samples.Count > 0,
+                _ => false,
+            };
+        }
+
         private bool TryGetFreeformDirectionalState(string stateKey, out XAnimationCompiledBlend2DFreeformDirectionalState state)
         {
             state = null;
@@ -1429,12 +1530,25 @@ namespace XAnimationEditor
 
         private void MarkFreeformStateInteracted(string stateKey)
         {
-            if (string.IsNullOrWhiteSpace(stateKey) || !IsBlendGraphCompatibleState(stateKey))
+            if (string.IsNullOrWhiteSpace(stateKey) || !TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState state))
             {
                 return;
             }
 
-            m_LastInteractedFreeformStateKey = stateKey;
+            MarkFreeformStateInteracted(state.Config.channelName, stateKey);
+        }
+
+        private void MarkFreeformStateInteracted(string channelName, string stateKey)
+        {
+            if (string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(stateKey) ||
+                !TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState state) ||
+                !IsBlendGraphCompatibleState(state))
+            {
+                return;
+            }
+
+            m_LastInteractedFreeformStateKey = BuildStateUiKey(channelName, stateKey);
         }
 
         private Vector2 GetFreeformDirectionalPreviewPosition(XAnimationStateConfig config)
@@ -1463,16 +1577,16 @@ namespace XAnimationEditor
             return new Vector2(x, y);
         }
 
-        private void BeginFreeformDirectionalDragPreview(string stateKey)
+        private void BeginFreeformDirectionalDragPreview(string channelName, string stateKey)
         {
             if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateKey))
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
+            MarkFreeformStateInteracted(channelName, stateKey);
 
-            if (!TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState state))
+            if (!TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState state))
             {
                 return;
             }
@@ -1482,21 +1596,21 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Session.PlayState(stateKey, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.Config.channelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();
             Repaint();
         }
 
-        private void BeginBlend1DDragPreview(string stateKey)
+        private void BeginBlend1DDragPreview(string channelName, string stateKey)
         {
             if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(stateKey))
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
-            if (!TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState state))
+            MarkFreeformStateInteracted(channelName, stateKey);
+            if (!TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState state))
             {
                 return;
             }
@@ -1506,20 +1620,20 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Session.PlayState(stateKey, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.Config.channelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();
             Repaint();
         }
 
-        private void UpdateFreeformDirectionalPreviewPosition(string stateKey, XAnimationStateConfig config, Vector2 position)
+        private void UpdateFreeformDirectionalPreviewPosition(string channelName, string stateKey, XAnimationStateConfig config, Vector2 position)
         {
             if (m_Session == null || !m_Session.IsLoaded || config == null)
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
+            MarkFreeformStateInteracted(channelName, stateKey);
 
             bool changed = false;
             if (!string.IsNullOrWhiteSpace(config.parameterXName))
@@ -1537,9 +1651,10 @@ namespace XAnimationEditor
                 RefreshPreviewAfterParameterChanged(rebuildParameterList: true);
             }
 
-            if (string.Equals(m_CurrentFreeformGraphStateKey, stateKey, StringComparison.Ordinal))
+            string stateUiKey = BuildStateUiKey(channelName, stateKey);
+            if (string.Equals(m_CurrentFreeformGraphStateKey, stateUiKey, StringComparison.Ordinal))
             {
-                if (!TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState currentState))
+                if (!TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState currentState))
                 {
                     m_CurrentFreeformGraphStateKey = null;
                 }
@@ -1578,14 +1693,14 @@ namespace XAnimationEditor
             return m_Session.TryGetPreviewParameter(parameterName, out value) ? value : 0f;
         }
 
-        private void UpdateBlend1DPreviewValue(string stateKey, XAnimationStateConfig config, float value)
+        private void UpdateBlend1DPreviewValue(string channelName, string stateKey, XAnimationStateConfig config, float value)
         {
             if (m_Session == null || !m_Session.IsLoaded || config == null)
             {
                 return;
             }
 
-            MarkFreeformStateInteracted(stateKey);
+            MarkFreeformStateInteracted(channelName, stateKey);
             if (!string.IsNullOrWhiteSpace(config.parameterName))
             {
                 if (TrySetPreviewParameter(config.parameterName, value))
@@ -1594,8 +1709,9 @@ namespace XAnimationEditor
                 }
             }
 
-            if (string.Equals(m_CurrentFreeformGraphStateKey, stateKey, StringComparison.Ordinal) &&
-                TryGetCompiledBlendGraphState(stateKey, out XAnimationCompiledState currentState) &&
+            string stateUiKey = BuildStateUiKey(channelName, stateKey);
+            if (string.Equals(m_CurrentFreeformGraphStateKey, stateUiKey, StringComparison.Ordinal) &&
+                TryGetCompiledBlendGraphState(channelName, stateKey, out XAnimationCompiledState currentState) &&
                 currentState is XAnimationCompiledBlend1DState blend1DState)
             {
                 UpdateBlend1DGraph(stateKey, blend1DState);
@@ -1628,9 +1744,9 @@ namespace XAnimationEditor
             return false;
         }
 
-        private static string BuildBlendSampleRuntimeKey(string stateKey, int sampleIndex)
+        private static string BuildBlendSampleRuntimeKey(string channelName, string stateKey, int sampleIndex)
         {
-            return $"blend-sample:{stateKey}:{sampleIndex}";
+            return $"blend-sample:{BuildStateUiKey(channelName, stateKey)}:{sampleIndex}";
         }
 
         private void RefreshStatePlaybackViews()
@@ -1738,38 +1854,13 @@ namespace XAnimationEditor
             {
                 XAnimationCompiledChannel channel = (XAnimationCompiledChannel)channels[i];
 
-                VisualElement controlRow = new VisualElement();
-                controlRow.style.flexDirection = FlexDirection.Column;
-                controlRow.style.marginBottom = 3;
-                controlRow.style.paddingLeft = 3;
-                controlRow.style.paddingRight = 3;
-                controlRow.style.paddingTop = 3;
-                controlRow.style.paddingBottom = 3;
-                controlRow.style.borderTopWidth = 1;
-                controlRow.style.borderBottomWidth = 1;
-                controlRow.style.borderLeftWidth = 1;
-                controlRow.style.borderRightWidth = 1;
-                controlRow.style.borderTopColor = SectionDivider;
-                controlRow.style.borderBottomColor = SectionDivider;
-                controlRow.style.borderLeftColor = SectionDivider;
-                controlRow.style.borderRightColor = SectionDivider;
-                controlRow.style.borderTopLeftRadius = 3;
-                controlRow.style.borderTopRightRadius = 3;
-                controlRow.style.borderBottomLeftRadius = 3;
-                controlRow.style.borderBottomRightRadius = 3;
-                controlRow.style.backgroundColor = i % 2 == 0 ? ListRowEvenBg : ListRowOddBg;
+                VisualElement controlRow = CreateListGroup();
                 m_ChannelRowMap[channel.Name] = controlRow;
 
-                VisualElement channelHeader = new VisualElement();
-                channelHeader.style.flexDirection = FlexDirection.Row;
-                channelHeader.style.alignItems = Align.Center;
+                VisualElement channelHeader = CreateListHeader(0);
                 channelHeader.tooltip = "单击 channel 名称展开/收起配置和预览调试信息；右键 Rename 编辑名称。";
 
-                Label channelFoldoutLabel = new("▾");
-                channelFoldoutLabel.style.width = 14;
-                channelFoldoutLabel.style.flexShrink = 0;
-                channelFoldoutLabel.style.color = TextMuted;
-                channelFoldoutLabel.style.fontSize = BodyFontSize;
+                Label channelFoldoutLabel = CreateFoldoutGlyph(true);
                 channelHeader.Add(channelFoldoutLabel);
 
                 EditableLabel channelLabel = new(channel.Name);
@@ -1801,6 +1892,7 @@ namespace XAnimationEditor
                 controlRow.Add(channelHeader);
 
                 VisualElement channelContent = new VisualElement();
+                ApplyPrettyContentStyle(channelContent);
                 VisualElement configBox = CreateSubBox();
                 configBox.Add(CreateChannelConfigEditor(channel));
                 channelContent.Add(configBox);
@@ -1811,7 +1903,7 @@ namespace XAnimationEditor
                 stateLabel.style.whiteSpace = WhiteSpace.Normal;
                 stateLabel.style.fontSize = 11;
                 stateLabel.style.color = TextMuted;
-                stateLabel.style.marginBottom = 4;
+                stateLabel.style.marginBottom = 2;
                 stateLabel.style.height = ChannelStateLabelHeight;
                 stateLabel.style.minHeight = ChannelStateLabelHeight;
                 stateLabel.style.maxHeight = ChannelStateLabelHeight;
@@ -1839,7 +1931,8 @@ namespace XAnimationEditor
 
                     bool expanded = channelContent.style.display != DisplayStyle.None;
                     channelContent.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
-                    channelFoldoutLabel.text = expanded ? "▸" : "▾";
+                    channelHeader.style.borderBottomWidth = expanded ? 0f : PrettyBorderWidth;
+                    SetFoldoutGlyphText(channelFoldoutLabel, !expanded);
                     evt.StopPropagation();
                 });
 

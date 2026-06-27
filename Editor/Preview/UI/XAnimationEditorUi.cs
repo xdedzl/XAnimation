@@ -34,18 +34,23 @@ namespace XAnimationEditor
         public const float SectionTitleFontSize = 12f;
         public const float BodyFontSize = 11f;
         public const float ClipIconButtonSize = 22f;
+        public const float FoldoutGlyphWidth = 14f;
+        public const float PrettyHeaderHeight = 26f;
+        public const float PrettyRowMinHeight = 22f;
+        public const float PrettyBorderWidth = 1f;
+        public const float PrettyBodyPadding = 3f;
 
-        public static readonly Color PaneBorder = new(0.30f, 0.30f, 0.32f, 1f);
+        public static readonly Color PaneBorder = new(0.07f, 0.07f, 0.07f, 1f);
         public static readonly Color AccentColor = new(0.30f, 0.55f, 0.95f, 1f);
         public static readonly Color DangerColor = new(0.75f, 0.25f, 0.25f, 1f);
         public static readonly Color TextMuted = new(0.60f, 0.60f, 0.62f, 1f);
         public static readonly Color TextNormal = new(0.85f, 0.85f, 0.87f, 1f);
-        public static readonly Color SectionDivider = new(0.28f, 0.28f, 0.30f, 1f);
+        public static readonly Color SectionDivider = PaneBorder;
         public static readonly Color HoverBg = new(0.24f, 0.24f, 0.26f, 1f);
-        public static readonly Color ListGroupBg = new(0.17f, 0.18f, 0.20f, 1f);
+        public static readonly Color ListGroupBg = new(0.15f, 0.15f, 0.15f, 1f);
         public static readonly Color ListRowEvenBg = new(0.16f, 0.16f, 0.17f, 1f);
         public static readonly Color ListRowOddBg = new(0.19f, 0.19f, 0.20f, 1f);
-        public static readonly Color ListHeaderBg = new(0.22f, 0.23f, 0.25f, 1f);
+        public static readonly Color ListHeaderBg = new(0.20f, 0.20f, 0.20f, 1f);
         public static readonly Color PlayingBg = new(0.20f, 0.35f, 0.55f, 0.65f);
         public static readonly Color ProgressFillBg = new(0.20f, 0.55f, 0.95f, 0.55f);
 
@@ -54,23 +59,11 @@ namespace XAnimationEditor
             bool hasVisibleTitle = !string.IsNullOrWhiteSpace(titleText);
             VisualElement card = new();
             card.style.marginBottom = 2;
-            SetPadding(card, 3);
-            SetBorder(card, SectionDivider, 1, 3);
+            SetBorder(card, PaneBorder, PrettyBorderWidth);
             card.style.backgroundColor = new Color(0.15f, 0.15f, 0.16f, 1f);
 
             VisualElement titleRow = Row();
-            titleRow.style.marginBottom = 2;
-            titleRow.style.paddingBottom = 2;
-            titleRow.style.borderBottomWidth = 1;
-            titleRow.style.borderBottomColor = SectionDivider;
-
-            VisualElement accent = new();
-            accent.style.width = 2;
-            accent.style.height = 11;
-            accent.style.backgroundColor = AccentColor;
-            SetRadius(accent, 2);
-            accent.style.marginRight = 4;
-            titleRow.Add(accent);
+            ApplyPrettyHeaderStyle(titleRow);
 
             Label label = new(titleText);
             label.style.unityFontStyleAndWeight = FontStyle.Bold;
@@ -114,6 +107,7 @@ namespace XAnimationEditor
             VisualElement titleRow = card[0];
             Label label = titleRow.Q<Label>();
             VisualElement content = new();
+            ApplyPrettyContentStyle(content);
             content.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
             card.Add(content);
 
@@ -124,14 +118,10 @@ namespace XAnimationEditor
                 content.style.display = value ? DisplayStyle.Flex : DisplayStyle.None;
                 if (label != null)
                 {
-                    label.text = string.IsNullOrWhiteSpace(titleText)
-                        ? value ? "▾" : "▸"
-                        : value ? $"▾ {titleText}" : $"▸ {titleText}";
+                    label.text = FormatFoldoutTitleText(value, titleText);
                 }
 
-                titleRow.style.marginBottom = value ? 2 : 0;
-                titleRow.style.paddingBottom = value ? 2 : 0;
-                titleRow.style.borderBottomWidth = value ? 1 : 0;
+                titleRow.style.borderBottomWidth = value ? PrettyBorderWidth : 0f;
             }
 
             ApplyExpanded(expanded);
@@ -176,21 +166,13 @@ namespace XAnimationEditor
             bool allowActionAreaBackgroundToggle = false)
         {
             VisualElement root = CreateSubBox();
+            SetPadding(root, 0);
             VisualElement header = Row();
-            header.style.marginBottom = 0;
-            header.style.paddingBottom = 0;
+            ApplyPrettyHeaderStyle(header);
 
             bool hasVisibleTitle = !string.IsNullOrWhiteSpace(titleText);
-            Label toggleLabel = new();
-            toggleLabel.style.color = TextNormal;
-            toggleLabel.style.fontSize = BodyFontSize;
-            toggleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
-            toggleLabel.style.flexShrink = 0;
-            toggleLabel.style.width = 16;
-            toggleLabel.style.minWidth = 16;
-            toggleLabel.style.maxWidth = 16;
-            toggleLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
-            toggleLabel.style.marginRight = hasVisibleTitle ? 2 : 4;
+            Label toggleLabel = CreateFoldoutGlyph(expanded);
+            toggleLabel.style.marginRight = hasVisibleTitle ? 0 : 4;
 
             Label label = new();
             label.style.color = TextNormal;
@@ -214,7 +196,7 @@ namespace XAnimationEditor
             }
 
             VisualElement content = new();
-            content.style.marginTop = 4;
+            ApplyPrettyContentStyle(content);
             root.Add(header);
             root.Add(content);
 
@@ -245,12 +227,12 @@ namespace XAnimationEditor
             {
                 bool toggleable = canToggle?.Invoke() ?? true;
                 bool isExpanded = toggleable && expanded;
-                toggleLabel.text = isExpanded ? "▾" : "▸";
+                SetFoldoutGlyphText(toggleLabel, isExpanded);
                 label.text = hasVisibleTitle ? titleText : string.Empty;
                 toggleLabel.style.color = toggleable ? TextNormal : TextMuted;
                 label.style.color = toggleable ? TextNormal : TextMuted;
                 content.style.display = isExpanded ? DisplayStyle.Flex : DisplayStyle.None;
-                header.style.marginBottom = isExpanded ? 3 : 0;
+                header.style.borderBottomWidth = isExpanded ? PrettyBorderWidth : 0f;
             }
 
             void ApplyExpanded(bool value)
@@ -285,54 +267,75 @@ namespace XAnimationEditor
         public static VisualElement CreateSubBox()
         {
             VisualElement box = new();
-            box.style.marginTop = 3;
-            SetPadding(box, 4);
-            SetBorder(box, SectionDivider, 1, 3);
-            box.style.backgroundColor = new Color(0.14f, 0.14f, 0.15f, 1f);
+            box.style.marginTop = 2;
+            SetPadding(box, PrettyBodyPadding);
+            SetBorder(box, PaneBorder, PrettyBorderWidth);
+            box.style.backgroundColor = ListGroupBg;
             return box;
         }
 
-        public static VisualElement CreateListGroup(float marginBottom = 3f, float marginLeft = 0f)
+        public static VisualElement CreateListGroup(float marginBottom = 2f, float marginLeft = 0f)
         {
             VisualElement group = new();
             group.style.marginBottom = marginBottom;
             group.style.marginLeft = marginLeft;
-            SetPadding(group, 3);
-            group.style.paddingBottom = 2;
+            SetPadding(group, 0);
             group.style.backgroundColor = ListGroupBg;
-            SetBorder(group, SectionDivider, 1, 3);
+            SetBorder(group, PaneBorder, PrettyBorderWidth);
             return group;
         }
 
         public static VisualElement CreateNestedListGroup()
         {
             VisualElement group = CreateListGroup(marginBottom: 0f, marginLeft: 4f);
-            group.style.marginTop = 3;
-            group.style.paddingLeft = 1;
-            group.style.paddingRight = 3;
-            group.style.paddingBottom = 3;
-            group.style.backgroundColor = new Color(0.15f, 0.16f, 0.18f, 1f);
+            group.style.marginTop = 2;
+            group.style.backgroundColor = new Color(0.15f, 0.15f, 0.16f, 1f);
             return group;
         }
 
-        public static VisualElement CreateListHeader(float marginBottom = 2f)
+        public static VisualElement CreateListHeader(float marginBottom = 0f)
         {
             VisualElement header = Row();
             header.style.marginBottom = marginBottom;
-            SetPadding(header, 2, 3);
-            header.style.backgroundColor = ListHeaderBg;
-            SetRadius(header, 3);
+            ApplyPrettyHeaderStyle(header);
+            header.style.borderBottomWidth = PrettyBorderWidth;
             return header;
         }
 
         public static Label CreateFoldoutGlyph(bool expanded)
         {
-            Label label = new(expanded ? "▾" : "▸");
-            label.style.width = 14;
-            label.style.flexShrink = 0;
-            label.style.color = TextMuted;
-            label.style.fontSize = BodyFontSize;
+            Label label = new();
+            ApplyFoldoutGlyphStyle(label);
+            SetFoldoutGlyphText(label, expanded);
             return label;
+        }
+
+        public static void SetFoldoutGlyphText(Label label, bool expanded)
+        {
+            if (label == null)
+            {
+                return;
+            }
+
+            label.text = expanded ? "▾" : "▸";
+        }
+
+        public static string FormatFoldoutTitleText(bool expanded, string titleText)
+        {
+            string glyph = expanded ? "▾" : "▸";
+            return string.IsNullOrWhiteSpace(titleText) ? glyph : $"{glyph} {titleText}";
+        }
+
+        private static void ApplyFoldoutGlyphStyle(Label label)
+        {
+            label.style.width = FoldoutGlyphWidth;
+            label.style.minWidth = FoldoutGlyphWidth;
+            label.style.maxWidth = FoldoutGlyphWidth;
+            label.style.flexShrink = 0;
+            label.style.color = TextNormal;
+            label.style.fontSize = SectionTitleFontSize;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            label.style.unityTextAlign = TextAnchor.MiddleCenter;
         }
 
         public static Label CreateSmallInfoLabel(string text)
@@ -365,7 +368,7 @@ namespace XAnimationEditor
             VisualElement container = new();
             container.style.position = Position.Relative;
             container.style.overflow = Overflow.Hidden;
-            SetRadius(container, 2);
+            container.style.minHeight = PrettyRowMinHeight;
             container.style.backgroundColor = RowBaseColor(rowIndex);
             return container;
         }
@@ -373,14 +376,15 @@ namespace XAnimationEditor
         public static VisualElement CreateRowContainer(int rowIndex)
         {
             VisualElement container = CreateInteractiveRowContainer(rowIndex);
-            container.style.marginBottom = 2;
+            container.style.marginBottom = 0;
             return container;
         }
 
         public static VisualElement CreateRowContent()
         {
             VisualElement row = Row();
-            SetPadding(row, 3, 4);
+            SetPadding(row, 2, 4);
+            row.style.minHeight = PrettyRowMinHeight;
             row.style.position = Position.Relative;
             return row;
         }
@@ -739,6 +743,22 @@ namespace XAnimationEditor
             element.style.height = height;
             element.style.minHeight = height;
             element.style.maxHeight = height;
+        }
+
+        public static void ApplyPrettyHeaderStyle(VisualElement header)
+        {
+            header.style.height = PrettyHeaderHeight;
+            header.style.minHeight = PrettyHeaderHeight;
+            header.style.maxHeight = PrettyHeaderHeight;
+            header.style.backgroundColor = ListHeaderBg;
+            header.style.borderBottomColor = PaneBorder;
+            header.style.borderBottomWidth = 0f;
+            SetPadding(header, 0, 0);
+        }
+
+        public static void ApplyPrettyContentStyle(VisualElement content)
+        {
+            SetPadding(content, 2, PrettyBodyPadding);
         }
 
         public static VisualElement Row()

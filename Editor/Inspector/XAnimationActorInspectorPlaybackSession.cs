@@ -107,6 +107,12 @@ namespace XAnimationEditor
             m_EditorActor.PlayState(stateKey, transition);
         }
 
+        public void PlayState(XAnimationActor actor, string channelName, string stateKey, XAnimationTransitionOptions transition)
+        {
+            EnsureLoaded(actor);
+            m_EditorActor.PlayState(channelName, stateKey, transition);
+        }
+
         public void PlayClip(XAnimationActor actor, string clipKey, string channelName, XAnimationTransitionOptions transition)
         {
             EnsureLoaded(actor);

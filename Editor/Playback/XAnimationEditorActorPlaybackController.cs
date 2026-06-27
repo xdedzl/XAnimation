@@ -704,7 +704,7 @@ namespace XAnimationEditor
                     else
                     {
                         actor.GlobalSpeed = XAnimationPlaybackHudView.ClampSpeed(speed);
-                        actor.PlayState(state.key, transition);
+                        actor.PlayState(state.channelName, state.key, transition);
                         SetStatus($"正在播放 state {state.key}。");
                     }
                 }
@@ -723,7 +723,7 @@ namespace XAnimationEditor
                     else
                     {
                         m_EditModeSession.SetGlobalSpeed(XAnimationPlaybackHudView.ClampSpeed(speed));
-                        m_EditModeSession.PlayState(actor, state.key, transition);
+                        m_EditModeSession.PlayState(actor, state.channelName, state.key, transition);
                         SetStatus($"正在当前 Actor 上预览 state {state.key}。");
                     }
                 }
@@ -903,7 +903,7 @@ namespace XAnimationEditor
                 if (Application.isPlaying)
                 {
                     m_Actor.GlobalSpeed = m_Settings.Speed;
-                    m_Actor.PlayState(state.key, BuildTransitionOptions());
+                    m_Actor.PlayState(state.channelName, state.key, BuildTransitionOptions());
                     SetStatus($"正在播放 state {state.key}。");
                     XAnimationSceneOverlaySelection.RequestRepaint();
                     return true;
@@ -912,7 +912,7 @@ namespace XAnimationEditor
                 m_EditModeSession.EnsureLoaded(m_Actor);
                 m_EditModeSession.SetGlobalSpeed(m_Settings.Speed);
                 m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
-                m_EditModeSession.PlayState(m_Actor, state.key, BuildTransitionOptions());
+                m_EditModeSession.PlayState(m_Actor, state.channelName, state.key, BuildTransitionOptions());
                 SetStatus($"正在当前 Actor 上预览 state {state.key}。");
                 XAnimationSceneOverlaySelection.RequestRepaint();
                 return true;

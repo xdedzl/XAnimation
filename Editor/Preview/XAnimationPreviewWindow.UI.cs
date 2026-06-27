@@ -341,6 +341,7 @@ namespace XAnimationEditor
                 if (m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition)
                 {
                     RebuildDefaultTransitionTab();
+                    m_DefaultTransitionGraphView?.RefreshViewportAfterLayout();
                 }
             }
 
@@ -469,8 +470,8 @@ namespace XAnimationEditor
             m_MainGroupContainer = CreateDebugTabContainer();
             m_InspectorScrollView.Add(m_MainGroupContainer);
 
-            m_ClipGroupContainer = CreateDebugTabContainer();
-            m_InspectorScrollView.Add(m_ClipGroupContainer);
+            m_ClipTabContainer = CreateDebugTabContainer();
+            m_InspectorScrollView.Add(m_ClipTabContainer);
 
             m_ChannelsGroupContainer = CreateDebugTabContainer();
             m_InspectorScrollView.Add(m_ChannelsGroupContainer);
@@ -502,7 +503,7 @@ namespace XAnimationEditor
 
         private void ComposeClipTab()
         {
-            m_ClipGroupContainer.Add(CreateClipsSection().Root);
+            m_ClipTabContainer.Add(CreateClipsSection().Root);
         }
 
         private void ComposeChannelsTab()
@@ -754,15 +755,14 @@ namespace XAnimationEditor
         {
             m_AddClipButton = CreateStyledButton("+", AddClip, AccentColor);
             m_AddClipButton.tooltip = "新增一个全局 clip 资源叶子。";
-            m_AddClipGroupButton = CreateStyledButton("+ Group", AddClipGroup, AccentColor);
-            m_AddClipGroupButton.tooltip = "新建一个 clip group。";
+            m_AddClipGroupButton = CreateStyledButton("+ Group", () => AddClipGroup(string.Empty), AccentColor, 4);
+            m_AddClipGroupButton.tooltip = "在根层级新增一个 clip folder。";
             SetAddClipButtonEnabled(false);
 
             VisualElement clipActions = new VisualElement();
             clipActions.style.flexDirection = FlexDirection.Row;
             clipActions.style.alignItems = Align.Center;
             clipActions.Add(m_AddClipButton);
-            m_AddClipGroupButton.style.marginLeft = 4;
             clipActions.Add(m_AddClipGroupButton);
 
             m_ClipsCard = CreateFoldoutCard("Clips", m_ClipsSectionExpanded, value => m_ClipsSectionExpanded = value, clipActions);
@@ -808,6 +808,7 @@ namespace XAnimationEditor
             frame.Header.style.marginBottom = BlendGraphOverlayHeaderMarginBottomExpanded;
             frame.Header.tooltip = "拖拽标题栏可以移动这个 Blend Graph HUD，点击标题栏可展开或收起。";
             m_FreeformBlendGraphOverlayHeader = frame.Header;
+            m_FreeformBlendGraphFoldoutLabel = frame.FoldoutLabel;
             m_FreeformBlendGraphTitleLabel = frame.TitleLabel;
             m_FreeformBlendGraphOverlayContent = frame.Content;
             m_FreeformBlendGraphElement = frame.DirectionalGraph;
@@ -1099,9 +1100,8 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_FreeformBlendGraphTitleLabel.text = m_FreeformBlendGraphOverlayExpanded
-                ? $"▾ {m_FreeformBlendGraphTitleText}"
-                : $"▸ {m_FreeformBlendGraphTitleText}";
+            SetFoldoutGlyphText(m_FreeformBlendGraphFoldoutLabel, m_FreeformBlendGraphOverlayExpanded);
+            m_FreeformBlendGraphTitleLabel.text = m_FreeformBlendGraphTitleText;
         }
 
         private void ClampFreeformBlendGraphOverlayPosition()

@@ -58,7 +58,6 @@ namespace XAnimationEngine
             XAnimationCompiledClip clip = new(new XAnimationClipConfig
             {
                 key = clipKey,
-                editorGroupName = string.Empty,
                 clipPath = string.Empty,
             }, animationClip);
             m_Runtime.RegisterDirectClipCues(clip.Key, clip.AnimationEventCues);
@@ -77,6 +76,17 @@ namespace XAnimationEngine
         internal XAnimationPlaybackStartInfo StartStatePlayback(string stateKey, XAnimationTransitionOptions transition, bool force)
         {
             XAnimationCompiledState state = CompiledAsset.GetState(stateKey);
+            return StartStatePlayback(state, transition, force);
+        }
+
+        internal XAnimationPlaybackStartInfo StartStatePlayback(string channelName, string stateKey, XAnimationTransitionOptions transition, bool force)
+        {
+            XAnimationCompiledState state = CompiledAsset.GetState(channelName, stateKey);
+            return StartStatePlayback(state, transition, force);
+        }
+
+        private XAnimationPlaybackStartInfo StartStatePlayback(XAnimationCompiledState state, XAnimationTransitionOptions transition, bool force)
+        {
             XAnimationCompiledChannel channel = GetStateChannel(state);
             if (!force &&
                 !CanTransitionFromCurrentPlayback(m_Runtime.GetChannel(channel.Name), state, out XAnimationTransitionRejectReason gateRejectReason))
@@ -102,13 +112,13 @@ namespace XAnimationEngine
                     playback.IsLooping ||
                     playback.IsTemporaryState ||
                     playback.HasCompletedExitOrTransition ||
-                    !CompiledAsset.TryGetStateIndex(playback.StateKey, out int stateIndex))
+                    !CompiledAsset.TryGetStateIndex(channel.Name, playback.StateKey, out int stateIndex))
                 {
                     continue;
                 }
 
                 XAnimationCompiledState state = (XAnimationCompiledState)CompiledAsset.States[stateIndex];
-                bool hasAutoTransition = CompiledAsset.TryGetAutoTransition(state.Key, out XAnimationCompiledAutoTransition autoTransition);
+                bool hasAutoTransition = CompiledAsset.TryGetAutoTransition(channel.Name, state.Key, out XAnimationCompiledAutoTransition autoTransition);
                 float exitThreshold = hasAutoTransition && autoTransition.HasNextState
                     ? autoTransition.ExitTime
                     : 1f;
@@ -127,7 +137,7 @@ namespace XAnimationEngine
                     continue;
                 }
 
-                XAnimationCompiledState nextState = CompiledAsset.GetState(autoTransition.NextStateKey);
+                XAnimationCompiledState nextState = CompiledAsset.GetState(channel.Name, autoTransition.NextStateKey);
                 float fadeIn = autoTransition.TransitionDuration > 0f ? autoTransition.TransitionDuration : channel.CompiledChannel.Config.defaultFadeIn;
                 float fadeOut = autoTransition.TransitionDuration > 0f ? autoTransition.TransitionDuration : channel.CompiledChannel.Config.defaultFadeOut;
                 XAnimationTransitionRequest request = new(channel.Name, nextState.Key, nextState is XAnimationCompiledSingleState singleState ? ResolveSingleStateClip(singleState).Key : string.Empty,
@@ -230,7 +240,7 @@ namespace XAnimationEngine
                 return true;
             }
 
-            string[] allowedNext = GetAllowedNextStateKeys(currentPlayback);
+            string[] allowedNext = GetAllowedNextStateKeys(channel.Name, currentPlayback);
             if (allowedNext.Length > 0 && Array.IndexOf(allowedNext, targetState.Key) < 0)
             {
                 rejectReason = XAnimationTransitionRejectReason.SourceStateDisallowTarget;
@@ -247,14 +257,14 @@ namespace XAnimationEngine
             return true;
         }
 
-        private string[] GetAllowedNextStateKeys(XAnimationStatePlaybackInstance playback)
+        private string[] GetAllowedNextStateKeys(string channelName, XAnimationStatePlaybackInstance playback)
         {
-            if (playback == null)
+            if (string.IsNullOrWhiteSpace(channelName) || playback == null)
             {
                 return Array.Empty<string>();
             }
 
-            if (CompiledAsset.TryGetStateIndex(playback.StateKey, out int stateIndex))
+            if (CompiledAsset.TryGetStateIndex(channelName, playback.StateKey, out int stateIndex))
             {
                 return ((XAnimationCompiledState)CompiledAsset.States[stateIndex]).Config.allowedNextStateKeys ?? Array.Empty<string>();
             }
