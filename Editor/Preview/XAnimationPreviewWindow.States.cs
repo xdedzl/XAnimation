@@ -257,8 +257,26 @@ namespace XAnimationEditor
                         ? DropdownMenuAction.Status.Disabled
                         : DropdownMenuAction.Status.Normal);
 
+                evt.menu.AppendSeparator();
+
                 evt.menu.AppendAction(
-                    "Delete Group",
+                    "Add Folder",
+                    _ => AddStateGroup(channelName, groupName),
+                    _ => m_Session == null || m_Session.IsOverrideAsset
+                        ? DropdownMenuAction.Status.Disabled
+                        : DropdownMenuAction.Status.Normal);
+
+                evt.menu.AppendAction(
+                    "Add State",
+                    _ => AddState(channelName, groupName),
+                    _ => m_Session == null || m_Session.IsOverrideAsset
+                        ? DropdownMenuAction.Status.Disabled
+                        : DropdownMenuAction.Status.Normal);
+
+                evt.menu.AppendSeparator();
+
+                evt.menu.AppendAction(
+                    "Delete Folder",
                     _ => DeleteStateGroup(channelName, groupName),
                     _ => m_Session == null || m_Session.IsOverrideAsset
                         ? DropdownMenuAction.Status.Disabled
@@ -1474,20 +1492,20 @@ namespace XAnimationEditor
                     bool isLoop = state.Config.loop;
                     bool isOccupied = occupiedPreStates.Contains(stateKey);
                     bool isEnabled = isCurrent || (!isLoop && !isOccupied);
-                    string groupName = NormalizeStateEditorGroupName(state.Config.editorGroupName);
-                    bool isGrouped = !string.IsNullOrWhiteSpace(groupName);
-                    string title = isGrouped
-                        ? $"{state.Config.channelName} - {groupName} / {stateKey}"
+                    string parentPath = GetStatePathParent(stateKey);
+                    bool hasParentPath = !string.IsNullOrWhiteSpace(parentPath);
+                    string title = hasParentPath
+                        ? $"{state.Config.channelName} - {FormatStateDisplayPath(parentPath)} / {GetStatePathLeafName(stateKey)}"
                         : $"{state.Config.channelName} - {stateKey}";
                     string detail = isLoop && !isCurrent
                         ? "循环 state 不能配置 Auto Transition"
                         : isOccupied
                             ? "已存在 Auto Transition"
-                            : isGrouped
-                                ? $"group={groupName}"
+                            : hasParentPath
+                                ? $"path={FormatStateDisplayPath(parentPath)}"
                                 : string.Empty;
-                    string searchText = $"{stateKey} {state.Config.channelName} {groupName} {title} {detail}";
-                    string groupKey = isGrouped ? $"{state.Config.channelName} - {groupName}" : string.Empty;
+                    string searchText = $"{stateKey} {state.Config.channelName} {parentPath} {title} {detail}";
+                    string groupKey = hasParentPath ? $"{state.Config.channelName} - {parentPath}" : string.Empty;
                     entries.Add(new SearchableSelectionItem(stateKey, title, detail, searchText, groupKey, isEnabled: isEnabled));
                 }
             }
@@ -1547,10 +1565,51 @@ namespace XAnimationEditor
             return string.Equals(value, "None", StringComparison.Ordinal) ? string.Empty : value ?? string.Empty;
         }
 
-        private static string NormalizeStateEditorGroupName(string groupName)
+        private static string NormalizeStatePath(string path)
         {
-            groupName = groupName?.Trim();
-            return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
+            return XAnimationStatePathUtility.NormalizePath(path);
+        }
+
+        private static string FormatStateDisplayPath(string path)
+        {
+            return XAnimationStatePathUtility.FormatDisplayPath(path);
+        }
+
+        private static string GetStatePathParent(string path)
+        {
+            return XAnimationStatePathUtility.GetParentPath(path);
+        }
+
+        private static string GetStatePathLeafName(string path)
+        {
+            return XAnimationStatePathUtility.GetLeafName(path);
+        }
+
+        private static List<string> SplitStatePathSegments(string path)
+        {
+            List<string> segments = new();
+            string normalizedPath = NormalizeStatePath(path);
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return segments;
+            }
+
+            string[] rawSegments = normalizedPath.Split('/');
+            for (int i = 0; i < rawSegments.Length; i++)
+            {
+                string segment = rawSegments[i]?.Trim();
+                if (!string.IsNullOrWhiteSpace(segment))
+                {
+                    segments.Add(segment);
+                }
+            }
+
+            return segments;
+        }
+
+        private static string BuildStatePathKey(string parentPath, string leafName)
+        {
+            return XAnimationStatePathUtility.BuildPath(parentPath, leafName);
         }
 
         private static ClipPathInfo BuildClipPathInfo(XAnimationCompiledClip clip)
@@ -1620,7 +1679,7 @@ namespace XAnimationEditor
 
         private static string BuildStateGroupKey(string channelName, string groupName)
         {
-            return $"{channelName ?? string.Empty}::{NormalizeStateEditorGroupName(groupName)}";
+            return $"{channelName ?? string.Empty}::{NormalizeStatePath(groupName)}";
         }
 
         private static string BuildClipPathKey(string groupName)
@@ -1670,10 +1729,10 @@ namespace XAnimationEditor
             XAnimationCompiledState state = string.IsNullOrWhiteSpace(channelName)
                 ? m_Session.CompiledAsset.GetState(stateKey)
                 : m_Session.CompiledAsset.GetState(channelName, stateKey);
-            string groupName = NormalizeStateEditorGroupName(state?.Config?.editorGroupName);
-            if (!string.IsNullOrWhiteSpace(groupName))
+            string parentPath = GetStatePathParent(state?.Key);
+            if (!string.IsNullOrWhiteSpace(parentPath))
             {
-                SetStateGroupCollapsed(BuildStateGroupKey(state.Config.channelName, groupName), false);
+                SetStateGroupCollapsed(BuildStateGroupKey(state.Config.channelName, parentPath), false);
             }
         }
 
@@ -1759,15 +1818,15 @@ namespace XAnimationEditor
             return false;
         }
 
-        private bool HasStateGroup(string channelName, string groupName)
+        private bool HasStatePath(string channelName, string path)
         {
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 return false;
             }
 
-            groupName = NormalizeStateEditorGroupName(groupName);
-            if (string.IsNullOrWhiteSpace(channelName) || string.IsNullOrWhiteSpace(groupName))
+            path = NormalizeStatePath(path);
+            if (string.IsNullOrWhiteSpace(channelName) || string.IsNullOrWhiteSpace(path))
             {
                 return false;
             }
@@ -1778,7 +1837,8 @@ namespace XAnimationEditor
                 XAnimationCompiledState state = states[i];
                 if (state != null &&
                     string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal) &&
-                    string.Equals(NormalizeStateEditorGroupName(state.Config.editorGroupName), groupName, StringComparison.Ordinal))
+                    (string.Equals(GetStatePathParent(state.Key), path, StringComparison.Ordinal) ||
+                     GetStatePathParent(state.Key).StartsWith($"{path}/", StringComparison.Ordinal)))
                 {
                     return true;
                 }
@@ -1807,7 +1867,7 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                items.Add(new StateSelectionItem(state.Key, state.Config.channelName, state.Config.editorGroupName));
+                items.Add(new StateSelectionItem(state.Key, state.Config.channelName));
             }
 
             return items;
@@ -1856,11 +1916,11 @@ namespace XAnimationEditor
             {
                 StateSelectionItem item = items[i];
                 string title = FormatStateSelectionTitle(item);
-                string detail = item.IsGrouped
-                    ? $"group={item.GroupName}"
+                string detail = item.HasParentPath
+                    ? $"path={FormatStateDisplayPath(item.ParentPath)}"
                     : string.Empty;
-                string searchText = $"{item.StateKey} {item.ChannelName} {item.GroupName} {title}";
-                string groupKey = item.IsGrouped ? $"{item.ChannelName} - {item.GroupName}" : string.Empty;
+                string searchText = $"{item.StateKey} {item.ChannelName} {item.ParentPath} {title}";
+                string groupKey = item.HasParentPath ? $"{item.ChannelName} - {item.ParentPath}" : string.Empty;
                 entries.Add(new SearchableSelectionItem(item.StateKey, title, detail, searchText, groupKey));
             }
 
@@ -1879,11 +1939,11 @@ namespace XAnimationEditor
             {
                 StateSelectionItem item = items[i];
                 string title = FormatStateSelectionTitle(item);
-                string detail = item.IsGrouped
-                    ? $"group={item.GroupName}"
+                string detail = item.HasParentPath
+                    ? $"path={FormatStateDisplayPath(item.ParentPath)}"
                     : string.Empty;
-                string searchText = $"{item.StateKey} {item.ChannelName} {item.GroupName} {title}";
-                string groupKey = item.IsGrouped ? $"{item.ChannelName} - {item.GroupName}" : string.Empty;
+                string searchText = $"{item.StateKey} {item.ChannelName} {item.ParentPath} {title}";
+                string groupKey = item.HasParentPath ? $"{item.ChannelName} - {item.ParentPath}" : string.Empty;
                 entries.Add(new SearchableSelectionItem(BuildStateUiKey(item.ChannelName, item.StateKey), title, detail, searchText, groupKey));
             }
 
@@ -1892,8 +1952,8 @@ namespace XAnimationEditor
 
         private static string FormatStateSelectionTitle(StateSelectionItem item)
         {
-            return item.IsGrouped
-                ? $"{item.ChannelName} - {item.GroupName} / {item.StateKey}"
+            return item.HasParentPath
+                ? $"{item.ChannelName} - {FormatStateDisplayPath(item.ParentPath)} / {item.LeafName}"
                 : $"{item.ChannelName} - {item.StateKey}";
         }
 

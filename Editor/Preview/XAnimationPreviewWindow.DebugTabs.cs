@@ -332,13 +332,13 @@ namespace XAnimationEditor
                 }
 
                 string stateKey = state.Key;
-                string groupName = NormalizeStateEditorGroupName(state.Config.editorGroupName);
-                string groupSearchText = string.IsNullOrWhiteSpace(groupName) ? string.Empty : $" group={groupName}";
+                string parentPath = GetStatePathParent(stateKey);
+                string pathSearchText = string.IsNullOrWhiteSpace(parentPath) ? string.Empty : $" path={parentPath}";
                 AddSearchEntry(
                     SearchEntryType.State,
                     stateKey,
-                    $"{state.StateType} | channel={state.Config.channelName}{groupSearchText}",
-                    $"{stateKey} {state.Config.channelName} {groupName} {state.Config.clipKey} {state.Config.parameterName}",
+                    $"{state.StateType} | channel={state.Config.channelName}{pathSearchText}",
+                    $"{stateKey} {state.Config.channelName} {parentPath} {state.Config.clipKey} {state.Config.parameterName}",
                     () => FocusStateInInspector(stateKey));
             }
 

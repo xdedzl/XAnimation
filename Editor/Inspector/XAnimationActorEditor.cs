@@ -18,19 +18,20 @@ namespace XAnimationEditor
         private const float PlaybackSpeedMax = 2f;
         private const string NullStateKeyDisplayName = "[NULL]";
 
-        private sealed class StateGroupBucket
+        private sealed class StatePathNode
         {
-            public StateGroupBucket(string channelName, string groupName)
+            public StatePathNode(string name, string fullPath)
             {
-                ChannelName = channelName ?? string.Empty;
-                GroupName = groupName ?? string.Empty;
-                States = new List<XAnimationStateConfig>(); 
+                Name = name ?? string.Empty;
+                FullPath = fullPath ?? string.Empty;
+                Children = new List<StatePathNode>();
+                States = new List<XAnimationStateConfig>();
             }
 
-            public string ChannelName { get; }
-            public string GroupName { get; }
+            public string Name { get; }
+            public string FullPath { get; }
+            public List<StatePathNode> Children { get; }
             public List<XAnimationStateConfig> States { get; }
-            public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
         private sealed class ClipPathNode
@@ -619,7 +620,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            Dictionary<string, List<StateGroupBucket>> statesByChannel = new(StringComparer.Ordinal);
+            Dictionary<string, StatePathNode> statesByChannel = new(StringComparer.Ordinal);
             for (int i = 0; i < asset.channels.Length; i++)
             {
                 XAnimationChannelConfig channel = asset.channels[i];
@@ -628,7 +629,7 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                statesByChannel[channel.name] = new List<StateGroupBucket>();
+                statesByChannel[channel.name] = new StatePathNode(string.Empty, string.Empty);
             }
 
             for (int i = 0; i < asset.states.Length; i++)
@@ -640,21 +641,21 @@ namespace XAnimationEditor
                 }
 
                 string channelName = state.channelName ?? string.Empty;
-                if (!statesByChannel.TryGetValue(channelName, out List<StateGroupBucket> channelStates))
+                if (!statesByChannel.TryGetValue(channelName, out StatePathNode rootNode))
                 {
-                    channelStates = new List<StateGroupBucket>();
-                    statesByChannel[channelName] = channelStates;
+                    rootNode = new StatePathNode(string.Empty, string.Empty);
+                    statesByChannel[channelName] = rootNode;
                 }
 
-                string groupName = NormalizeStateEditorGroupName(state.editorGroupName);
-                StateGroupBucket bucket = FindStateGroupBucket(channelStates, groupName);
-                if (bucket == null)
+                string parentPath = GetStatePathParent(state.key);
+                if (string.IsNullOrWhiteSpace(parentPath))
                 {
-                    bucket = new StateGroupBucket(channelName, groupName);
-                    channelStates.Add(bucket);
+                    rootNode.States.Add(state);
+                    continue;
                 }
 
-                bucket.States.Add(state);
+                StatePathNode node = FindOrCreateStatePathNode(rootNode, parentPath);
+                node.States.Add(state);
             }
 
             for (int i = 0; i < asset.channels.Length; i++)
@@ -665,12 +666,12 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                statesByChannel.TryGetValue(channel.name, out List<StateGroupBucket> channelStates);
-                m_StatesListView.Add(CreateStateChannelGroup(channel, channelStates ?? new List<StateGroupBucket>()));
+                statesByChannel.TryGetValue(channel.name, out StatePathNode rootNode);
+                m_StatesListView.Add(CreateStateChannelGroup(channel, rootNode ?? new StatePathNode(string.Empty, string.Empty)));
             }
         }
 
-        private VisualElement CreateStateChannelGroup(XAnimationChannelConfig channel, List<StateGroupBucket> channelStates)
+        private VisualElement CreateStateChannelGroup(XAnimationChannelConfig channel, StatePathNode rootNode)
         {
             VisualElement group = CreateListGroup();
             string channelKey = BuildStateChannelKey(channel.name);
@@ -687,10 +688,10 @@ namespace XAnimationEditor
             title.style.minWidth = 0;
             header.Add(title);
 
-            int stateCount = CountStatesInBuckets(channelStates);
-            int groupedCount = CountGroupedBuckets(channelStates);
+            int stateCount = CountStatePathNodeStates(rootNode);
+            int groupedCount = CountStatePathNodeFolders(rootNode);
             Label info = CreateSmallInfoLabel(groupedCount > 0
-                ? $"{channel.layerType} | {stateCount} states | {groupedCount} groups"
+                ? $"{channel.layerType} | {stateCount} states | {groupedCount} folders"
                 : $"{channel.layerType} | {stateCount} states");
             header.Add(info);
 
@@ -698,25 +699,14 @@ namespace XAnimationEditor
             content.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
 
             int rowIndex = 0;
-            for (int i = 0; i < channelStates.Count; i++)
+            for (int i = 0; i < rootNode.Children.Count; i++)
             {
-                StateGroupBucket bucket = channelStates[i];
-                if (bucket == null)
-                {
-                    continue;
-                }
+                content.Add(CreateStatePathGroup(channel.name, rootNode.Children[i], ref rowIndex));
+            }
 
-                if (bucket.IsUngrouped)
-                {
-                    for (int stateIndex = 0; stateIndex < bucket.States.Count; stateIndex++)
-                    {
-                        content.Add(CreateStateRow(bucket.States[stateIndex], rowIndex++));
-                    }
-
-                    continue;
-                }
-
-                content.Add(CreateStateEditorGroup(channel.name, bucket, ref rowIndex));
+            for (int i = 0; i < rootNode.States.Count; i++)
+            {
+                content.Add(CreateStateRow(rootNode.States[i], rowIndex++));
             }
 
             if (stateCount == 0)
@@ -742,29 +732,35 @@ namespace XAnimationEditor
             return group;
         }
 
-        private VisualElement CreateStateEditorGroup(string channelName, StateGroupBucket bucket, ref int rowIndex)
+        private VisualElement CreateStatePathGroup(string channelName, StatePathNode node, ref int rowIndex)
         {
             VisualElement group = CreateNestedListGroup();
-            string groupKey = BuildStateGroupKey(channelName, bucket.GroupName);
+            string groupKey = BuildStateGroupKey(channelName, node.FullPath);
 
             VisualElement header = CreateListHeader();
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            Label title = CreateBoldLabel(bucket.GroupName);
+            Label title = CreateBoldLabel(node.Name);
             title.style.flexGrow = 1;
             title.style.minWidth = 0;
+            title.tooltip = FormatStateDisplayPath(node.FullPath);
             header.Add(title);
 
-            Label info = CreateSmallInfoLabel($"{bucket.States.Count} states");
+            Label info = CreateSmallInfoLabel($"{CountStatePathNodeStates(node)} states");
             header.Add(info);
             group.Add(header);
 
             VisualElement content = new VisualElement();
             content.style.display = IsStateGroupCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
-            for (int i = 0; i < bucket.States.Count; i++)
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                content.Add(CreateStateRow(bucket.States[i], rowIndex++));
+                content.Add(CreateStatePathGroup(channelName, node.Children[i], ref rowIndex));
+            }
+
+            for (int i = 0; i < node.States.Count; i++)
+            {
+                content.Add(CreateStateRow(node.States[i], rowIndex++));
             }
 
             header.RegisterCallback<MouseDownEvent>(evt =>
@@ -810,7 +806,8 @@ namespace XAnimationEditor
             VisualElement row = CreateRowContent();
             container.Add(row);
 
-            Label nameLabel = new(state.key);
+            Label nameLabel = new(XAnimationStatePathUtility.GetLeafName(state.key));
+            nameLabel.tooltip = XAnimationStatePathUtility.FormatDisplayPath(state.key);
             nameLabel.style.width = 140;
             nameLabel.style.flexShrink = 0;
             nameLabel.style.color = TextNormal;
@@ -2065,15 +2062,24 @@ namespace XAnimationEditor
             ApplyRowVisualState(row, visualState);
         }
 
-        private static string NormalizeStateEditorGroupName(string groupName)
+        private static string NormalizeStatePath(string path)
         {
-            groupName = groupName?.Trim();
-            return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
+            return XAnimationStatePathUtility.NormalizePath(path);
+        }
+
+        private static string FormatStateDisplayPath(string path)
+        {
+            return XAnimationStatePathUtility.FormatDisplayPath(path);
+        }
+
+        private static string GetStatePathParent(string path)
+        {
+            return XAnimationStatePathUtility.GetParentPath(path);
         }
 
         private static string BuildStateGroupKey(string channelName, string groupName)
         {
-            return $"{channelName ?? string.Empty}::{NormalizeStateEditorGroupName(groupName)}";
+            return $"{channelName ?? string.Empty}::{NormalizeStatePath(groupName)}";
         }
 
         private static string BuildStateChannelKey(string channelName)
@@ -2153,25 +2159,67 @@ namespace XAnimationEditor
             }
         }
 
-        private static StateGroupBucket FindStateGroupBucket(List<StateGroupBucket> buckets, string groupName)
+        private static StatePathNode FindOrCreateStatePathNode(StatePathNode rootNode, string path)
         {
-            if (buckets == null)
+            StatePathNode currentNode = rootNode;
+            List<string> segments = SplitStatePathSegments(path);
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                string segment = segments[i];
+                currentPath = string.IsNullOrWhiteSpace(currentPath) ? segment : $"{currentPath}/{segment}";
+                StatePathNode nextNode = FindStatePathChild(currentNode, segment);
+                if (nextNode == null)
+                {
+                    nextNode = new StatePathNode(segment, currentPath);
+                    currentNode.Children.Add(nextNode);
+                }
+
+                currentNode = nextNode;
+            }
+
+            return currentNode;
+        }
+
+        private static StatePathNode FindStatePathChild(StatePathNode node, string name)
+        {
+            if (node == null)
             {
                 return null;
             }
 
-            groupName = NormalizeStateEditorGroupName(groupName);
-            for (int i = 0; i < buckets.Count; i++)
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                StateGroupBucket bucket = buckets[i];
-                if (bucket != null &&
-                    string.Equals(NormalizeStateEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
+                StatePathNode child = node.Children[i];
+                if (child != null && string.Equals(child.Name, name, StringComparison.Ordinal))
                 {
-                    return bucket;
+                    return child;
                 }
             }
 
             return null;
+        }
+
+        private static List<string> SplitStatePathSegments(string path)
+        {
+            List<string> segments = new();
+            string normalizedPath = NormalizeStatePath(path);
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return segments;
+            }
+
+            string[] rawSegments = normalizedPath.Split('/');
+            for (int i = 0; i < rawSegments.Length; i++)
+            {
+                string segment = rawSegments[i]?.Trim();
+                if (!string.IsNullOrWhiteSpace(segment))
+                {
+                    segments.Add(segment);
+                }
+            }
+
+            return segments;
         }
 
         private static string NormalizeClipPathKey(string path)
@@ -2216,36 +2264,33 @@ namespace XAnimationEditor
                 : normalizedPath;
         }
 
-        private static int CountStatesInBuckets(List<StateGroupBucket> buckets)
+        private static int CountStatePathNodeStates(StatePathNode node)
         {
-            int count = 0;
-            if (buckets == null)
+            if (node == null)
             {
-                return count;
+                return 0;
             }
 
-            for (int i = 0; i < buckets.Count; i++)
+            int count = node.States.Count;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                count += buckets[i]?.States?.Count ?? 0;
+                count += CountStatePathNodeStates(node.Children[i]);
             }
 
             return count;
         }
 
-        private static int CountGroupedBuckets(List<StateGroupBucket> buckets)
+        private static int CountStatePathNodeFolders(StatePathNode node)
         {
-            int count = 0;
-            if (buckets == null)
+            if (node == null)
             {
-                return count;
+                return 0;
             }
 
-            for (int i = 0; i < buckets.Count; i++)
+            int count = string.IsNullOrWhiteSpace(node.FullPath) ? 0 : 1;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                if (buckets[i] != null && !buckets[i].IsUngrouped)
-                {
-                    count++;
-                }
+                count += CountStatePathNodeFolders(node.Children[i]);
             }
 
             return count;

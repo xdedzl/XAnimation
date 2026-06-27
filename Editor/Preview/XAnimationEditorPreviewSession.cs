@@ -868,7 +868,7 @@ namespace XAnimationEditor
             RebuildDriverAndSave();
         }
 
-        public string AddState(string channelName, string groupName = null)
+        public string AddState(string channelName, string parentPath = null)
         {
             EnsureBaseAssetEditable();
             m_CompiledAsset.GetChannel(channelName);
@@ -879,11 +879,10 @@ namespace XAnimationEditor
                 throw new XAnimationException("Cannot add state because no template clip exists.");
             }
 
-            string stateKey = CreateUniqueStateKey("NewState");
+            string stateKey = CreateUniqueStateKey(BuildStatePathKey(parentPath, "NewState"));
             asset.states = AppendItem(asset.states, new XAnimationStateConfig
             {
                 key = stateKey,
-                editorGroupName = NormalizeEditorGroupName(groupName),
                 stateType = XAnimationStateType.Single,
                 clipKey = clipKey,
                 channelName = channelName,
@@ -899,45 +898,25 @@ namespace XAnimationEditor
             return stateKey;
         }
 
-        public void SetStateEditorGroup(string stateKey, string groupName)
-        {
-            XAnimationStateConfig config = ResolveUnambiguousStateConfig(stateKey);
-            SetStateEditorGroup(config.channelName, stateKey, groupName);
-        }
-
-        public void SetStateEditorGroup(string channelName, string stateKey, string groupName)
-        {
-            EnsureBaseAssetEditable();
-            XAnimationStateConfig config = GetStateConfig(channelName, stateKey);
-            string normalized = NormalizeEditorGroupName(groupName);
-            if (string.Equals(config.editorGroupName ?? string.Empty, normalized ?? string.Empty, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            config.editorGroupName = normalized;
-            RebuildDriverAndSave();
-        }
-
-        public void RenameStateEditorGroup(string channelName, string oldGroupName, string newGroupName)
+        public void RenameStatePath(string channelName, string oldPath, string newPath)
         {
             EnsureBaseAssetEditable();
             channelName = channelName?.Trim();
-            string normalizedOld = NormalizeEditorGroupName(oldGroupName);
-            string normalizedNew = NormalizeEditorGroupName(newGroupName);
+            string normalizedOld = NormalizeStatePath(oldPath);
+            string normalizedNew = NormalizeStatePath(newPath);
             if (string.IsNullOrWhiteSpace(channelName))
             {
-                throw new XAnimationException("XAnimation state group channelName cannot be empty.");
+                throw new XAnimationException("XAnimation state folder channelName cannot be empty.");
             }
 
             if (string.IsNullOrWhiteSpace(normalizedOld))
             {
-                throw new XAnimationException("XAnimation state group oldGroupName cannot be empty.");
+                throw new XAnimationException("XAnimation state folder oldPath cannot be empty.");
             }
 
             if (string.IsNullOrWhiteSpace(normalizedNew))
             {
-                throw new XAnimationException("XAnimation state group newGroupName cannot be empty.");
+                throw new XAnimationException("XAnimation state folder newPath cannot be empty.");
             }
 
             if (string.Equals(normalizedOld, normalizedNew, StringComparison.Ordinal))
@@ -946,64 +925,66 @@ namespace XAnimationEditor
             }
 
             XAnimationAsset asset = m_CompiledAsset.Asset;
-            bool changed = false;
-            XAnimationStateConfig[] states = asset.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            Dictionary<string, string> renamedKeys = BuildStatePathRenameMap(asset.states, channelName, normalizedOld, normalizedNew);
+            if (renamedKeys.Count == 0)
             {
-                XAnimationStateConfig state = states[i];
-                if (state == null ||
-                    !string.Equals(state.channelName, channelName, StringComparison.Ordinal) ||
-                    !string.Equals(NormalizeEditorGroupName(state.editorGroupName), normalizedOld, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                state.editorGroupName = normalizedNew;
-                changed = true;
+                throw new XAnimationException($"XAnimation state folder '{normalizedOld}' does not exist in channel '{channelName}'.");
             }
 
-            if (!changed)
-            {
-                throw new XAnimationException($"XAnimation state group '{normalizedOld}' does not exist in channel '{channelName}'.");
-            }
-
+            ApplyStateKeyRenameMap(asset, channelName, renamedKeys);
             RebuildDriverAndSave();
         }
 
-        public void ClearStateEditorGroupForChannel(string channelName, string groupName)
+        public void ClearStatePath(string channelName, string path)
         {
             EnsureBaseAssetEditable();
             channelName = channelName?.Trim();
-            string normalizedGroup = NormalizeEditorGroupName(groupName);
+            string normalizedPath = NormalizeStatePath(path);
             if (string.IsNullOrWhiteSpace(channelName))
             {
-                throw new XAnimationException("XAnimation state group channelName cannot be empty.");
+                throw new XAnimationException("XAnimation state folder channelName cannot be empty.");
             }
 
-            if (string.IsNullOrWhiteSpace(normalizedGroup))
+            if (string.IsNullOrWhiteSpace(normalizedPath))
             {
                 return;
             }
 
+            string parentPath = GetStatePathParent(normalizedPath);
             XAnimationAsset asset = m_CompiledAsset.Asset;
-            bool changed = false;
             XAnimationStateConfig[] states = asset.states ?? Array.Empty<XAnimationStateConfig>();
+            Dictionary<string, string> renamedKeys = new(StringComparer.Ordinal);
+            HashSet<string> resultingKeys = new(StringComparer.Ordinal);
             for (int i = 0; i < states.Length; i++)
             {
                 XAnimationStateConfig state = states[i];
                 if (state == null ||
-                    !string.Equals(state.channelName, channelName, StringComparison.Ordinal) ||
-                    !string.Equals(NormalizeEditorGroupName(state.editorGroupName), normalizedGroup, StringComparison.Ordinal))
+                    string.IsNullOrWhiteSpace(state.key) ||
+                    !string.Equals(state.channelName, channelName, StringComparison.Ordinal))
                 {
                     continue;
                 }
 
-                state.editorGroupName = string.Empty;
-                changed = true;
+                string stateKey = NormalizeStatePath(state.key);
+                string resultKey = stateKey;
+                if (IsStateInPath(stateKey, normalizedPath))
+                {
+                    string suffix = GetStatePathSuffix(stateKey, normalizedPath);
+                    resultKey = string.IsNullOrWhiteSpace(parentPath)
+                        ? suffix
+                        : BuildStatePathKey(parentPath, suffix);
+                    renamedKeys[state.key] = resultKey;
+                }
+
+                if (!resultingKeys.Add(resultKey))
+                {
+                    throw new XAnimationException($"XAnimation state '{resultKey}' is duplicated in channel '{channelName}'.");
+                }
             }
 
-            if (changed)
+            if (renamedKeys.Count > 0)
             {
+                ApplyStateKeyRenameMap(asset, channelName, renamedKeys);
                 RebuildDriverAndSave();
             }
         }
@@ -1066,7 +1047,7 @@ namespace XAnimationEditor
             EnsureLoaded();
             channelName = NormalizeRequiredChannelName(channelName);
             oldKey = NormalizeRequiredStateKey(oldKey);
-            newKey = newKey?.Trim();
+            newKey = NormalizeStatePath(newKey);
             if (string.Equals(oldKey, newKey, StringComparison.Ordinal))
             {
                 return;
@@ -1101,18 +1082,21 @@ namespace XAnimationEditor
             string stateKey,
             string targetChannelName,
             string insertBeforeStateKey = null,
-            string groupName = null)
+            string parentPath = null)
         {
             EnsureLoaded();
             sourceChannelName = NormalizeRequiredChannelName(sourceChannelName);
             targetChannelName = NormalizeRequiredChannelName(targetChannelName);
             stateKey = NormalizeRequiredStateKey(stateKey);
+            parentPath = NormalizeStatePath(parentPath);
             m_CompiledAsset.GetChannel(targetChannelName);
             m_CompiledAsset.GetState(sourceChannelName, stateKey);
-            if (!string.Equals(sourceChannelName, targetChannelName, StringComparison.Ordinal) &&
-                m_CompiledAsset.TryGetStateIndex(targetChannelName, stateKey, out _))
+            string targetKey = BuildStatePathKey(parentPath, GetStatePathLeafName(stateKey));
+            if ((!string.Equals(sourceChannelName, targetChannelName, StringComparison.Ordinal) ||
+                    !string.Equals(stateKey, targetKey, StringComparison.Ordinal)) &&
+                m_CompiledAsset.TryGetStateIndex(targetChannelName, targetKey, out _))
             {
-                throw new XAnimationException($"XAnimation state '{stateKey}' already exists in channel '{targetChannelName}'.");
+                targetKey = CreateUniqueStateKey(targetKey);
             }
 
             XAnimationAsset asset = m_CompiledAsset.Asset;
@@ -1138,8 +1122,15 @@ namespace XAnimationEditor
                 throw new XAnimationException($"XAnimation state '{stateKey}' does not exist.");
             }
 
+            if (!string.Equals(movedState.key, targetKey, StringComparison.Ordinal))
+            {
+                RenameAutoTransitionReferences(asset, sourceChannelName, movedState.key, targetKey);
+                RenameDefaultTransitionReferences(asset, sourceChannelName, movedState.key, targetKey);
+                RenameStateGateReferences(asset, sourceChannelName, movedState.key, targetKey);
+                movedState.key = targetKey;
+            }
+
             movedState.channelName = targetChannelName;
-            movedState.editorGroupName = NormalizeEditorGroupName(groupName);
             int insertIndex = orderedStates.Count;
             if (!string.IsNullOrWhiteSpace(insertBeforeStateKey))
             {
@@ -1256,14 +1247,14 @@ namespace XAnimationEditor
         public void SetStateChannel(string stateKey, string channelName)
         {
             XAnimationStateConfig config = ResolveUnambiguousStateConfig(stateKey);
-            MoveState(config.channelName, stateKey, channelName, insertBeforeStateKey: null, config.editorGroupName);
+            MoveState(config.channelName, stateKey, channelName, insertBeforeStateKey: null, GetStatePathParent(config.key));
         }
 
         public void SetStateChannel(string sourceChannelName, string stateKey, string targetChannelName)
         {
             EnsureLoaded();
             XAnimationStateConfig config = GetStateConfig(sourceChannelName, stateKey);
-            MoveState(sourceChannelName, stateKey, targetChannelName, insertBeforeStateKey: null, config.editorGroupName);
+            MoveState(sourceChannelName, stateKey, targetChannelName, insertBeforeStateKey: null, GetStatePathParent(config.key));
         }
 
         public void SetStateClipKey(string stateKey, string clipKey)
@@ -1799,7 +1790,7 @@ namespace XAnimationEditor
 
         private static string NormalizeRequiredStateKey(string stateKey)
         {
-            stateKey = stateKey?.Trim();
+            stateKey = NormalizeStatePath(stateKey);
             if (string.IsNullOrWhiteSpace(stateKey))
             {
                 throw new XAnimationException("XAnimation state key cannot be empty.");
@@ -1819,12 +1810,6 @@ namespace XAnimationEditor
             return clipKey;
         }
 
-        private static string NormalizeEditorGroupName(string groupName)
-        {
-            groupName = groupName?.Trim();
-            return string.IsNullOrWhiteSpace(groupName) ? string.Empty : groupName;
-        }
-
         private static string NormalizeClipPathKey(string path)
         {
             List<string> segments = new();
@@ -1842,6 +1827,36 @@ namespace XAnimationEditor
             }
 
             return segments.Count == 0 ? string.Empty : string.Join("/", segments);
+        }
+
+        private static string NormalizeStatePath(string path)
+        {
+            return XAnimationStatePathUtility.NormalizePath(path);
+        }
+
+        private static string BuildStatePathKey(string parentPath, string leafName)
+        {
+            return XAnimationStatePathUtility.BuildPath(parentPath, leafName);
+        }
+
+        private static string GetStatePathParent(string path)
+        {
+            return XAnimationStatePathUtility.GetParentPath(path);
+        }
+
+        private static string GetStatePathLeafName(string path)
+        {
+            return XAnimationStatePathUtility.GetLeafName(path);
+        }
+
+        private static bool IsStateInPath(string key, string path)
+        {
+            return XAnimationStatePathUtility.IsInPath(key, path);
+        }
+
+        private static string GetStatePathSuffix(string key, string path)
+        {
+            return XAnimationStatePathUtility.GetSuffixInPath(key, path);
         }
 
         private static string BuildClipPathKey(string parentPath, string leafName)
@@ -2133,6 +2148,42 @@ namespace XAnimationEditor
             return renamedKeys;
         }
 
+        private static Dictionary<string, string> BuildStatePathRenameMap(
+            XAnimationStateConfig[] states,
+            string channelName,
+            string oldPath,
+            string newPath)
+        {
+            Dictionary<string, string> renamedKeys = new(StringComparer.Ordinal);
+            HashSet<string> resultingKeys = new(StringComparer.Ordinal);
+            for (int i = 0; i < states.Length; i++)
+            {
+                XAnimationStateConfig state = states[i];
+                if (state == null ||
+                    string.IsNullOrWhiteSpace(state.key) ||
+                    !string.Equals(state.channelName, channelName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string stateKey = NormalizeStatePath(state.key);
+                string resultKey = stateKey;
+                if (IsStateInPath(stateKey, oldPath))
+                {
+                    string suffix = GetStatePathSuffix(stateKey, oldPath);
+                    resultKey = BuildStatePathKey(newPath, suffix);
+                    renamedKeys[state.key] = resultKey;
+                }
+
+                if (!resultingKeys.Add(resultKey))
+                {
+                    throw new XAnimationException($"XAnimation state '{resultKey}' is duplicated in channel '{channelName}'.");
+                }
+            }
+
+            return renamedKeys;
+        }
+
         private void ApplyClipKeyRenameMap(XAnimationAsset asset, Dictionary<string, string> renamedKeys)
         {
             XAnimationClipConfig[] clips = asset.clips ?? Array.Empty<XAnimationClipConfig>();
@@ -2152,6 +2203,31 @@ namespace XAnimationEditor
                 if (m_OriginalClipPathByKey.Remove(pair.Key, out string originalClipPath))
                 {
                     m_OriginalClipPathByKey[pair.Value] = originalClipPath;
+                }
+            }
+        }
+
+        private static void ApplyStateKeyRenameMap(
+            XAnimationAsset asset,
+            string channelName,
+            Dictionary<string, string> renamedKeys)
+        {
+            foreach (KeyValuePair<string, string> pair in renamedKeys)
+            {
+                RenameAutoTransitionReferences(asset, channelName, pair.Key, pair.Value);
+                RenameDefaultTransitionReferences(asset, channelName, pair.Key, pair.Value);
+                RenameStateGateReferences(asset, channelName, pair.Key, pair.Value);
+            }
+
+            XAnimationStateConfig[] states = asset.states ?? Array.Empty<XAnimationStateConfig>();
+            for (int i = 0; i < states.Length; i++)
+            {
+                XAnimationStateConfig state = states[i];
+                if (state != null &&
+                    string.Equals(state.channelName, channelName, StringComparison.Ordinal) &&
+                    renamedKeys.TryGetValue(state.key, out string newKey))
+                {
+                    state.key = newKey;
                 }
             }
         }

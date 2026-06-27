@@ -443,10 +443,10 @@ namespace XAnimationEditor
                 return string.Empty;
             }
 
-            string groupName = NormalizeStateEditorGroupName(state.Config.editorGroupName);
-            return string.IsNullOrWhiteSpace(groupName)
+            string parentPath = GetStatePathParent(state.Key);
+            return string.IsNullOrWhiteSpace(parentPath)
                 ? $"{state.Config.channelName} - {state.Key}"
-                : $"{state.Config.channelName} - {groupName} / {state.Key}";
+                : $"{state.Config.channelName} - {FormatStateDisplayPath(parentPath)} / {GetStatePathLeafName(state.Key)}";
         }
 
         private void ShowDefaultTransitionEditingStateMenu()

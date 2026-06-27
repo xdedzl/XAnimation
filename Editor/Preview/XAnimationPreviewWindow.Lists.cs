@@ -229,37 +229,46 @@ namespace XAnimationEditor
             }
 
             IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
-            Dictionary<string, List<StateGroupBucket>> statesByChannel = new(StringComparer.Ordinal);
+            Dictionary<string, StatePathNode> statesByChannel = new(StringComparer.Ordinal);
+            for (int i = 0; i < channels.Count; i++)
+            {
+                XAnimationCompiledChannel channel = channels[i];
+                if (channel != null && !string.IsNullOrWhiteSpace(channel.Name))
+                {
+                    statesByChannel[channel.Name] = new StatePathNode(string.Empty, string.Empty);
+                }
+            }
+
             for (int i = 0; i < states.Count; i++)
             {
                 XAnimationCompiledState state = states[i];
                 string channelName = state.Config.channelName;
-                if (!statesByChannel.TryGetValue(channelName, out List<StateGroupBucket> channelStates))
+                if (!statesByChannel.TryGetValue(channelName, out StatePathNode rootNode))
                 {
-                    channelStates = new List<StateGroupBucket>();
-                    statesByChannel.Add(channelName, channelStates);
+                    rootNode = new StatePathNode(string.Empty, string.Empty);
+                    statesByChannel.Add(channelName, rootNode);
                 }
 
-                string groupName = NormalizeStateEditorGroupName(state.Config.editorGroupName);
-                StateGroupBucket bucket = FindStateGroupBucket(channelStates, groupName);
-                if (bucket == null)
+                string parentPath = GetStatePathParent(state.Key);
+                if (string.IsNullOrWhiteSpace(parentPath))
                 {
-                    bucket = new StateGroupBucket(channelName, groupName);
-                    channelStates.Add(bucket);
+                    rootNode.States.Add(state);
+                    continue;
                 }
 
-                bucket.States.Add(state);
+                StatePathNode node = FindOrCreateStatePathNode(rootNode, parentPath);
+                node.States.Add(state);
             }
 
             for (int i = 0; i < channels.Count; i++)
             {
                 XAnimationCompiledChannel channel = channels[i];
-                if (!statesByChannel.TryGetValue(channel.Name, out List<StateGroupBucket> channelStates))
+                if (!statesByChannel.TryGetValue(channel.Name, out StatePathNode rootNode))
                 {
-                    channelStates = new List<StateGroupBucket>();
+                    rootNode = new StatePathNode(string.Empty, string.Empty);
                 }
 
-                VisualElement group = CreateStateChannelGroup(channel, channelStates);
+                VisualElement group = CreateStateChannelGroup(channel, rootNode);
                 m_StateListView.Add(group);
             }
 
@@ -961,7 +970,7 @@ namespace XAnimationEditor
             }
         }
 
-        private VisualElement CreateStateChannelGroup(XAnimationCompiledChannel channel, List<StateGroupBucket> channelStates)
+        private VisualElement CreateStateChannelGroup(XAnimationCompiledChannel channel, StatePathNode rootNode)
         {
             VisualElement group = CreateListGroup();
             VisualElement groupHeader = CreateListHeader();
@@ -976,10 +985,10 @@ namespace XAnimationEditor
             groupTitle.tooltip = "点击展开/收起这个 channel 的 state 列表。";
             groupHeader.Add(groupTitle);
 
-            int stateCount = CountStatesInBuckets(channelStates);
-            int groupedCount = CountGroupedBuckets(channelStates);
+            int stateCount = CountStatePathNodeStates(rootNode);
+            int groupedCount = CountStatePathNodeFolders(rootNode);
             Label groupInfo = new(groupedCount > 0
-                ? $"{channel.Config.layerType} | {stateCount} states | {groupedCount} groups"
+                ? $"{channel.Config.layerType} | {stateCount} states | {groupedCount} folders"
                 : $"{channel.Config.layerType} | {stateCount} states");
             groupInfo.style.color = TextMuted;
             groupInfo.style.fontSize = 10;
@@ -1008,11 +1017,11 @@ namespace XAnimationEditor
 
             Button addGroupButton = new(() => AddStateGroup(channel.Name))
             {
-                text = "+ Group"
+                text = "+ Folder"
             };
             addGroupButton.tooltip = m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 state group。"
-                : "在这个 channel 下新建分组，并同时创建首个 state。";
+                ? "Override 资源不能新增 state folder。"
+                : "在这个 channel 下新建路径，并同时创建首个 state。";
             addGroupButton.SetEnabled(!m_Session.IsOverrideAsset);
             ApplyClipIconButtonStyle(addGroupButton, AccentColor);
             addGroupButton.style.width = 66;
@@ -1026,29 +1035,17 @@ namespace XAnimationEditor
 
             VisualElement statesContainer = new VisualElement();
             int rowIndex = 0;
-            for (int stateIndex = 0; stateIndex < channelStates.Count; stateIndex++)
+            for (int i = 0; i < rootNode.Children.Count; i++)
             {
-                StateGroupBucket bucket = channelStates[stateIndex];
-                if (bucket == null)
-                {
-                    continue;
-                }
+                statesContainer.Add(CreateStatePathGroup(channel.Name, rootNode.Children[i], ref rowIndex));
+            }
 
-                if (bucket.IsUngrouped)
-                {
-                    for (int i = 0; i < bucket.States.Count; i++)
-                    {
-                        XAnimationCompiledState state = bucket.States[i];
-                        VisualElement row = CreateStateRow(state, rowIndex++);
-                        RegisterStateRowDropTarget(row, channel.Name, state.Key, string.Empty);
-                        statesContainer.Add(row);
-                    }
-
-                    continue;
-                }
-
-                VisualElement subgroup = CreateStateEditorGroup(channel.Name, bucket, ref rowIndex);
-                statesContainer.Add(subgroup);
+            for (int i = 0; i < rootNode.States.Count; i++)
+            {
+                XAnimationCompiledState state = rootNode.States[i];
+                VisualElement row = CreateStateRow(state, rowIndex++);
+                RegisterStateRowDropTarget(row, channel.Name, state.Key, string.Empty);
+                statesContainer.Add(row);
             }
 
             groupTitle.RegisterCallback<MouseDownEvent>(evt =>
@@ -1068,24 +1065,25 @@ namespace XAnimationEditor
             return group;
         }
 
-        private VisualElement CreateStateEditorGroup(string channelName, StateGroupBucket bucket, ref int rowIndex)
+        private VisualElement CreateStatePathGroup(string channelName, StatePathNode node, ref int rowIndex)
         {
             VisualElement group = CreateNestedListGroup();
-            string groupKey = BuildStateGroupKey(channelName, bucket.GroupName);
+            string groupKey = BuildStateGroupKey(channelName, node.FullPath);
             m_StateGroupRowMap[groupKey] = group;
 
             VisualElement header = CreateListHeader();
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            EditableLabel groupLabel = new(bucket.GroupName);
+            EditableLabel groupLabel = new(node.Name);
             ConfigureEditableNameLabel(groupLabel, 180f);
-            groupLabel.tooltip = "单击展开/收起这个 state group；右键 Rename 编辑分组名。";
+            groupLabel.tooltip = $"{FormatStateDisplayPath(node.FullPath)}\n单击展开/收起这个 state folder；右键 Rename 编辑路径层级。";
             groupLabel.SetEditable(!m_Session.IsOverrideAsset, EditableLabelEditTrigger.ContextMenu);
             groupLabel.EditStarted += BeginNameEdit;
             groupLabel.EditEnded += EndNameEdit;
-            groupLabel.ValueCommitted += (_, newValue) => RenameStateGroup(channelName, bucket.GroupName, newValue, groupLabel);
-            RegisterStateGroupContextMenu(groupLabel, channelName, bucket.GroupName);
+            groupLabel.ValueCommitted += (_, newValue) =>
+                RenameStateGroup(channelName, node.FullPath, BuildRenamedStateFolderPath(node.FullPath, newValue), groupLabel);
+            RegisterStateGroupContextMenu(groupLabel, channelName, node.FullPath);
             m_StateGroupLabelMap[groupKey] = groupLabel;
             header.Add(groupLabel);
 
@@ -1093,31 +1091,36 @@ namespace XAnimationEditor
             spacer.style.flexGrow = 1;
             header.Add(spacer);
 
-            Label info = CreateSmallInfoLabel($"{bucket.States.Count} states");
+            Label info = CreateSmallInfoLabel($"{CountStatePathNodeStates(node)} states");
             header.Add(info);
 
-            Button addStateButton = new(() => AddState(channelName, bucket.GroupName))
+            Button addStateButton = new(() => AddState(channelName, node.FullPath))
             {
                 text = "+"
             };
             addStateButton.tooltip = m_Session.IsOverrideAsset
                 ? "Override 资源不能新增 state。"
-                : "在这个分组下新增一个 state。";
+                : "在这个 folder 下新增一个 state。";
             addStateButton.SetEnabled(!m_Session.IsOverrideAsset);
             ApplyClipIconButtonStyle(addStateButton, AccentColor);
             addStateButton.style.marginLeft = 4;
             header.Add(addStateButton);
             group.Add(header);
 
-            RegisterStateChannelDropTarget(group, header, channelName, bucket.GroupName);
+            RegisterStateChannelDropTarget(group, header, channelName, node.FullPath);
 
             VisualElement content = new VisualElement();
             content.style.display = IsStateGroupCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
-            for (int i = 0; i < bucket.States.Count; i++)
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                XAnimationCompiledState state = bucket.States[i];
+                content.Add(CreateStatePathGroup(channelName, node.Children[i], ref rowIndex));
+            }
+
+            for (int i = 0; i < node.States.Count; i++)
+            {
+                XAnimationCompiledState state = node.States[i];
                 VisualElement row = CreateStateRow(state, rowIndex++);
-                RegisterStateRowDropTarget(row, channelName, state.Key, bucket.GroupName);
+                RegisterStateRowDropTarget(row, channelName, state.Key, node.FullPath);
                 content.Add(row);
             }
 
@@ -1144,60 +1147,91 @@ namespace XAnimationEditor
             return group;
         }
 
-        private static StateGroupBucket FindStateGroupBucket(List<StateGroupBucket> buckets, string groupName)
+        private static StatePathNode FindOrCreateStatePathNode(StatePathNode rootNode, string path)
         {
-            if (buckets == null)
+            StatePathNode currentNode = rootNode;
+            List<string> segments = SplitStatePathSegments(path);
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                string segment = segments[i];
+                currentPath = string.IsNullOrWhiteSpace(currentPath) ? segment : $"{currentPath}/{segment}";
+                StatePathNode nextNode = FindStatePathChild(currentNode, segment);
+                if (nextNode == null)
+                {
+                    nextNode = new StatePathNode(segment, currentPath);
+                    currentNode.Children.Add(nextNode);
+                }
+
+                currentNode = nextNode;
+            }
+
+            return currentNode;
+        }
+
+        private static StatePathNode FindStatePathChild(StatePathNode node, string name)
+        {
+            if (node == null)
             {
                 return null;
             }
 
-            groupName = NormalizeStateEditorGroupName(groupName);
-            for (int i = 0; i < buckets.Count; i++)
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                StateGroupBucket bucket = buckets[i];
-                if (bucket != null &&
-                    string.Equals(NormalizeStateEditorGroupName(bucket.GroupName), groupName, StringComparison.Ordinal))
+                StatePathNode child = node.Children[i];
+                if (child != null && string.Equals(child.Name, name, StringComparison.Ordinal))
                 {
-                    return bucket;
+                    return child;
                 }
             }
 
             return null;
         }
 
-        private static int CountStatesInBuckets(List<StateGroupBucket> buckets)
+        private static int CountStatePathNodeStates(StatePathNode node)
         {
-            int count = 0;
-            if (buckets == null)
+            if (node == null)
             {
-                return count;
+                return 0;
             }
 
-            for (int i = 0; i < buckets.Count; i++)
+            int count = node.States.Count;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                count += buckets[i]?.States?.Count ?? 0;
+                count += CountStatePathNodeStates(node.Children[i]);
             }
 
             return count;
         }
 
-        private static int CountGroupedBuckets(List<StateGroupBucket> buckets)
+        private static int CountStatePathNodeFolders(StatePathNode node)
         {
-            int count = 0;
-            if (buckets == null)
+            if (node == null)
             {
-                return count;
+                return 0;
             }
 
-            for (int i = 0; i < buckets.Count; i++)
+            int count = string.IsNullOrWhiteSpace(node.FullPath) ? 0 : 1;
+            for (int i = 0; i < node.Children.Count; i++)
             {
-                if (buckets[i] != null && !buckets[i].IsUngrouped)
-                {
-                    count++;
-                }
+                count += CountStatePathNodeFolders(node.Children[i]);
             }
 
             return count;
+        }
+
+        private static string BuildRenamedStateFolderPath(string oldPath, string newLeafName)
+        {
+            string normalizedNewLeafName = NormalizeStatePath(newLeafName);
+            if (string.IsNullOrWhiteSpace(normalizedNewLeafName))
+            {
+                return string.Empty;
+            }
+
+            string parentPath = GetStatePathParent(oldPath);
+            return string.IsNullOrWhiteSpace(parentPath)
+                ? normalizedNewLeafName
+                : $"{parentPath}/{normalizedNewLeafName}";
         }
 
         private VisualElement CreateClipPathGroup(ClipPathNode node, ref int rowIndex)
@@ -1351,9 +1385,11 @@ namespace XAnimationEditor
             row.Add(summaryRow);
 
             string stateKey = state.Key;
-            EditableLabel label = new(stateKey);
+            EditableLabel label = new(GetStatePathLeafName(stateKey));
             ConfigureEditableNameLabel(label, 78f);
-            label.tooltip = "单击展开/收起 state 配置；右键可 Rename，也可批量修改这个 state 用到的动画。";
+            label.tooltip = string.IsNullOrWhiteSpace(GetStatePathParent(stateKey))
+                ? "单击展开/收起 state 配置；右键可 Rename，也可批量修改这个 state 用到的动画。"
+                : $"完整路径：{FormatStateDisplayPath(stateKey)}";
             label.SetEditable(true, EditableLabelEditTrigger.None);
             label.EditStarted += BeginNameEdit;
             label.EditEnded += EndNameEdit;
@@ -3478,7 +3514,7 @@ namespace XAnimationEditor
 
         private void RenameState(string channelName, string oldKey, string newKey, EditableLabel label)
         {
-            newKey = newKey?.Trim();
+            newKey = BuildStatePathKey(GetStatePathParent(oldKey), newKey);
             try
             {
                 string oldUiKey = BuildStateUiKey(channelName, oldKey);
@@ -3508,7 +3544,7 @@ namespace XAnimationEditor
             }
             catch (Exception ex)
             {
-                label.text = oldKey;
+                label.text = GetStatePathLeafName(oldKey);
                 SetStatus(ex.Message);
                 Debug.LogException(ex);
             }
@@ -3608,21 +3644,21 @@ namespace XAnimationEditor
 
         private void RenameStateGroup(string channelName, string oldName, string newName, EditableLabel label)
         {
-            newName = NormalizeStateEditorGroupName(newName);
+            newName = NormalizeStatePath(newName);
             try
             {
                 if (string.IsNullOrWhiteSpace(newName))
                 {
-                    throw new XAnimationException("State group name cannot be empty.");
+                    throw new XAnimationException("State folder path cannot be empty.");
                 }
 
-                m_Session.RenameStateEditorGroup(channelName, oldName, newName);
-                SetStatus($"State Group {oldName} 已重命名为 {newName}。");
+                m_Session.RenameStatePath(channelName, oldName, newName);
+                SetStatus($"State Folder {oldName} 已重命名为 {newName}。");
                 RebuildStatePresentation();
             }
             catch (Exception ex)
             {
-                label.text = oldName;
+                label.text = FormatStateDisplayPath(oldName);
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }
@@ -3635,15 +3671,15 @@ namespace XAnimationEditor
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog("删除 State Group", $"确定删除 State Group '{channelName} / {groupName}'？\n\n组内 states 会保留，并回到未分组区域。", "删除", "取消"))
+            if (!EditorUtility.DisplayDialog("删除 State Folder", $"确定删除 State Folder '{channelName} / {groupName}'？\n\nfolder 路径会从组内 states 的 key 中移除，states 会移动到父路径。", "删除", "取消"))
             {
                 return;
             }
 
             try
             {
-                m_Session.ClearStateEditorGroupForChannel(channelName, groupName);
-                SetStatus($"已删除 State Group {channelName} / {groupName}。");
+                m_Session.ClearStatePath(channelName, groupName);
+                SetStatus($"已删除 State Folder {channelName} / {groupName}。");
                 RebuildStatePresentation();
             }
             catch (Exception ex)
@@ -3671,19 +3707,27 @@ namespace XAnimationEditor
 
         private void AddStateGroup(string channelName)
         {
+            AddStateGroup(channelName, string.Empty);
+        }
+
+        private void AddStateGroup(string channelName, string parentPath)
+        {
+            parentPath = NormalizeStatePath(parentPath);
             string[] stateOptions = BuildChannelStateGroupCandidateOptions(channelName);
-            if (!TryPromptForStateGroupSetup("新建 State Group", channelName, out string groupName, out string selectedStateKey, stateOptions))
+            if (!TryPromptForStateGroupSetup("新建 State Folder", channelName, parentPath, out string groupName, out string selectedStateKey, stateOptions))
             {
                 return;
             }
 
+            string groupPath = BuildStatePathKey(parentPath, groupName);
             if (!string.IsNullOrWhiteSpace(selectedStateKey))
             {
                 try
                 {
-                    m_Session.SetStateEditorGroup(channelName, selectedStateKey, groupName);
+                    m_Session.MoveState(channelName, selectedStateKey, channelName, insertBeforeStateKey: null, groupPath);
+                    SetStateGroupCollapsed(BuildStateGroupKey(channelName, groupPath), false);
                     RebuildStatePresentation();
-                    SetStatus($"已创建 State Group {channelName} / {groupName}，并加入 state {selectedStateKey}。");
+                    SetStatus($"已创建 State Folder {channelName} / {groupPath}，并加入 state {selectedStateKey}。");
                 }
                 catch (Exception ex)
                 {
@@ -3694,31 +3738,31 @@ namespace XAnimationEditor
                 return;
             }
 
-            AddState(channelName, groupName);
+            AddState(channelName, groupPath);
         }
 
         private bool TryPromptForStateGroupName(string title, string channelName, string currentGroupName, out string groupName)
         {
             groupName = null;
             string message = string.IsNullOrWhiteSpace(currentGroupName)
-                ? $"为 Channel '{channelName}' 输入新的 State Group 名称："
-                : $"为 Channel '{channelName}' 输入新的 State Group 名称：";
+                ? $"为 Channel '{channelName}' 输入新的 State Folder 路径："
+                : $"为 Channel '{channelName}' 输入新的 State Folder 路径：";
             if (!StringInputPromptWindow.ShowPrompt(title, message, currentGroupName, out string input))
             {
                 return false;
             }
 
-            input = NormalizeStateEditorGroupName(input);
+            input = NormalizeStatePath(input);
             if (string.IsNullOrWhiteSpace(input))
             {
-                SetStatus("State group name cannot be empty.", true);
+                SetStatus("State folder path cannot be empty.", true);
                 return false;
             }
 
-            if (HasStateGroup(channelName, input) &&
-                !string.Equals(NormalizeStateEditorGroupName(currentGroupName), input, StringComparison.Ordinal))
+            if (HasStatePath(channelName, input) &&
+                !string.Equals(NormalizeStatePath(currentGroupName), input, StringComparison.Ordinal))
             {
-                SetStatus($"Channel '{channelName}' 中已存在 State Group '{input}'。", true);
+                SetStatus($"Channel '{channelName}' 中已存在 State Folder '{input}'。", true);
                 return false;
             }
 
@@ -3726,16 +3770,19 @@ namespace XAnimationEditor
             return true;
         }
 
-        private bool TryPromptForStateGroupSetup(string title, string channelName, out string groupName, out string selectedStateKey, string[] stateOptions)
+        private bool TryPromptForStateGroupSetup(string title, string channelName, string parentPath, out string groupName, out string selectedStateKey, string[] stateOptions)
         {
             groupName = null;
             selectedStateKey = null;
-            string message = $"为 Channel '{channelName}' 输入新的 State Group 名称：";
+            parentPath = NormalizeStatePath(parentPath);
+            string message = string.IsNullOrWhiteSpace(parentPath)
+                ? $"为 Channel '{channelName}' 输入新的 State Folder 名称："
+                : $"在 State Folder '{parentPath}' 下输入新的子 Folder 名称：";
             if (!StringInputPromptWindow.ShowPrompt(
                     title,
                     message,
                     string.Empty,
-                    "加入现有 State",
+                    "移动现有 State",
                     stateOptions,
                     stateOptions != null && stateOptions.Length > 0 ? stateOptions[0] : string.Empty,
                     out string input,
@@ -3744,16 +3791,17 @@ namespace XAnimationEditor
                 return false;
             }
 
-            input = NormalizeStateEditorGroupName(input);
+            input = NormalizeStatePath(input);
             if (string.IsNullOrWhiteSpace(input))
             {
-                SetStatus("State group name cannot be empty.", true);
+                SetStatus("State folder path cannot be empty.", true);
                 return false;
             }
 
-            if (HasStateGroup(channelName, input))
+            string groupPath = BuildStatePathKey(parentPath, input);
+            if (HasStatePath(channelName, groupPath))
             {
-                SetStatus($"Channel '{channelName}' 中已存在 State Group '{input}'。", true);
+                SetStatus($"Channel '{channelName}' 中已存在 State Folder '{groupPath}'。", true);
                 return false;
             }
 
@@ -4170,8 +4218,8 @@ namespace XAnimationEditor
                 return false;
             }
 
-            string currentGroupName = NormalizeStateEditorGroupName(sourceState.Config.editorGroupName);
-            string targetGroupName = NormalizeStateEditorGroupName(groupName);
+            string currentGroupName = GetStatePathParent(sourceState.Key);
+            string targetGroupName = NormalizeStatePath(groupName);
             return !string.Equals(sourceState.Key, insertBeforeStateKey, StringComparison.Ordinal) ||
                 !string.Equals(currentChannel, channelName, StringComparison.Ordinal) ||
                 !string.Equals(currentGroupName, targetGroupName, StringComparison.Ordinal);
@@ -4206,10 +4254,11 @@ namespace XAnimationEditor
                 return;
             }
 
-            string normalizedGroup = NormalizeStateEditorGroupName(groupName);
+            string normalizedGroup = NormalizeStatePath(groupName);
             string stateKey = sourceState.Key;
             m_Session.MoveState(sourceState.Config.channelName, stateKey, channelName, insertBeforeStateKey, normalizedGroup);
-            m_StateChannelMap[BuildStateUiKey(channelName, stateKey)] = channelName;
+            string targetKey = BuildStatePathKey(normalizedGroup, GetStatePathLeafName(stateKey));
+            m_StateChannelMap[BuildStateUiKey(channelName, targetKey)] = channelName;
             RebuildStatePresentation();
             SetStatus(string.IsNullOrWhiteSpace(normalizedGroup)
                 ? $"{stateKey} 已移动到 {channelName}。"

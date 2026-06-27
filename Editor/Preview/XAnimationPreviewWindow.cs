@@ -76,19 +76,20 @@ namespace XAnimationEditor
             public Action Navigate { get; }
         }
 
-        private sealed class StateGroupBucket
+        private sealed class StatePathNode
         {
-            public StateGroupBucket(string channelName, string groupName)
+            public StatePathNode(string name, string fullPath)
             {
-                ChannelName = channelName ?? string.Empty;
-                GroupName = groupName ?? string.Empty;
+                Name = name ?? string.Empty;
+                FullPath = fullPath ?? string.Empty;
+                Children = new List<StatePathNode>();
                 States = new List<XAnimationCompiledState>();
             }
 
-            public string ChannelName { get; }
-            public string GroupName { get; }
+            public string Name { get; }
+            public string FullPath { get; }
+            public List<StatePathNode> Children { get; }
             public List<XAnimationCompiledState> States { get; }
-            public bool IsUngrouped => string.IsNullOrWhiteSpace(GroupName);
         }
 
         private sealed class ClipPathNode
@@ -133,17 +134,19 @@ namespace XAnimationEditor
 
         private readonly struct StateSelectionItem
         {
-            public StateSelectionItem(string stateKey, string channelName, string groupName)
+            public StateSelectionItem(string stateKey, string channelName)
             {
                 StateKey = stateKey ?? string.Empty;
                 ChannelName = channelName ?? string.Empty;
-                GroupName = NormalizeStateEditorGroupName(groupName);
+                ParentPath = XAnimationStatePathUtility.GetParentPath(stateKey);
+                LeafName = XAnimationStatePathUtility.GetLeafName(stateKey);
             }
 
             public string StateKey { get; }
             public string ChannelName { get; }
-            public string GroupName { get; }
-            public bool IsGrouped => !string.IsNullOrWhiteSpace(GroupName);
+            public string ParentPath { get; }
+            public string LeafName { get; }
+            public bool HasParentPath => !string.IsNullOrWhiteSpace(ParentPath);
         }
 
         private readonly struct ClipSelectionItem

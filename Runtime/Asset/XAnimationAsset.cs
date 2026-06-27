@@ -191,6 +191,101 @@ namespace XAnimationEngine
         }
     }
 
+    public static class XAnimationStatePathUtility
+    {
+        public static string NormalizePath(string path)
+        {
+            List<string> segments = new();
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                string[] rawSegments = path.Split('/');
+                for (int i = 0; i < rawSegments.Length; i++)
+                {
+                    string segment = rawSegments[i]?.Trim();
+                    if (!string.IsNullOrWhiteSpace(segment))
+                    {
+                        segments.Add(segment);
+                    }
+                }
+            }
+
+            return segments.Count == 0 ? string.Empty : string.Join("/", segments);
+        }
+
+        public static string FormatDisplayPath(string path)
+        {
+            string normalizedPath = NormalizePath(path);
+            return string.IsNullOrWhiteSpace(normalizedPath)
+                ? string.Empty
+                : normalizedPath.Replace("/", " / ");
+        }
+
+        public static string GetParentPath(string path)
+        {
+            string normalizedPath = NormalizePath(path);
+            int slashIndex = normalizedPath.LastIndexOf('/');
+            return slashIndex > 0 ? normalizedPath[..slashIndex] : string.Empty;
+        }
+
+        public static string GetLeafName(string path)
+        {
+            string normalizedPath = NormalizePath(path);
+            int slashIndex = normalizedPath.LastIndexOf('/');
+            return slashIndex >= 0 && slashIndex + 1 < normalizedPath.Length
+                ? normalizedPath[(slashIndex + 1)..]
+                : normalizedPath;
+        }
+
+        public static string BuildPath(string parentPath, string leafName)
+        {
+            parentPath = NormalizePath(parentPath);
+            leafName = NormalizePath(leafName);
+            if (string.IsNullOrWhiteSpace(parentPath))
+            {
+                return leafName;
+            }
+
+            return string.IsNullOrWhiteSpace(leafName) ? parentPath : $"{parentPath}/{leafName}";
+        }
+
+        public static bool IsInPath(string key, string path)
+        {
+            key = NormalizePath(key);
+            path = NormalizePath(path);
+            if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(path))
+            {
+                return false;
+            }
+
+            string parentPath = GetParentPath(key);
+            return string.Equals(parentPath, path, StringComparison.Ordinal) ||
+                   parentPath.StartsWith($"{path}/", StringComparison.Ordinal);
+        }
+
+        public static string GetSuffixInPath(string key, string path)
+        {
+            key = NormalizePath(key);
+            path = NormalizePath(path);
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return key;
+            }
+
+            string parentPath = GetParentPath(key);
+            if (string.Equals(parentPath, path, StringComparison.Ordinal))
+            {
+                return GetLeafName(key);
+            }
+
+            if (parentPath.StartsWith($"{path}/", StringComparison.Ordinal))
+            {
+                return BuildPath(parentPath[(path.Length + 1)..], GetLeafName(key));
+            }
+
+            return key;
+        }
+    }
+
     public enum XAnimationChannelLayerType
     {
         Base,
@@ -262,7 +357,6 @@ namespace XAnimationEngine
     public class XAnimationStateConfig
     {
         public string key;
-        public string editorGroupName;
         public XAnimationStateType stateType = XAnimationStateType.Single;
         public string clipKey;
         public string channelName;
