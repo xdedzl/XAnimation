@@ -195,6 +195,7 @@ namespace XAnimationEditor
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 RefreshGlobalBlendGraph();
+                RebuildStatesGraphTabIfVisible();
                 return;
             }
 
@@ -277,6 +278,7 @@ namespace XAnimationEditor
             RebuildDefaultTransitionsEditor();
             RefreshSearchIndex();
             RefreshGlobalBlendGraph();
+            RebuildStatesGraphTabIfVisible();
             ApplyPendingFocusState();
         }
 
@@ -993,6 +995,7 @@ namespace XAnimationEditor
             groupInfo.style.color = TextMuted;
             groupInfo.style.fontSize = 10;
             groupInfo.style.flexShrink = 0;
+            groupInfo.tooltip = "点击展开/收起这个 channel 的 state 列表。";
             groupHeader.Add(groupInfo);
 
             VisualElement actions = new VisualElement();
@@ -1048,9 +1051,9 @@ namespace XAnimationEditor
                 statesContainer.Add(row);
             }
 
-            groupTitle.RegisterCallback<MouseDownEvent>(evt =>
+            groupHeader.RegisterCallback<MouseDownEvent>(evt =>
             {
-                if (evt.button != 0)
+                if (evt.button != 0 || actions.worldBound.Contains(evt.mousePosition))
                 {
                     return;
                 }
@@ -3079,6 +3082,57 @@ namespace XAnimationEditor
                 RebuildDefaultTransitionsEditor();
                 RefreshStatePlaybackViews();
                 SetStatus($"已删除 State {stateKey}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void AddStateBehavior(string channelName, string stateKey, Type behaviorType)
+        {
+            try
+            {
+                m_Session.AddStateBehavior(channelName, stateKey, behaviorType);
+                SetStateExpanded(BuildStateUiKey(channelName, stateKey), true);
+                RebuildStateList();
+                SetStatus($"已为 State {stateKey} 新增 {behaviorType.Name}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void DeleteStateBehavior(string channelName, string stateKey, int behaviorIndex)
+        {
+            try
+            {
+                m_Session.DeleteStateBehavior(channelName, stateKey, behaviorIndex);
+                RebuildStateList();
+                SetStatus($"已删除 State {stateKey} behavior #{behaviorIndex}。");
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void SetStateBehaviorFieldValue(
+            string channelName,
+            string stateKey,
+            int behaviorIndex,
+            string fieldName,
+            object value)
+        {
+            try
+            {
+                m_Session.SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldName, value, save: false);
+                ScheduleAssetSave();
+                SetStatus($"{stateKey} behavior #{behaviorIndex}.{fieldName} 已更新。");
             }
             catch (Exception ex)
             {

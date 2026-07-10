@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -68,22 +69,20 @@ namespace XAnimationEditor
             if (parameterXField != null || parameterYField != null)
             {
                 parameterRow = new VisualElement();
-                parameterRow.style.flexDirection = FlexDirection.Row;
-                parameterRow.style.alignItems = Align.Center;
+                parameterRow.style.flexDirection = FlexDirection.Column;
+                parameterRow.style.alignItems = Align.Stretch;
                 parameterRow.style.marginBottom = 2;
 
                 if (parameterXField != null)
                 {
-                    parameterXField.style.flexGrow = 1;
-                    parameterXField.style.flexShrink = 1;
+                    ConfigureDirectionalParameterField(parameterXField);
                     parameterRow.Add(parameterXField);
                 }
 
                 if (parameterYField != null)
                 {
-                    parameterYField.style.flexGrow = 1;
-                    parameterYField.style.flexShrink = 1;
-                    parameterYField.style.marginLeft = 8;
+                    ConfigureDirectionalParameterField(parameterYField);
+                    parameterYField.style.marginTop = 2;
                     parameterRow.Add(parameterYField);
                 }
             }
@@ -106,6 +105,40 @@ namespace XAnimationEditor
                         content.Add(CreateDirectionalBlendSampleRow(channelName, stateKey, i, samples[i], editable));
                     }
                 });
+        }
+
+        private static void ConfigureDirectionalParameterField(VisualElement field)
+        {
+            field.style.flexGrow = 0;
+            field.style.flexShrink = 1;
+            field.style.minWidth = 0;
+            field.style.alignSelf = Align.Stretch;
+
+            if (field is not DropdownField dropdown)
+            {
+                return;
+            }
+
+            dropdown.style.minWidth = 0;
+            if (dropdown.labelElement != null)
+            {
+                dropdown.labelElement.style.minWidth = 72;
+                dropdown.labelElement.style.width = 72;
+                dropdown.labelElement.style.flexShrink = 0;
+            }
+
+            void ApplyInputStyle()
+            {
+                VisualElement input = dropdown.Q<VisualElement>(className: "unity-base-field__input");
+                if (input != null)
+                {
+                    input.style.minWidth = 64;
+                    input.style.flexShrink = 1;
+                }
+            }
+
+            ApplyInputStyle();
+            dropdown.RegisterCallback<AttachToPanelEvent>(_ => ApplyInputStyle());
         }
 
         private VisualElement CreateSamplesSection(
@@ -182,6 +215,272 @@ namespace XAnimationEditor
             return box;
         }
 
+        private VisualElement CreateStateBehaviorEditor(string channelName, string stateKey, XAnimationStateConfig config)
+        {
+            XAnimationStateBehavior[] behaviors = config.behaviors ?? Array.Empty<XAnimationStateBehavior>();
+            string stateUiKey = BuildStateUiKey(channelName, stateKey);
+            bool expanded = m_ExpandedBehaviorStateKeys.Contains(stateUiKey);
+            bool editable = m_Session != null && !m_Session.IsOverrideAsset;
+
+            VisualElement box = CreateSubBox();
+            box.style.marginTop = 2;
+            SetPadding(box, 0);
+
+            VisualElement header = CreateListHeader();
+            Label foldoutLabel = CreateFoldoutGlyph(expanded);
+            Label title = CreateSectionTitleLabel("Behaviors");
+            title.tooltip = "State 进入、更新、退出时调用的 XAnimationStateBehavior 列表。";
+            header.Add(foldoutLabel);
+            header.Add(title);
+
+            Button addButton = null;
+            addButton = new Button(() => ShowStateBehaviorTypeMenu(addButton, channelName, stateKey))
+            {
+                text = "+"
+            };
+            addButton.tooltip = editable
+                ? "选择并新增一个 XAnimationStateBehavior。"
+                : "Override 资源不能编辑 state behavior。";
+            addButton.SetEnabled(editable);
+            ApplyClipIconButtonStyle(addButton, AccentColor);
+            header.Add(addButton);
+            box.Add(header);
+
+            VisualElement content = new() { style = { display = expanded ? DisplayStyle.Flex : DisplayStyle.None } };
+            ApplyPrettyContentStyle(content);
+            box.Add(content);
+
+            for (int i = 0; i < behaviors.Length; i++)
+            {
+                content.Add(CreateStateBehaviorRow(channelName, stateKey, i, behaviors[i], editable));
+            }
+
+            if (behaviors.Length == 0)
+            {
+                AddEmptyLabel(content, "No behaviors");
+            }
+
+            header.style.borderBottomWidth = expanded ? PrettyBorderWidth : 0f;
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0 || addButton.worldBound.Contains(evt.mousePosition))
+                {
+                    return;
+                }
+
+                bool isExpanded = content.style.display != DisplayStyle.None;
+                bool nextExpanded = !isExpanded;
+                content.style.display = nextExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+                header.style.borderBottomWidth = nextExpanded ? PrettyBorderWidth : 0f;
+                SetFoldoutGlyphText(foldoutLabel, nextExpanded);
+                SetExpanded(m_ExpandedBehaviorStateKeys, stateUiKey, nextExpanded);
+                evt.StopPropagation();
+            });
+
+            return box;
+        }
+
+        private void ShowStateBehaviorTypeMenu(VisualElement anchor, string channelName, string stateKey)
+        {
+            GenericMenu menu = new();
+            List<Type> behaviorTypes = CollectStateBehaviorTypes();
+            if (behaviorTypes.Count == 0)
+            {
+                menu.AddDisabledItem(new GUIContent("No XAnimationStateBehavior Types"));
+            }
+            else
+            {
+                for (int i = 0; i < behaviorTypes.Count; i++)
+                {
+                    Type behaviorType = behaviorTypes[i];
+                    menu.AddItem(
+                        new GUIContent(GetStateBehaviorMenuName(behaviorType)),
+                        false,
+                        () => AddStateBehavior(channelName, stateKey, behaviorType));
+                }
+            }
+
+            menu.DropDown(anchor.worldBound);
+        }
+
+        private static List<Type> CollectStateBehaviorTypes()
+        {
+            List<Type> behaviorTypes = new();
+            TypeCache.TypeCollection derivedTypes = TypeCache.GetTypesDerivedFrom<XAnimationStateBehavior>();
+            for (int i = 0; i < derivedTypes.Count; i++)
+            {
+                Type type = derivedTypes[i];
+                if (type == null ||
+                    type.IsAbstract ||
+                    type.ContainsGenericParameters ||
+                    !typeof(XAnimationStateBehavior).IsAssignableFrom(type) ||
+                    type.GetConstructor(Type.EmptyTypes) == null)
+                {
+                    continue;
+                }
+
+                behaviorTypes.Add(type);
+            }
+
+            behaviorTypes.Sort((left, right) => string.Compare(left.FullName, right.FullName, StringComparison.Ordinal));
+            return behaviorTypes;
+        }
+
+        private static string GetStateBehaviorMenuName(Type behaviorType)
+        {
+            return string.IsNullOrWhiteSpace(behaviorType.Namespace)
+                ? behaviorType.Name
+                : $"{behaviorType.Namespace}/{behaviorType.Name}";
+        }
+
+        private VisualElement CreateStateBehaviorRow(
+            string channelName,
+            string stateKey,
+            int behaviorIndex,
+            XAnimationStateBehavior behavior,
+            bool editable)
+        {
+            VisualElement row = CreateSubBox();
+            row.style.flexDirection = FlexDirection.Column;
+            row.style.marginBottom = 2;
+
+            VisualElement header = new();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.alignItems = Align.Center;
+            header.style.minWidth = 0;
+            row.Add(header);
+
+            Label typeLabel = new(behavior != null ? behavior.GetType().Name : "Missing Behavior");
+            typeLabel.tooltip = behavior?.GetType().FullName ?? "Behavior 反序列化失败，保存时会被跳过。";
+            typeLabel.style.flexGrow = 1;
+            typeLabel.style.flexShrink = 1;
+            typeLabel.style.minWidth = 0;
+            typeLabel.style.color = TextNormal;
+            typeLabel.style.fontSize = BodyFontSize;
+            typeLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.Add(typeLabel);
+
+            Button deleteButton = new(() => DeleteStateBehavior(channelName, stateKey, behaviorIndex))
+            {
+                text = "⌫"
+            };
+            deleteButton.tooltip = editable ? "删除这个 behavior。" : "Override 资源不能删除 state behavior。";
+            deleteButton.SetEnabled(editable);
+            ApplyTrashButtonIcon(deleteButton);
+            ApplyClipIconButtonStyle(deleteButton);
+            header.Add(deleteButton);
+
+            if (behavior == null)
+            {
+                return row;
+            }
+
+            FieldInfo[] fields = behavior.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public);
+            if (fields.Length == 0)
+            {
+                AddEmptyLabel(row, "No public fields");
+                return row;
+            }
+
+            VisualElement fieldsBox = new();
+            fieldsBox.style.marginTop = 3;
+            fieldsBox.style.flexDirection = FlexDirection.Column;
+            row.Add(fieldsBox);
+
+            for (int i = 0; i < fields.Length; i++)
+            {
+                VisualElement fieldEditor = CreateStateBehaviorFieldEditor(
+                    channelName,
+                    stateKey,
+                    behaviorIndex,
+                    behavior,
+                    fields[i],
+                    editable);
+                if (fieldEditor != null)
+                {
+                    fieldsBox.Add(fieldEditor);
+                }
+            }
+
+            return row;
+        }
+
+        private VisualElement CreateStateBehaviorFieldEditor(
+            string channelName,
+            string stateKey,
+            int behaviorIndex,
+            XAnimationStateBehavior behavior,
+            FieldInfo fieldInfo,
+            bool editable)
+        {
+            Type fieldType = fieldInfo.FieldType;
+            object value = fieldInfo.GetValue(behavior);
+            if (fieldType == typeof(string))
+            {
+                TextField field = new(fieldInfo.Name)
+                {
+                    value = value as string ?? string.Empty
+                };
+                field.SetEnabled(editable);
+                field.RegisterValueChangedCallback(evt =>
+                    SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldInfo.Name, evt.newValue));
+                return field;
+            }
+
+            if (fieldType == typeof(float))
+            {
+                FloatField field = new(fieldInfo.Name)
+                {
+                    value = value is float floatValue ? floatValue : 0f
+                };
+                field.SetEnabled(editable);
+                field.RegisterValueChangedCallback(evt =>
+                    SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldInfo.Name, evt.newValue));
+                return field;
+            }
+
+            if (fieldType == typeof(int))
+            {
+                IntegerField field = new(fieldInfo.Name)
+                {
+                    value = value is int intValue ? intValue : 0
+                };
+                field.SetEnabled(editable);
+                field.RegisterValueChangedCallback(evt =>
+                    SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldInfo.Name, evt.newValue));
+                return field;
+            }
+
+            if (fieldType == typeof(bool))
+            {
+                Toggle field = new(fieldInfo.Name)
+                {
+                    value = value is bool boolValue && boolValue
+                };
+                field.SetEnabled(editable);
+                field.RegisterValueChangedCallback(evt =>
+                    SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldInfo.Name, evt.newValue));
+                return field;
+            }
+
+            if (fieldType.IsEnum)
+            {
+                Enum enumValue = value as Enum ?? (Enum)Enum.GetValues(fieldType).GetValue(0);
+                EnumField field = new(fieldInfo.Name, enumValue);
+                field.SetEnabled(editable);
+                field.RegisterValueChangedCallback(evt =>
+                    SetStateBehaviorFieldValue(channelName, stateKey, behaviorIndex, fieldInfo.Name, evt.newValue));
+                return field;
+            }
+
+            Label unsupportedLabel = new($"{fieldInfo.Name}: {fieldType.Name}");
+            unsupportedLabel.tooltip = "当前编辑器暂不支持这个字段类型。";
+            unsupportedLabel.style.color = TextMuted;
+            unsupportedLabel.style.fontSize = BodyFontSize;
+            unsupportedLabel.style.marginTop = 2;
+            return unsupportedLabel;
+        }
+
         private static void SetCollapsed(HashSet<string> set, string key, bool collapsed)
         {
             if (collapsed)
@@ -193,6 +492,19 @@ namespace XAnimationEditor
                 set.Remove(key);
             }
         }
+
+        private static void SetExpanded(HashSet<string> set, string key, bool expanded)
+        {
+            if (expanded)
+            {
+                set.Add(key);
+            }
+            else
+            {
+                set.Remove(key);
+            }
+        }
+
         private void RegisterBatchEditStateClipsContextMenu(VisualElement target, string stateKey)
         {
             RegisterBatchEditStateClipsContextMenu(target, null, stateKey);
@@ -1037,8 +1349,8 @@ namespace XAnimationEditor
             string rowKey = BuildBlendSampleRuntimeKey(channelName, stateKey, sampleIndex);
             VisualElement weightFill = CreateProgressFill(BlendWeightFillBg);
             row.Add(weightFill);
-            row.style.flexDirection = FlexDirection.Row;
-            row.style.alignItems = Align.Center;
+            row.style.flexDirection = FlexDirection.Column;
+            row.style.alignItems = Align.Stretch;
             row.style.marginBottom = 1;
             row.style.position = Position.Relative;
             row.style.overflow = Overflow.Hidden;
@@ -1048,6 +1360,11 @@ namespace XAnimationEditor
                 ProgressFill = weightFill,
             };
 
+            VisualElement positionRow = Row();
+            positionRow.style.position = Position.Relative;
+            positionRow.style.marginBottom = 2;
+            row.Add(positionRow);
+
             Label indexLabel = new($"#{sampleIndex}");
             indexLabel.style.width = 28;
             indexLabel.style.flexShrink = 0;
@@ -1055,25 +1372,16 @@ namespace XAnimationEditor
             indexLabel.style.fontSize = BodyFontSize;
             indexLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
             indexLabel.style.position = Position.Relative;
-            row.Add(indexLabel);
-
-            XAnimationEditorSelectionField clipField = CreateClipSelectionField(string.Empty, sampleClipKey);
-            clipField.SetEnabled(editable);
-            clipField.style.flexGrow = 1;
-            clipField.style.position = Position.Relative;
-            clipField.ValueChanged += (previousValue, newValue) =>
-                ChangeDirectionalBlendSampleClipKey(channelName, stateKey, sampleIndex, newValue, clipField, previousValue);
-            AttachClipKeyPingButton(clipField, sampleClipKey, editable);
-            row.Add(clipField);
+            positionRow.Add(indexLabel);
 
             Label xLabel = new("x");
-            xLabel.style.marginLeft = 6;
+            xLabel.style.marginLeft = 0;
             xLabel.style.marginRight = 4;
             xLabel.style.flexShrink = 0;
             xLabel.style.color = TextMuted;
             xLabel.style.fontSize = 10;
             xLabel.style.position = Position.Relative;
-            row.Add(xLabel);
+            positionRow.Add(xLabel);
 
             FloatField xField = new() { value = sample?.positionX ?? 0f };
             xField.SetEnabled(editable);
@@ -1093,7 +1401,7 @@ namespace XAnimationEditor
                     evt.previousValue,
                     sample?.positionY ?? 0f,
                     true));
-            row.Add(xField);
+            positionRow.Add(xField);
 
             Label yLabel = new("y");
             yLabel.style.marginLeft = 6;
@@ -1102,7 +1410,7 @@ namespace XAnimationEditor
             yLabel.style.color = TextMuted;
             yLabel.style.fontSize = 10;
             yLabel.style.position = Position.Relative;
-            row.Add(yLabel);
+            positionRow.Add(yLabel);
 
             FloatField yField = new() { value = sample?.positionY ?? 0f };
             yField.SetEnabled(editable);
@@ -1122,7 +1430,22 @@ namespace XAnimationEditor
                     sample?.positionX ?? 0f,
                     evt.previousValue,
                     false));
-            row.Add(yField);
+            positionRow.Add(yField);
+
+            VisualElement clipRow = Row();
+            clipRow.style.position = Position.Relative;
+            row.Add(clipRow);
+
+            XAnimationEditorSelectionField clipField = CreateClipSelectionField(string.Empty, sampleClipKey);
+            clipField.SetEnabled(editable);
+            clipField.style.flexGrow = 1;
+            clipField.style.flexShrink = 1;
+            clipField.style.minWidth = 0;
+            clipField.style.position = Position.Relative;
+            clipField.ValueChanged += (previousValue, newValue) =>
+                ChangeDirectionalBlendSampleClipKey(channelName, stateKey, sampleIndex, newValue, clipField, previousValue);
+            AttachClipKeyPingButton(clipField, sampleClipKey, editable);
+            clipRow.Add(clipField);
 
             Button previewButton = new(() => PreviewDirectionalBlendSample(channelName, stateKey, xField.value, yField.value))
             {
@@ -1132,7 +1455,7 @@ namespace XAnimationEditor
             ApplyClipButtonStyle(previewButton, false);
             previewButton.style.marginLeft = 4;
             previewButton.style.position = Position.Relative;
-            row.Add(previewButton);
+            clipRow.Add(previewButton);
 
             Button deleteButton = new(() => DeleteDirectionalBlendSample(channelName, stateKey, sampleIndex))
             {
@@ -1144,7 +1467,7 @@ namespace XAnimationEditor
             ApplyClipIconButtonStyle(deleteButton);
             deleteButton.style.marginLeft = 4;
             deleteButton.style.position = Position.Relative;
-            row.Add(deleteButton);
+            clipRow.Add(deleteButton);
 
             return row;
         }

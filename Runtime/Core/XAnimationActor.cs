@@ -18,6 +18,7 @@ namespace XAnimationEngine
         private readonly XAnimationDriver m_Driver = new();
         private bool m_PausedByDisable;
         private bool m_Initialized;
+        public bool IsRunning => m_Driver.IsRunning;
         private Action<Animator, Vector3, Quaternion> m_NativeRootMotionApplied;
         private Action<Animator> m_OnAnimatorMove = IgnoreAnimatorMove;
         

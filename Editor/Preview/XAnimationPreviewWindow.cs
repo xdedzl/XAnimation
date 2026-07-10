@@ -46,6 +46,7 @@ namespace XAnimationEditor
         {
             Scene = 0,
             DefaultTransition = 1,
+            StatesGraph = 2,
         }
 
         private enum SearchEntryType
@@ -317,6 +318,7 @@ namespace XAnimationEditor
         private Button m_ParametersGroupButton;
         private Button m_PreviewSceneTabButton;
         private Button m_PreviewDefaultTransitionTabButton;
+        private Button m_PreviewStatesGraphTabButton;
         private Button m_AddDefaultTransitionInPairButton;
         private Button m_AddDefaultTransitionOutPairButton;
         private Button m_OpenGraphButton;
@@ -333,10 +335,14 @@ namespace XAnimationEditor
         private VisualElement m_DefaultTransitionsEditorView;
         private VisualElement m_PreviewSceneTabView;
         private VisualElement m_DefaultTransitionTabView;
+        private VisualElement m_StatesGraphTabView;
         private Button m_DefaultTransitionEditingStateButton;
         private XAnimationDefaultTransitionGraphElement m_DefaultTransitionGraphView;
         private Label m_DefaultTransitionGraphZoomLabel;
         private VisualElement m_DefaultTransitionDetailsView;
+        private Button m_StatesGraphChannelButton;
+        private XAnimationStatesGraphElement m_StatesGraphView;
+        private VisualElement m_StatesGraphDetailsView;
         private VisualElement m_ClipListView;
         private ScrollView m_InspectorScrollView;
         private VisualElement m_InspectorOverlayLayer;
@@ -350,6 +356,8 @@ namespace XAnimationEditor
         private readonly HashSet<string> m_CollapsedStateGroupKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedBlendSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedDirectionalSampleStateKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_ExpandedBehaviorStateKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_ExpandedStateGateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedAutoTransitionKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedAutoTransitionChannelKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedDefaultTransitionChannelKeys = new(StringComparer.Ordinal);
@@ -408,6 +416,9 @@ namespace XAnimationEditor
         private int m_DefaultTransitionTabTransitionIndex = -1;
         private int m_DefaultTransitionTabPairIndex = -1;
         private bool m_DefaultTransitionTabPairWaitingSwitch;
+        private string m_StatesGraphChannelName;
+        private string m_StatesGraphCurrentPath = string.Empty;
+        private string m_StatesGraphSelectedStateUiKey;
         private float m_PlayFadeInOverride;
         private float m_PlayFadeOutOverride;
 

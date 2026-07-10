@@ -42,6 +42,9 @@ namespace XAnimationEngine
 
         private float m_FadeElapsed;
         private bool m_HasExitEventBeenRaised;
+        private readonly XAnimationStateBehavior[] m_StateBehaviors;
+        private bool m_StateBehaviorEnterInvoked;
+        private bool m_StateBehaviorExitInvoked;
 
         protected XAnimationStatePlaybackInstance(
             int playbackId,
@@ -68,12 +71,40 @@ namespace XAnimationEngine
             FadeTo = TargetWeight;
             FadeDuration = Mathf.Max(0f, options.FadeIn);
             m_FadeElapsed = 0f;
+            m_StateBehaviors = CloneStateBehaviors(stateConfig);
         }
 
         private static float ResolvePlaybackSpeed(XAnimationStateConfig stateConfig)
         {
             float speed = stateConfig?.speed ?? 1f;
             return Mathf.Approximately(speed, 0f) ? 1f : speed;
+        }
+
+        private static XAnimationStateBehavior[] CloneStateBehaviors(XAnimationStateConfig stateConfig)
+        {
+            XAnimationStateBehavior[] behaviors = stateConfig?.behaviors ?? Array.Empty<XAnimationStateBehavior>();
+            if (behaviors.Length == 0)
+            {
+                return Array.Empty<XAnimationStateBehavior>();
+            }
+
+            List<XAnimationStateBehavior> clones = new(behaviors.Length);
+            for (int i = 0; i < behaviors.Length; i++)
+            {
+                XAnimationStateBehavior behavior = behaviors[i];
+                if (behavior == null)
+                {
+                    continue;
+                }
+
+                XAnimationStateBehavior clone = behavior.Clone();
+                if (clone != null)
+                {
+                    clones.Add(clone);
+                }
+            }
+
+            return clones.Count == 0 ? Array.Empty<XAnimationStateBehavior>() : clones.ToArray();
         }
 
         public int PlaybackId { get; }
@@ -128,6 +159,71 @@ namespace XAnimationEngine
             return true;
         }
 
+        internal void InvokeStateBehaviorEnter(Animator animator, float globalSpeed)
+        {
+            if (m_StateBehaviorEnterInvoked || m_StateBehaviors.Length == 0)
+            {
+                return;
+            }
+
+            m_StateBehaviorEnterInvoked = true;
+            XAnimationStateBehaviorContext behaviorContext = CreateBehaviorContext(animator, 0f, globalSpeed, null);
+            for (int i = 0; i < m_StateBehaviors.Length; i++)
+            {
+                try
+                {
+                    m_StateBehaviors[i]?.OnStateEnter(in behaviorContext);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
+        internal void InvokeStateBehaviorUpdate(Animator animator, float deltaTime, float globalSpeed)
+        {
+            if (!m_StateBehaviorEnterInvoked || m_StateBehaviorExitInvoked || m_StateBehaviors.Length == 0)
+            {
+                return;
+            }
+
+            XAnimationStateBehaviorContext behaviorContext = CreateBehaviorContext(animator, deltaTime, globalSpeed, null);
+            for (int i = 0; i < m_StateBehaviors.Length; i++)
+            {
+                try
+                {
+                    m_StateBehaviors[i]?.OnStateUpdate(in behaviorContext);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
+        internal void InvokeStateBehaviorExit(Animator animator, float globalSpeed, XAnimationStateExitReason exitReason)
+        {
+            if (m_StateBehaviorExitInvoked || m_StateBehaviors.Length == 0)
+            {
+                return;
+            }
+
+            m_StateBehaviorExitInvoked = true;
+            XAnimationStateBehaviorContext behaviorContext = CreateBehaviorContext(animator, 0f, globalSpeed, exitReason);
+            for (int i = 0; i < m_StateBehaviors.Length; i++)
+            {
+                try
+                {
+                    m_StateBehaviors[i]?.OnStateExit(in behaviorContext);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+        }
+
         public void PrepareFrame(float deltaTime, XAnimationContext context, float playableSpeedScale)
         {
             PrepareStateFrame(deltaTime, Mathf.Max(0f, playableSpeedScale), context);
@@ -158,6 +254,25 @@ namespace XAnimationEngine
         }
 
         protected abstract void PrepareStateFrame(float deltaTime, float playableSpeedScale, XAnimationContext context);
+
+        private XAnimationStateBehaviorContext CreateBehaviorContext(
+            Animator animator,
+            float deltaTime,
+            float globalSpeed,
+            XAnimationStateExitReason? exitReason)
+        {
+            return new XAnimationStateBehaviorContext(
+                animator,
+                ChannelName,
+                StateKey,
+                PrimaryClipKey,
+                PlaybackId,
+                GetNormalizedTime(),
+                GetTotalNormalizedTime(),
+                Speed * Mathf.Max(0f, globalSpeed),
+                Mathf.Max(0f, deltaTime),
+                exitReason);
+        }
 
         private void UpdateFade(float deltaTime)
         {
@@ -2180,6 +2295,8 @@ namespace XAnimationEngine
     public sealed class XAnimationChannel
     {
         private readonly PlayableGraph m_Graph;
+        private readonly Animator m_Animator;
+        private readonly Func<float> m_GlobalSpeedProvider;
         private readonly Func<int> m_NextPlaybackIdProvider;
         private readonly Action<XAnimationStatePlaybackInstance> m_OnStateEnter;
         private readonly Action<XAnimationStatePlaybackInstance, XAnimationStateExitReason> m_OnStateExit;
@@ -2197,12 +2314,16 @@ namespace XAnimationEngine
         public XAnimationChannel(
             PlayableGraph graph,
             XAnimationCompiledChannel channel,
+            Animator animator,
+            Func<float> globalSpeedProvider,
             Func<int> nextPlaybackIdProvider,
             Action<XAnimationStatePlaybackInstance> onStateEnter,
             Action<XAnimationStatePlaybackInstance, XAnimationStateExitReason> onStateExit)
         {
             m_Graph = graph;
             CompiledChannel = channel ?? throw new ArgumentNullException(nameof(channel));
+            m_Animator = animator;
+            m_GlobalSpeedProvider = globalSpeedProvider;
             m_NextPlaybackIdProvider = nextPlaybackIdProvider ?? throw new ArgumentNullException(nameof(nextPlaybackIdProvider));
             m_OnStateEnter = onStateEnter;
             m_OnStateExit = onStateExit;
@@ -2266,7 +2387,10 @@ namespace XAnimationEngine
             {
                 if (!m_Current.HasExitEventBeenRaised)
                 {
-                    NotifyStateExit(m_Current, XAnimationStateExitReason.Interrupted);
+                    XAnimationStateExitReason exitReason = request.Source == XAnimationTransitionRequestSource.AutoTransition
+                        ? XAnimationStateExitReason.Completed
+                        : XAnimationStateExitReason.Interrupted;
+                    NotifyStateExit(m_Current, exitReason);
                 }
 
                 m_Current.BeginFade(0f, request.FadeOut);
@@ -2319,6 +2443,7 @@ namespace XAnimationEngine
             if (m_Current != null)
             {
                 m_Current.PrepareFrame(deltaTime, context, playableSpeedScale);
+                m_Current.InvokeStateBehaviorUpdate(m_Animator, deltaTime, ResolveGlobalSpeed());
                 SetMixerInputWeight(0, m_Current.CurrentWeight * outputWeightScale);
             }
             else
@@ -2494,6 +2619,8 @@ namespace XAnimationEngine
                 return false;
             }
 
+            playback.MarkCompletedExitOrTransition();
+            playback.InvokeStateBehaviorExit(m_Animator, ResolveGlobalSpeed(), XAnimationStateExitReason.Completed);
             m_OnStateExit?.Invoke(playback, XAnimationStateExitReason.Completed);
             return true;
         }
@@ -2597,12 +2724,14 @@ namespace XAnimationEngine
 
         private void NotifyStateEnter(XAnimationStatePlaybackInstance playback)
         {
+            playback?.InvokeStateBehaviorEnter(m_Animator, ResolveGlobalSpeed());
             m_OnStateEnter?.Invoke(playback);
         }
 
         private void NotifyStateExit(XAnimationStatePlaybackInstance playback, XAnimationStateExitReason reason)
         {
             playback?.MarkCompletedExitOrTransition();
+            playback?.InvokeStateBehaviorExit(m_Animator, ResolveGlobalSpeed(), reason);
             m_OnStateExit?.Invoke(playback, reason);
         }
 
@@ -2622,6 +2751,11 @@ namespace XAnimationEngine
             m_LastRejectedClipKey = string.Empty;
             m_LastRejectedPriority = 0;
             m_LastRejectedSource = XAnimationTransitionRequestSource.ExplicitPlay;
+        }
+
+        private float ResolveGlobalSpeed()
+        {
+            return Mathf.Max(0f, m_GlobalSpeedProvider?.Invoke() ?? 1f);
         }
     }
 }

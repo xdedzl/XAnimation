@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -893,6 +894,7 @@ namespace XAnimationEditor
                 parameterYName = string.Empty,
                 samples = Array.Empty<XAnimationBlend1DSampleConfig>(),
                 directionalSamples = Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>(),
+                behaviors = Array.Empty<XAnimationStateBehavior>(),
             });
             RebuildDriverAndSave();
             return stateKey;
@@ -1353,6 +1355,66 @@ namespace XAnimationEditor
             SaveCompiledAssetIfNeeded(save);
         }
 
+        public void AddStateBehavior(string channelName, string stateKey, Type behaviorType)
+        {
+            EnsureBaseAssetEditable();
+            if (behaviorType == null ||
+                behaviorType.IsAbstract ||
+                behaviorType.ContainsGenericParameters ||
+                !typeof(XAnimationStateBehavior).IsAssignableFrom(behaviorType))
+            {
+                throw new XAnimationException("XAnimationStateBehavior type is invalid.");
+            }
+
+            if (behaviorType.GetConstructor(Type.EmptyTypes) == null)
+            {
+                throw new XAnimationException($"XAnimationStateBehavior '{behaviorType.FullName}' must have a public parameterless constructor.");
+            }
+
+            if (Activator.CreateInstance(behaviorType) is not XAnimationStateBehavior behavior)
+            {
+                throw new XAnimationException($"Failed to create XAnimationStateBehavior '{behaviorType.FullName}'.");
+            }
+
+            XAnimationStateConfig config = GetStateConfig(channelName, stateKey);
+            config.behaviors = AppendItem(config.behaviors ?? Array.Empty<XAnimationStateBehavior>(), behavior);
+            SaveCompiledAssetIfNeeded(true);
+        }
+
+        public void DeleteStateBehavior(string channelName, string stateKey, int behaviorIndex)
+        {
+            EnsureBaseAssetEditable();
+            XAnimationStateConfig config = GetStateConfig(channelName, stateKey);
+            XAnimationStateBehavior[] behaviors = config.behaviors ?? Array.Empty<XAnimationStateBehavior>();
+            if (behaviorIndex < 0 || behaviorIndex >= behaviors.Length)
+            {
+                throw new XAnimationException($"XAnimation state behavior index '{behaviorIndex}' does not exist.");
+            }
+
+            config.behaviors = RemoveAt(behaviors, behaviorIndex);
+            SaveCompiledAssetIfNeeded(true);
+        }
+
+        public void SetStateBehaviorFieldValue(
+            string channelName,
+            string stateKey,
+            int behaviorIndex,
+            string fieldName,
+            object value,
+            bool save = true)
+        {
+            EnsureBaseAssetEditable();
+            XAnimationStateBehavior behavior = GetStateBehavior(channelName, stateKey, behaviorIndex);
+            FieldInfo fieldInfo = behavior.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.Public);
+            if (fieldInfo == null)
+            {
+                throw new XAnimationException($"XAnimationStateBehavior field '{fieldName}' does not exist.");
+            }
+
+            fieldInfo.SetValue(behavior, ConvertStateBehaviorFieldValue(fieldInfo.FieldType, value));
+            SaveCompiledAssetIfNeeded(save);
+        }
+
         public void AddStateAllowedNextState(string stateKey)
         {
             XAnimationStateConfig config = ResolveUnambiguousStateConfig(stateKey);
@@ -1771,6 +1833,133 @@ namespace XAnimationEditor
             return m_CompiledAsset.GetState(NormalizeRequiredChannelName(channelName), NormalizeRequiredStateKey(stateKey)).Config;
         }
 
+        public bool TryGetStatesGraphNodePosition(string channelName, string path, bool isFolder, out Vector2 position)
+        {
+            EnsureLoaded();
+            channelName = NormalizeRequiredChannelName(channelName);
+            path = NormalizeRequiredStateKey(path);
+            position = default;
+
+            XAnimationStatesGraphNodePosition[] positions =
+                m_CompiledAsset.Asset.editData?.statesGraph?.nodePositions ??
+                Array.Empty<XAnimationStatesGraphNodePosition>();
+            for (int i = 0; i < positions.Length; i++)
+            {
+                XAnimationStatesGraphNodePosition item = positions[i];
+                if (item != null &&
+                    item.isFolder == isFolder &&
+                    string.Equals(item.channelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(NormalizeStatePath(item.path), path, StringComparison.Ordinal))
+                {
+                    position = new Vector2(item.x, item.y);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void SetStatesGraphNodePosition(string channelName, string path, bool isFolder, Vector2 position, bool save = true)
+        {
+            EnsureBaseAssetEditable();
+            channelName = NormalizeRequiredChannelName(channelName);
+            path = NormalizeRequiredStateKey(path);
+
+            XAnimationStatesGraphEditData graphEditData = GetOrCreateStatesGraphEditData(m_CompiledAsset.Asset);
+            XAnimationStatesGraphNodePosition[] positions =
+                graphEditData.nodePositions ?? Array.Empty<XAnimationStatesGraphNodePosition>();
+            for (int i = 0; i < positions.Length; i++)
+            {
+                XAnimationStatesGraphNodePosition item = positions[i];
+                if (item != null &&
+                    item.isFolder == isFolder &&
+                    string.Equals(item.channelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(NormalizeStatePath(item.path), path, StringComparison.Ordinal))
+                {
+                    item.x = RoundGraphPosition(position.x);
+                    item.y = RoundGraphPosition(position.y);
+                    SaveCompiledAssetIfNeeded(save);
+                    return;
+                }
+            }
+
+            List<XAnimationStatesGraphNodePosition> nextPositions = new(positions)
+            {
+                new XAnimationStatesGraphNodePosition
+                {
+                    channelName = channelName,
+                    path = path,
+                    isFolder = isFolder,
+                    x = RoundGraphPosition(position.x),
+                    y = RoundGraphPosition(position.y),
+                }
+            };
+            graphEditData.nodePositions = nextPositions.ToArray();
+            SaveCompiledAssetIfNeeded(save);
+        }
+
+        public bool TryGetStatesGraphViewPanOffset(string channelName, string path, out Vector2 panOffset)
+        {
+            EnsureLoaded();
+            channelName = NormalizeRequiredChannelName(channelName);
+            path = NormalizeStatePath(path);
+            panOffset = default;
+
+            XAnimationStatesGraphViewState[] viewStates =
+                m_CompiledAsset.Asset.editData?.statesGraph?.viewStates ??
+                Array.Empty<XAnimationStatesGraphViewState>();
+            for (int i = 0; i < viewStates.Length; i++)
+            {
+                XAnimationStatesGraphViewState item = viewStates[i];
+                if (item != null &&
+                    string.Equals(item.channelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(NormalizeStatePath(item.path), path, StringComparison.Ordinal))
+                {
+                    panOffset = new Vector2(item.panX, item.panY);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public void SetStatesGraphViewPanOffset(string channelName, string path, Vector2 panOffset, bool save = true)
+        {
+            EnsureBaseAssetEditable();
+            channelName = NormalizeRequiredChannelName(channelName);
+            path = NormalizeStatePath(path);
+
+            XAnimationStatesGraphEditData graphEditData = GetOrCreateStatesGraphEditData(m_CompiledAsset.Asset);
+            XAnimationStatesGraphViewState[] viewStates =
+                graphEditData.viewStates ?? Array.Empty<XAnimationStatesGraphViewState>();
+            for (int i = 0; i < viewStates.Length; i++)
+            {
+                XAnimationStatesGraphViewState item = viewStates[i];
+                if (item != null &&
+                    string.Equals(item.channelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(NormalizeStatePath(item.path), path, StringComparison.Ordinal))
+                {
+                    item.panX = RoundGraphPosition(panOffset.x);
+                    item.panY = RoundGraphPosition(panOffset.y);
+                    SaveCompiledAssetIfNeeded(save);
+                    return;
+                }
+            }
+
+            List<XAnimationStatesGraphViewState> nextViewStates = new(viewStates)
+            {
+                new XAnimationStatesGraphViewState
+                {
+                    channelName = channelName,
+                    path = path,
+                    panX = RoundGraphPosition(panOffset.x),
+                    panY = RoundGraphPosition(panOffset.y),
+                }
+            };
+            graphEditData.viewStates = nextViewStates.ToArray();
+            SaveCompiledAssetIfNeeded(save);
+        }
+
         private XAnimationStateConfig ResolveUnambiguousStateConfig(string stateKey)
         {
             EnsureLoaded();
@@ -1797,6 +1986,20 @@ namespace XAnimationEditor
             }
 
             return stateKey;
+        }
+
+        private static XAnimationStatesGraphEditData GetOrCreateStatesGraphEditData(XAnimationAsset asset)
+        {
+            asset.editData ??= new XAnimationEditData();
+            asset.editData.statesGraph ??= new XAnimationStatesGraphEditData();
+            asset.editData.statesGraph.nodePositions ??= Array.Empty<XAnimationStatesGraphNodePosition>();
+            asset.editData.statesGraph.viewStates ??= Array.Empty<XAnimationStatesGraphViewState>();
+            return asset.editData.statesGraph;
+        }
+
+        private static float RoundGraphPosition(float value)
+        {
+            return Mathf.Round(value * 100f) / 100f;
         }
 
         private static string NormalizeRequiredClipKey(string clipKey)
@@ -1971,6 +2174,18 @@ namespace XAnimationEditor
             }
 
             return samples[sampleIndex];
+        }
+
+        private XAnimationStateBehavior GetStateBehavior(string channelName, string stateKey, int behaviorIndex)
+        {
+            XAnimationStateConfig state = GetStateConfig(channelName, stateKey);
+            XAnimationStateBehavior[] behaviors = state.behaviors ?? Array.Empty<XAnimationStateBehavior>();
+            if (behaviorIndex < 0 || behaviorIndex >= behaviors.Length || behaviors[behaviorIndex] == null)
+            {
+                throw new XAnimationException($"XAnimation state behavior index '{behaviorIndex}' does not exist.");
+            }
+
+            return behaviors[behaviorIndex];
         }
 
         private void AddStateGateValue(string channelName, string stateKey, bool allowedNext)
@@ -3001,6 +3216,44 @@ namespace XAnimationEditor
             }
 
             return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        }
+
+        private static object ConvertStateBehaviorFieldValue(Type fieldType, object value)
+        {
+            if (fieldType == null)
+            {
+                return value;
+            }
+
+            if (value == null)
+            {
+                return fieldType.IsValueType ? Activator.CreateInstance(fieldType) : null;
+            }
+
+            if (fieldType.IsInstanceOfType(value))
+            {
+                return value;
+            }
+
+            if (fieldType == typeof(string))
+            {
+                return value.ToString();
+            }
+
+            if (fieldType.IsEnum)
+            {
+                if (value is Enum enumValue)
+                {
+                    return Enum.ToObject(fieldType, enumValue);
+                }
+
+                string enumText = value.ToString();
+                return string.IsNullOrWhiteSpace(enumText)
+                    ? Activator.CreateInstance(fieldType)
+                    : Enum.Parse(fieldType, enumText);
+            }
+
+            return Convert.ChangeType(value, fieldType, CultureInfo.InvariantCulture);
         }
 
         private static int ConvertParameterDefaultToInt(object value)

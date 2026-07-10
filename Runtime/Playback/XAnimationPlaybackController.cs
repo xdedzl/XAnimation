@@ -148,11 +148,7 @@ namespace XAnimationEngine
                     continue;
                 }
 
-                XAnimationPlaybackStartInfo startInfo = TryPlayCompiledState(nextState, channel.CompiledChannel, request);
-                if (startInfo.Started)
-                {
-                    channel.TryMarkCompletedExit(out _);
-                }
+                TryPlayCompiledState(nextState, channel.CompiledChannel, request);
             }
         }
 
@@ -322,6 +318,7 @@ namespace XAnimationEngine
                 parameterYName = string.Empty,
                 samples = Array.Empty<XAnimationBlend1DSampleConfig>(),
                 directionalSamples = Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>(),
+                behaviors = Array.Empty<XAnimationStateBehavior>(),
             };
         }
 

@@ -109,6 +109,7 @@ namespace XAnimationEngine
             XAnimationLoadedAssetRegistry loadedAssets)
         {
             NormalizeStateTransitionGateValues(asset);
+            NormalizeStateBehaviors(asset);
             NormalizeAutoTransitionValues(asset);
             NormalizeDefaultTransitionValues(asset);
             m_Validator.Validate(asset);
@@ -485,6 +486,49 @@ namespace XAnimationEngine
                     ? string.Empty
                     : transition.nextStateKey.Trim();
                 transition.transitionDuration = Mathf.Max(0f, transition.transitionDuration);
+            }
+        }
+
+        private static void NormalizeStateBehaviors(XAnimationAsset asset)
+        {
+            XAnimationStateConfig[] states = asset?.states;
+            if (states == null)
+            {
+                return;
+            }
+
+            for (int stateIndex = 0; stateIndex < states.Length; stateIndex++)
+            {
+                XAnimationStateConfig state = states[stateIndex];
+                if (state == null)
+                {
+                    continue;
+                }
+
+                XAnimationStateBehavior[] behaviors = state.behaviors;
+                if (behaviors == null || behaviors.Length == 0)
+                {
+                    state.behaviors = Array.Empty<XAnimationStateBehavior>();
+                    continue;
+                }
+
+                List<XAnimationStateBehavior> validBehaviors = null;
+                for (int behaviorIndex = 0; behaviorIndex < behaviors.Length; behaviorIndex++)
+                {
+                    XAnimationStateBehavior behavior = behaviors[behaviorIndex];
+                    if (behavior == null)
+                    {
+                        Debug.LogWarning($"XAnimation state '{state.key}' behavior #{behaviorIndex} 无效，已跳过。");
+                        continue;
+                    }
+
+                    validBehaviors ??= new List<XAnimationStateBehavior>(behaviors.Length);
+                    validBehaviors.Add(behavior);
+                }
+
+                state.behaviors = validBehaviors != null
+                    ? validBehaviors.ToArray()
+                    : Array.Empty<XAnimationStateBehavior>();
             }
         }
 

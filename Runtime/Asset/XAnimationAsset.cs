@@ -369,6 +369,7 @@ namespace XAnimationEngine
         public string parameterYName;
         public XAnimationBlend1DSampleConfig[] samples = Array.Empty<XAnimationBlend1DSampleConfig>();
         public XAnimationBlend2DSimpleDirectionalSampleConfig[] directionalSamples = Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>();
+        public XAnimationStateBehavior[] behaviors = Array.Empty<XAnimationStateBehavior>();
     }
 
     [Serializable]
@@ -414,6 +415,38 @@ namespace XAnimationEngine
     }
 
     [Serializable]
+    public class XAnimationEditData
+    {
+        public XAnimationStatesGraphEditData statesGraph = new();
+    }
+
+    [Serializable]
+    public class XAnimationStatesGraphEditData
+    {
+        public XAnimationStatesGraphNodePosition[] nodePositions = Array.Empty<XAnimationStatesGraphNodePosition>();
+        public XAnimationStatesGraphViewState[] viewStates = Array.Empty<XAnimationStatesGraphViewState>();
+    }
+
+    [Serializable]
+    public class XAnimationStatesGraphNodePosition
+    {
+        public string channelName;
+        public string path;
+        public bool isFolder;
+        public float x;
+        public float y;
+    }
+
+    [Serializable]
+    public class XAnimationStatesGraphViewState
+    {
+        public string channelName;
+        public string path;
+        public float panX;
+        public float panY;
+    }
+
+    [Serializable]
     [XAnimationAssetAlias(XAnimationAssetUtility.AnimationAssetAlias)]
     public class XAnimationAsset : XAnimationAssetBase
     {
@@ -428,6 +461,7 @@ namespace XAnimationEngine
         public XAnimationDefaultTransitionConfig[] defaultTransitions = Array.Empty<XAnimationDefaultTransitionConfig>();
         public XAnimationParameterConfig[] parameters = Array.Empty<XAnimationParameterConfig>();
         public XAnimationCueConfig[] cues = Array.Empty<XAnimationCueConfig>();
+        public XAnimationEditData editData = new();
 
         public IReadOnlyList<string> GetReferencedAnimationAssetPaths()
         {

@@ -291,6 +291,8 @@ namespace XAnimationEditor
 
             m_DefaultTransitionTabView = BuildDefaultTransitionTab();
             tabContent.Add(m_DefaultTransitionTabView);
+            m_StatesGraphTabView = BuildStatesGraphTab();
+            tabContent.Add(m_StatesGraphTabView);
             ApplyPreviewPaneTab();
 
             return pane;
@@ -316,9 +318,12 @@ namespace XAnimationEditor
 
             m_PreviewSceneTabButton = CreateToolbarTabButton("Scene", () => SetPreviewPaneTab(PreviewPaneTab.Scene));
             m_PreviewDefaultTransitionTabButton = CreateToolbarTabButton("Default Transition", () => SetPreviewPaneTab(PreviewPaneTab.DefaultTransition));
+            m_PreviewStatesGraphTabButton = CreateToolbarTabButton("States Graph", () => SetPreviewPaneTab(PreviewPaneTab.StatesGraph));
             toolbar.Add(m_PreviewSceneTabButton);
             toolbar.Add(CreateToolbarDivider());
             toolbar.Add(m_PreviewDefaultTransitionTabButton);
+            toolbar.Add(CreateToolbarDivider());
+            toolbar.Add(m_PreviewStatesGraphTabButton);
             return toolbar;
         }
 
@@ -345,8 +350,19 @@ namespace XAnimationEditor
                 }
             }
 
+            if (m_StatesGraphTabView != null)
+            {
+                m_StatesGraphTabView.style.display = m_SelectedPreviewPaneTab == PreviewPaneTab.StatesGraph ? DisplayStyle.Flex : DisplayStyle.None;
+                if (m_SelectedPreviewPaneTab == PreviewPaneTab.StatesGraph)
+                {
+                    RebuildStatesGraphTab();
+                    m_StatesGraphView?.RefreshViewportAfterLayout();
+                }
+            }
+
             ApplyPreviewTabButtonState(m_PreviewSceneTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.Scene);
             ApplyPreviewTabButtonState(m_PreviewDefaultTransitionTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition);
+            ApplyPreviewTabButtonState(m_PreviewStatesGraphTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.StatesGraph);
         }
 
         private static void ApplyPreviewTabButtonState(Button button, bool selected)

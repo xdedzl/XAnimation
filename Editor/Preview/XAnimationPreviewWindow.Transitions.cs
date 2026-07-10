@@ -960,28 +960,29 @@ namespace XAnimationEditor
 
             editor.Add(CreateStateGateEditor(config.channelName, state.Key, "Allowed Next States", config.allowedNextStateKeys, addPreviousGate: false));
             editor.Add(CreateStateGateEditor(config.channelName, state.Key, "Allowed Previous States", config.allowedPreviousStateKeys, addPreviousGate: true));
+            editor.Add(CreateStateBehaviorEditor(config.channelName, state.Key, config));
             return editor;
         }
 
         private VisualElement CreateStateGateEditor(string channelName, string stateKey, string title, string[] values, bool addPreviousGate)
         {
+            string gateUiKey = BuildStateGateUiKey(channelName, stateKey, addPreviousGate);
+            bool expanded = m_ExpandedStateGateKeys.Contains(gateUiKey);
+            bool editable = m_Session != null && !m_Session.IsOverrideAsset;
+
             VisualElement box = CreateSubBox();
-            box.style.marginTop = 5;
+            box.style.marginTop = 2;
+            SetPadding(box, 0);
 
-            VisualElement header = new VisualElement();
-            header.style.flexDirection = FlexDirection.Row;
-            header.style.alignItems = Align.Center;
-            header.style.marginBottom = 3;
-
-            Label label = new(title);
-            label.style.flexGrow = 1;
-            label.style.color = TextNormal;
-            label.style.fontSize = BodyFontSize;
-            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            VisualElement header = CreateListHeader();
+            Label foldoutLabel = CreateFoldoutGlyph(expanded);
+            Label label = CreateSectionTitleLabel(title);
+            label.tooltip = addPreviousGate ? "允许哪些 state 切到当前 state。" : "当前 state 允许切到哪些 state。";
+            header.Add(foldoutLabel);
             header.Add(label);
 
-            bool editable = m_Session != null && !m_Session.IsOverrideAsset;
-            Button addButton = new(() =>
+            Button addButton = null;
+            addButton = new Button(() =>
             {
                 if (addPreviousGate)
                 {
@@ -1001,22 +1002,45 @@ namespace XAnimationEditor
             header.Add(addButton);
             box.Add(header);
 
+            VisualElement content = new() { style = { display = expanded ? DisplayStyle.Flex : DisplayStyle.None } };
+            ApplyPrettyContentStyle(content);
+            box.Add(content);
+
             string[] gateValues = values ?? Array.Empty<string>();
             for (int i = 0; i < gateValues.Length; i++)
             {
-                box.Add(CreateStateGateRow(channelName, stateKey, gateValues[i], i, editable, addPreviousGate));
+                content.Add(CreateStateGateRow(channelName, stateKey, gateValues[i], i, editable, addPreviousGate));
             }
 
             if (gateValues.Length == 0)
             {
-                Label emptyLabel = new("Unrestricted");
-                emptyLabel.style.color = TextMuted;
-                emptyLabel.style.fontSize = BodyFontSize;
-                emptyLabel.style.marginLeft = 4;
-                box.Add(emptyLabel);
+                AddEmptyLabel(content, "Unrestricted");
             }
 
+            header.style.borderBottomWidth = expanded ? PrettyBorderWidth : 0f;
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0 || addButton.worldBound.Contains(evt.mousePosition))
+                {
+                    return;
+                }
+
+                bool isExpanded = content.style.display != DisplayStyle.None;
+                bool nextExpanded = !isExpanded;
+                content.style.display = nextExpanded ? DisplayStyle.Flex : DisplayStyle.None;
+                header.style.borderBottomWidth = nextExpanded ? PrettyBorderWidth : 0f;
+                SetFoldoutGlyphText(foldoutLabel, nextExpanded);
+                SetExpanded(m_ExpandedStateGateKeys, gateUiKey, nextExpanded);
+                evt.StopPropagation();
+            });
+
             return box;
+        }
+
+        private static string BuildStateGateUiKey(string channelName, string stateKey, bool previousGate)
+        {
+            string gateType = previousGate ? "previous" : "next";
+            return $"{gateType}:{BuildStateUiKey(channelName, stateKey)}";
         }
 
         private VisualElement CreateStateGateRow(string channelName, string stateKey, string targetStateKey, int index, bool editable, bool previousGate)
@@ -1687,6 +1711,7 @@ namespace XAnimationEditor
                 m_ScrollView.style.flexGrow = 1;
                 m_ScrollView.style.minHeight = 0;
                 m_ScrollView.RegisterCallback<GeometryChangedEvent>(_ => RefreshCanvasViewport());
+                m_ScrollView.contentViewport.RegisterCallback<GeometryChangedEvent>(_ => RefreshCanvasViewport());
                 Add(m_ScrollView);
 
                 m_Canvas = new VisualElement();
@@ -2113,21 +2138,12 @@ namespace XAnimationEditor
                     return Vector2.zero;
                 }
 
-                Rect worldViewport = m_ScrollView.contentViewport?.worldBound ?? Rect.zero;
-                if (worldViewport.width > 0f && worldViewport.height > 0f)
-                {
-                    return worldViewport.size;
-                }
-
-                Rect viewport = m_ScrollView.contentViewport?.layout ?? Rect.zero;
-                if (viewport.width > 0f && viewport.height > 0f)
-                {
-                    return viewport.size;
-                }
-
+                Rect viewport = m_ScrollView.contentViewport.layout;
                 Rect layout = m_ScrollView.layout;
                 Vector2 size = new(Mathf.Max(0f, layout.width), Mathf.Max(0f, layout.height));
                 Rect selfLayout = this.layout;
+                size.x = Mathf.Max(size.x, viewport.width);
+                size.y = Mathf.Max(size.y, viewport.height);
                 if (selfLayout.width > 0f || selfLayout.height > 0f)
                 {
                     size.x = Mathf.Max(size.x, selfLayout.width);

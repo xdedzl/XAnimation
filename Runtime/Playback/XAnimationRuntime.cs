@@ -460,7 +460,7 @@ namespace XAnimationEngine
             for (int i = 0; i < CompiledAsset.Channels.Count; i++)
             {
                 XAnimationCompiledChannel compiledChannel = (XAnimationCompiledChannel)CompiledAsset.Channels[i];
-                XAnimationChannel channel = new(m_Graph, compiledChannel, NextPlaybackId, OnStateEntered, OnStateExited);
+                XAnimationChannel channel = new(m_Graph, compiledChannel, Animator, () => m_GlobalSpeed, NextPlaybackId, OnStateEntered, OnStateExited);
                 m_Channels.Add(channel);
                 m_ChannelMap.Add(channel.Name, channel);
                 if (m_UseDirectChannelOutput)
