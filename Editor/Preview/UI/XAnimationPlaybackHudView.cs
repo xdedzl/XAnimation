@@ -144,7 +144,7 @@ namespace XAnimationEditor
             if (m_StatusLabel != null)
             {
                 m_StatusLabel.text = m_Host.StatusText;
-                m_StatusLabel.style.color = m_Host.StatusIsError ? DangerColor : TextMuted;
+                m_StatusLabel.style.color = TextMuted;
             }
 
             if (m_PlayPauseButton != null)
@@ -608,7 +608,7 @@ namespace XAnimationEditor
             if (m_ActionStatusLabel != null)
             {
                 m_ActionStatusLabel.text = m_ActionHost.ActionStatusText;
-                m_ActionStatusLabel.style.color = m_ActionHost.ActionStatusIsError ? DangerColor : TextMuted;
+                m_ActionStatusLabel.style.color = TextMuted;
             }
 
             m_ActionDebugCard?.RefreshState?.Invoke();

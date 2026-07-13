@@ -1056,8 +1056,13 @@ namespace XAnimationEditor
 
         private void SetStatus(string text, bool isError = false)
         {
+            if (isError)
+            {
+                Debug.LogError(text);
+            }
+
             m_StatusText = text ?? string.Empty;
-            m_StatusIsError = isError;
+            m_StatusIsError = false;
         }
 
         private void ReleaseEditModeSession()

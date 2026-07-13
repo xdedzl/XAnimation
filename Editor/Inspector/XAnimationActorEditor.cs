@@ -2021,13 +2021,18 @@ namespace XAnimationEditor
 
         private void SetStatus(string message, bool isError = false)
         {
+            if (isError)
+            {
+                Debug.LogError(message);
+            }
+
             if (m_StatusLabel == null)
             {
                 return;
             }
 
             m_StatusLabel.text = message;
-            m_StatusLabel.style.color = isError ? DangerColor : TextMuted;
+            m_StatusLabel.style.color = TextMuted;
         }
 
         private static string BuildStateUiKey(XAnimationStateConfig state)
