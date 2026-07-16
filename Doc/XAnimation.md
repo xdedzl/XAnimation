@@ -91,6 +91,7 @@ flowchart TD
 - 预览窗口顶部工具栏的 `Setting` 页用于配置预览 prefab、XAnimation 资源和 `Preload`。`Preload` 写入普通 `.xanimation`；`.xanimationoverride` 会继承 base 资源的设置。
 - 预览窗口会在当前 tab 真正可见时才推进动画和执行渲染；如果窗口被其他 tab 或其他编辑器界面覆盖，会自动暂停后台预览，避免持续占用编辑器 CPU / GPU。
 - 预览窗口始终使用 `Manual` 更新模式，以保证暂停、单帧步进、Seek、Cue Log 和调试图显示都可控且可复现；运行时 `XAnimationActor.UpdateMode` 不会影响预览。
+- 预览暂停遵循当前播放目标的 channel 类型：目标是 `Base` 时暂停整个预览；目标是非 `Base` channel 时只冻结该 channel，Base 和其他 channel 继续播放。
 - 预览窗口的相机渲染默认走稳定优先配置：关闭 HDR 与 MSAA，以降低 Unity 6000 + D3D12 下的预览渲染压力。
 - 预览窗口使用 `PreviewRenderUtility` 离屏实例渲染 prefab。若同一模型挂 `XAnimationActor` 后在场景 Inspector 预览正常，但在 `XAnimation Preview` 中出现头部正常、身体蒙皮异常等问题，优先检查离屏预览下 `SkinnedMeshRenderer` 的刷新条件；Preview 实例会强制开启 `updateWhenOffscreen` 和 `forceMatrixRecalculationPerRender`，避免 EditMode 离屏渲染时蒙皮矩阵或 Bounds 未稳定刷新。
 - 调试 UI 采用“局部连续刷新 + 事件驱动刷新”：
@@ -411,9 +412,10 @@ public sealed class HeroAnimationController : MonoBehaviour
 - `SetParameter(key, float/int/bool)` / `SetTrigger(key)`：写入运行时参数，`Blend1D` 默认从 Float 参数读取混合值，2D Directional Blend 默认从两个 Float 参数读取二维输入。
 - `Stop(channelName, fadeOut)` / `StopAll(fadeOut)`：停止指定通道或全部通道。
 - `Pause()` / `Resume()`：暂停或恢复整个 `XAnimationDriver`；`Manual` 下暂停会阻止运行时继续推进，`GameTime` 下暂停会停止 `PlayableGraph`，不适合作为精确停帧采样手段。
+- `PauseChannel(channelName)` / `ResumeChannel(channelName)` / `SetChannelPaused(channelName, paused)`：只暂停或恢复指定 channel。暂停期间该 channel 的播放时间、淡入淡出、Cue、自动转场和 `StateBehavior.Update` 都会冻结，其他 channel 继续推进；`IsChannelPaused(channelName)` 可查询当前状态。
 - `SeekChannel(channelName, normalizedTime)`：把指定 channel 的当前播放定位到归一化时间 `0~1`；传入前需要把帧号换算成归一化时间。
 - `SyncFrame()`：仅 `Manual` 模式可用，用 `deltaTime = 0` 立即评估一帧，常用于 `SeekChannel` 后把 `Animator` 立刻采样到目标姿态。
-- `SetChannelWeight(channelName, weight)`：调整通道混合权重。
+- `SetChannelWeight(channelName, weight)` / `GetChannelWeight(channelName)`：调整或查询通道当前的运行时混合权重。
 - `SetGlobalSpeed(speed)`：调整全局播放速度倍率，最小值会被限制为 0；最终速度等于 `state.speed * globalSpeed`。
 - `SetUpdateMode(updateMode)`：切换运行时更新模式。默认 `Manual`；`GameTime` 会让 `PlayableGraph` 交给 Unity 自动推进，用于性能优先场景。
 - `SetUnityAnimationEventsEnabled(enabled)`：控制 Unity 原生 `AnimationEvent` 是否通过 `Animator.fireEvents` 触发，默认关闭；关闭后仍可从 `AnimationClip.events` 派生 XAnimation Cue。
@@ -514,7 +516,7 @@ driver.Pause();
 driver.SyncFrame();
 ```
 
-如果运行时使用 `GameTime` 模式，不建议用 `Pause()` 做精确停帧。`GameTime` 下 `PlayableGraph` 由 Unity 自动推进，`Pause()` 会停止 graph；此时即使 `SeekChannel()` 写入了播放时间，也没有 `SyncFrame()` 这种手动评估入口保证画面立刻刷新。更稳妥的做法是保持 graph 处于播放状态，用全局或 channel 时间缩放归零来冻结。
+如果运行时使用 `GameTime` 模式，不建议用 `Pause()` 做单层停帧。`GameTime` 下 `Pause()` 会停止整个 graph；需要保持 Base 继续播放时，应改用 `PauseChannel()` 冻结目标 channel。
 
 ```csharp
 driver.SetUpdateMode(XAnimationUpdateMode.GameTime);
@@ -523,13 +525,13 @@ driver.PlayState("attack", new XAnimationTransitionOptions
     enterTime = normalizedTime,
     fadeIn = 0f
 });
-driver.SetGlobalSpeed(0f);
+driver.PauseChannel("UpperBody");
 ```
 
-恢复播放时再把全局速度设回正常值：
+恢复该层播放时：
 
 ```csharp
-driver.SetGlobalSpeed(1f);
+driver.ResumeChannel("UpperBody");
 ```
 
 注意：`XAnimationActor` 目前只封装了部分 `XAnimationDriver` 接口。通过 Actor 做 `GameTime` 首帧进入并冻结时，可以使用 `UpdateMode`、`PlayState(... enterTime ...)` 和 `GlobalSpeed = 0f`；如果业务需要直接调用 `SeekChannel()` 或 `SyncFrame()`，应持有 `XAnimationDriver`，或按项目需要在 Actor 上补转发方法。

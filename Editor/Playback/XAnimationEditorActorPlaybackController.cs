@@ -1025,7 +1025,6 @@ namespace XAnimationEditor
         {
             if (m_Actor == null)
             {
-                SetStatus("请选择一个 XAnimationActor。", true);
                 return;
             }
 

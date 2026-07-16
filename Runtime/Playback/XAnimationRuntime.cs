@@ -231,6 +231,24 @@ namespace XAnimationEngine
             GetChannel(channelName).SetChannelWeight(weight);
         }
 
+        internal float GetChannelWeight(string channelName)
+        {
+            ThrowIfDisposed();
+            return GetChannel(channelName).ChannelWeight;
+        }
+
+        internal void SetChannelPaused(string channelName, bool paused)
+        {
+            ThrowIfDisposed();
+            GetChannel(channelName).SetPaused(paused);
+        }
+
+        internal bool IsChannelPaused(string channelName)
+        {
+            ThrowIfDisposed();
+            return GetChannel(channelName).IsPaused;
+        }
+
         internal bool SeekChannel(string channelName, float normalizedTime)
         {
             ThrowIfDisposed();

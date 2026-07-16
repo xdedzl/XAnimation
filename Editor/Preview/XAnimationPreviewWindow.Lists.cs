@@ -1509,8 +1509,8 @@ namespace XAnimationEditor
             bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.Key, StringComparison.Ordinal);
             if (isPlaying)
             {
-                m_IsPaused = !m_IsPaused;
-                m_Session.SetPaused(m_IsPaused);
+                SetPlaybackTargetChannel(state.Config.channelName);
+                SetPlaybackPaused(!m_IsPaused);
                 SetPauseButtonState(true, m_IsPaused);
                 SetStepForwardButtonEnabled(true);
                 RefreshPlaybackViews();
@@ -1518,8 +1518,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_IsPaused = false;
-            m_Session.SetPaused(false);
+            ResumePlaybackChannel(state.Config.channelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -1591,8 +1590,7 @@ namespace XAnimationEditor
 
             MarkFreeformStateInteracted(state.Config.channelName, state.Key);
 
-            m_IsPaused = false;
-            m_Session.SetPaused(false);
+            ResumePlaybackChannel(state.Config.channelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -2340,8 +2338,8 @@ namespace XAnimationEditor
 
                 if (isPlaying)
                 {
-                    m_IsPaused = !m_IsPaused;
-                    m_Session.SetPaused(m_IsPaused);
+                    SetPlaybackTargetChannel(playingChannelName);
+                    SetPlaybackPaused(!m_IsPaused);
                     SetPauseButtonState(true, m_IsPaused);
                     SetStepForwardButtonEnabled(true);
                     RefreshPlaybackViews();
@@ -2349,8 +2347,7 @@ namespace XAnimationEditor
                 }
                 else
                 {
-                    m_IsPaused = false;
-                    m_Session.SetPaused(false);
+                    ResumePlaybackChannel(channelName);
                     SetPauseButtonState(true, false);
                     SetStepForwardButtonEnabled(true);
                     m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -2997,8 +2994,7 @@ namespace XAnimationEditor
                 return false;
             }
 
-            m_IsPaused = false;
-            m_Session.SetPaused(false);
+            ResumePlaybackChannel(channelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());

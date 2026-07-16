@@ -177,7 +177,6 @@ namespace XAnimationEditor
                 leadingContent.style.marginBottom = 2;
             }
 
-            box.Add(header);
             if (leadingContent != null)
             {
                 VisualElement leadingWrapper = new();
@@ -185,6 +184,7 @@ namespace XAnimationEditor
                 leadingWrapper.Add(leadingContent);
                 box.Add(leadingWrapper);
             }
+            box.Add(header);
 
             VisualElement content = new() { style = { display = expanded ? DisplayStyle.Flex : DisplayStyle.None } };
             ApplyPrettyContentStyle(content);
@@ -195,7 +195,7 @@ namespace XAnimationEditor
             {
                 AddEmptyLabel(content, "No samples");
             }
-            header.style.borderBottomWidth = expanded || leadingContent != null ? PrettyBorderWidth : 0f;
+            header.style.borderBottomWidth = expanded ? PrettyBorderWidth : 0f;
 
             header.RegisterCallback<MouseDownEvent>(evt =>
             {
@@ -207,7 +207,7 @@ namespace XAnimationEditor
                 bool isExpanded = content.style.display != DisplayStyle.None;
                 bool nextExpanded = !isExpanded;
                 content.style.display = nextExpanded ? DisplayStyle.Flex : DisplayStyle.None;
-                header.style.borderBottomWidth = nextExpanded || leadingContent != null ? PrettyBorderWidth : 0f;
+                header.style.borderBottomWidth = nextExpanded ? PrettyBorderWidth : 0f;
                 SetFoldoutGlyphText(foldoutLabel, nextExpanded);
                 setCollapsed(!nextExpanded);
                 evt.StopPropagation();
@@ -2012,7 +2012,7 @@ namespace XAnimationEditor
 
         private bool IsStateGroupCollapsed(string groupKey)
         {
-            return !string.IsNullOrWhiteSpace(groupKey) && m_CollapsedStateGroupKeys.Contains(groupKey);
+            return !string.IsNullOrWhiteSpace(groupKey) && !m_ExpandedStateGroupKeys.Contains(groupKey);
         }
 
         private void SetStateGroupCollapsed(string groupKey, bool collapsed)
@@ -2024,11 +2024,11 @@ namespace XAnimationEditor
 
             if (collapsed)
             {
-                m_CollapsedStateGroupKeys.Add(groupKey);
+                m_ExpandedStateGroupKeys.Remove(groupKey);
             }
             else
             {
-                m_CollapsedStateGroupKeys.Remove(groupKey);
+                m_ExpandedStateGroupKeys.Add(groupKey);
             }
         }
 
@@ -2053,9 +2053,12 @@ namespace XAnimationEditor
                 ? m_Session.CompiledAsset.GetState(stateKey)
                 : m_Session.CompiledAsset.GetState(channelName, stateKey);
             string parentPath = GetStatePathParent(state?.Key);
-            if (!string.IsNullOrWhiteSpace(parentPath))
+            List<string> segments = SplitStatePathSegments(parentPath);
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count; i++)
             {
-                SetStateGroupCollapsed(BuildStateGroupKey(state.Config.channelName, parentPath), false);
+                currentPath = BuildStatePathKey(currentPath, segments[i]);
+                SetStateGroupCollapsed(BuildStateGroupKey(state.Config.channelName, currentPath), false);
             }
         }
 

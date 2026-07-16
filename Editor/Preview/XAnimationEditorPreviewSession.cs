@@ -260,7 +260,19 @@ namespace XAnimationEditor
             m_EditorActor.StopAll();
         }
 
+        public void Stop(string channelName) => LoadedEditorActor.Stop(channelName);
+
         public void SetChannelWeight(string channelName, float weight) => LoadedEditorActor.SetChannelWeight(channelName, weight);
+
+        public float GetChannelWeight(string channelName) => LoadedEditorActor.GetChannelWeight(channelName);
+
+        public void PauseChannel(string channelName) => LoadedEditorActor.PauseChannel(channelName);
+
+        public void ResumeChannel(string channelName) => LoadedEditorActor.ResumeChannel(channelName);
+
+        public void SetChannelPaused(string channelName, bool paused) => LoadedEditorActor.SetChannelPaused(channelName, paused);
+
+        public bool IsChannelPaused(string channelName) => LoadedEditorActor.IsChannelPaused(channelName);
 
         public bool SeekChannel(string channelName, float normalizedTime) => LoadedEditorActor.SeekChannel(channelName, normalizedTime);
 

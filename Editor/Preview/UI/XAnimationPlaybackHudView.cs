@@ -61,6 +61,20 @@ namespace XAnimationEditor
         void CancelAction();
     }
 
+    internal interface IXAnimationChannelPlaybackHudHost
+    {
+        bool CanControlSelectedChannel { get; }
+        bool CanPlaySelectedChannel { get; }
+        bool CanPauseSelectedChannel { get; }
+        bool CanStopSelectedChannel { get; }
+        float SelectedChannelWeight { get; }
+
+        void SetSelectedChannelWeight(float weight);
+        void PlaySelectedChannel();
+        void PauseSelectedChannel();
+        void StopSelectedChannel();
+    }
+
     internal sealed class XAnimationPlaybackHudView
     {
         public const float SpeedMin = 0.1f;
@@ -75,6 +89,7 @@ namespace XAnimationEditor
 
         private readonly IXAnimationPlaybackHudHost m_Host;
         private readonly IXAnimationActionDebugHudHost m_ActionHost;
+        private readonly IXAnimationChannelPlaybackHudHost m_ChannelHost;
         private readonly bool m_IncludeStatus;
         private bool m_IsScrubbing;
 
@@ -87,6 +102,10 @@ namespace XAnimationEditor
         private Button m_StepButton;
         private Button m_StopButton;
         private DropdownField m_ChannelField;
+        private FloatField m_ChannelWeightField;
+        private Button m_ChannelPlayButton;
+        private Button m_ChannelPauseButton;
+        private Button m_ChannelStopButton;
         private Toggle m_RootMotionToggle;
         private Toggle m_ApplyTransitionToggle;
         private FloatField m_FadeInField;
@@ -110,6 +129,7 @@ namespace XAnimationEditor
         {
             m_Host = host ?? throw new ArgumentNullException(nameof(host));
             m_ActionHost = host as IXAnimationActionDebugHudHost;
+            m_ChannelHost = host as IXAnimationChannelPlaybackHudHost;
             m_IncludeStatus = includeStatus;
             Root = Build(titleText);
             Refresh();
@@ -134,6 +154,14 @@ namespace XAnimationEditor
             }
 
             RefreshChannelChoices(settings.ChannelName);
+            if (m_ChannelHost != null)
+            {
+                m_ChannelWeightField?.SetValueWithoutNotify(Mathf.Max(0f, m_ChannelHost.SelectedChannelWeight));
+                m_ChannelWeightField?.SetEnabled(m_ChannelHost.CanControlSelectedChannel);
+                SetButtonEnabled(m_ChannelPlayButton, m_ChannelHost.CanPlaySelectedChannel);
+                SetButtonEnabled(m_ChannelPauseButton, m_ChannelHost.CanPauseSelectedChannel);
+                SetButtonEnabled(m_ChannelStopButton, m_ChannelHost.CanStopSelectedChannel);
+            }
             m_RootMotionToggle?.SetValueWithoutNotify(m_Host.RootMotionEnabled);
             m_ApplyTransitionToggle?.SetValueWithoutNotify(settings.ApplyTransition);
             m_FadeInField?.SetValueWithoutNotify(Mathf.Max(0f, settings.FadeIn));
@@ -244,17 +272,38 @@ namespace XAnimationEditor
                     m_Host.SetRootMotionEnabled(evt.newValue);
                     Refresh();
                 });
+
+                VisualElement rootMotionControls = m_RootMotionToggle;
+                if (m_ChannelHost != null)
+                {
+                    rootMotionControls = CreateSelectedChannelControls(m_RootMotionToggle);
+                }
+
                 mainFields.Add(CreatePlaybackFieldPairRow(
                     "channelName",
                     m_ChannelField,
                     "rootMotion",
-                    m_RootMotionToggle,
+                    rootMotionControls,
                     MainFieldLabelWidth,
                     MainFieldValueWidth));
             }
             else
             {
                 mainFields.Add(CreatePlaybackFieldContainer("channelName", m_ChannelField, 92f));
+            }
+
+            if (m_ChannelHost != null)
+            {
+                m_ChannelWeightField = new FloatField();
+                m_ChannelWeightField.tooltip = "临时设置当前下拉框所选 Channel 的运行时混合权重，不修改资源 defaultWeight。";
+                ConfigureCompactPlaybackField(m_ChannelWeightField, MainFieldValueWidth);
+                m_ChannelWeightField.RegisterValueChangedCallback(evt =>
+                {
+                    float weight = Mathf.Max(0f, evt.newValue);
+                    m_ChannelHost.SetSelectedChannelWeight(weight);
+                    Refresh();
+                });
+                mainFields.Add(CreatePlaybackFieldContainer("weight", m_ChannelWeightField, MainFieldLabelWidth));
             }
 
             m_PlaybackCard.Content.Add(mainFields);
@@ -311,6 +360,33 @@ namespace XAnimationEditor
             }
 
             return m_PlaybackCard.Root;
+        }
+
+        private VisualElement CreateSelectedChannelControls(Toggle rootMotionToggle)
+        {
+            VisualElement controls = Row();
+            controls.style.alignItems = Align.Center;
+            controls.style.flexWrap = Wrap.NoWrap;
+
+            rootMotionToggle.label = string.Empty;
+            rootMotionToggle.style.width = 18;
+            rootMotionToggle.style.minWidth = 18;
+            rootMotionToggle.style.maxWidth = 18;
+            rootMotionToggle.style.flexShrink = 0;
+            controls.Add(rootMotionToggle);
+
+            m_ChannelPlayButton = CreateHudButton("▶", m_ChannelHost.PlaySelectedChannel, AccentColor, 19f);
+            m_ChannelPlayButton.tooltip = "播放所选 Channel 的第一个 State，或继续已暂停的播放。";
+            controls.Add(m_ChannelPlayButton);
+
+            m_ChannelPauseButton = CreateHudButton("Ⅱ", m_ChannelHost.PauseSelectedChannel, AccentColor, 2f);
+            m_ChannelPauseButton.tooltip = "暂停下拉框当前选择的 Channel，其他 Channel 继续播放。";
+            controls.Add(m_ChannelPauseButton);
+
+            m_ChannelStopButton = CreateHudButton("■", m_ChannelHost.StopSelectedChannel, DangerColor, 2f);
+            m_ChannelStopButton.tooltip = "停止下拉框当前选择的 Channel。";
+            controls.Add(m_ChannelStopButton);
+            return controls;
         }
 
         private FoldoutCard CreateActionDebugSection()

@@ -102,8 +102,10 @@ namespace XAnimationEditor
 
                 if (request.IsStatePlayback)
                 {
-                    m_IsPaused = false;
-                    m_Session.SetPaused(false);
+                    string channelName = string.IsNullOrWhiteSpace(request.ChannelName)
+                        ? m_Session.CompiledAsset.GetState(request.StateKey).Config.channelName
+                        : request.ChannelName;
+                    ResumePlaybackChannel(channelName);
                     SetPauseButtonState(true, false);
                     SetStepForwardButtonEnabled(true);
                     m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -130,12 +132,7 @@ namespace XAnimationEditor
                         throw new XAnimationException("预览窗口播放 clip 需要 channelName。");
                     }
 
-                    m_PlayTargetChannelName = request.ChannelName;
-                    m_PlaybackHudView?.Refresh();
-                    SavePlaybackPrefs();
-
-                    m_IsPaused = false;
-                    m_Session.SetPaused(false);
+                    ResumePlaybackChannel(request.ChannelName);
                     SetPauseButtonState(true, false);
                     SetStepForwardButtonEnabled(true);
                     m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -160,6 +157,11 @@ namespace XAnimationEditor
             }
 
             m_Session.StopAll();
+            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
+            for (int i = 0; i < channels.Count; i++)
+            {
+                m_Session.ResumeChannel(channels[i].Name);
+            }
             m_IsPaused = false;
             m_Session.SetPaused(false);
             SetPauseButtonState(false, false);
@@ -186,12 +188,18 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_IsPaused = !m_IsPaused;
-            m_Session.SetPaused(m_IsPaused);
+            SetPlaybackPaused(!m_IsPaused);
             SetPauseButtonState(true, m_IsPaused);
             SetStepForwardButtonEnabled(true);
             MarkClipPlaybackUiDirty();
-            SetStatus(m_IsPaused ? "已暂停动画预览。" : "已继续动画预览。");
+            if (TryGetNonBasePauseTarget(out string channelName))
+            {
+                SetStatus(m_IsPaused ? $"已暂停 {channelName} Channel。" : $"已继续 {channelName} Channel。");
+            }
+            else
+            {
+                SetStatus(m_IsPaused ? "已暂停动画预览。" : "已继续动画预览。");
+            }
         }
 
         private void StepForward()
@@ -203,11 +211,10 @@ namespace XAnimationEditor
 
             if (!m_IsPaused)
             {
-                m_IsPaused = true;
-                m_Session.SetPaused(true);
+                SetPlaybackPaused(true);
             }
 
-            m_Session.Step(1f / 60f);
+            StepPausedPlayback(1f / 60f);
             SetPauseButtonState(true, true);
             SetStepForwardButtonEnabled(true);
             MarkEventUiDirty();
@@ -216,6 +223,150 @@ namespace XAnimationEditor
             RenderPreview();
             Repaint();
             SetStatus("已向后推进一帧。");
+        }
+
+        private void SetPlaybackTargetChannel(string channelName)
+        {
+            m_PlayTargetChannelName = channelName ?? string.Empty;
+            m_PlaybackHudView?.Refresh();
+            SavePlaybackPrefs();
+            RefreshPlaybackPauseState();
+        }
+
+        private void SetSelectedChannelWeight(float weight)
+        {
+            float channelWeight = Mathf.Max(0f, weight);
+            m_Session.SetChannelWeight(m_PlayTargetChannelName, channelWeight);
+            m_Session.SyncPreviewFrame();
+            RefreshPlaybackViews();
+            RenderPreview();
+            SetStatus($"{m_PlayTargetChannelName} weight = {channelWeight:0.###}。");
+        }
+
+        private void PlaySelectedChannel()
+        {
+            m_Session.SetPaused(false);
+            m_Session.ResumeChannel(m_PlayTargetChannelName);
+            if (m_Session.GetChannelState(m_PlayTargetChannelName) == null)
+            {
+                XAnimationCompiledState state = FindFirstSelectedChannelState();
+                m_Session.PlayState(m_PlayTargetChannelName, state.Key, BuildPreviewTransitionOptions());
+            }
+
+            RefreshPlaybackPauseState();
+            RefreshPlaybackViews();
+            RenderPreview();
+            SetStatus($"正在播放 {m_PlayTargetChannelName} Channel。");
+        }
+
+        private XAnimationCompiledState FindFirstSelectedChannelState()
+        {
+            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
+            for (int i = 0; i < states.Count; i++)
+            {
+                if (string.Equals(states[i].Config.channelName, m_PlayTargetChannelName, StringComparison.Ordinal))
+                {
+                    return states[i];
+                }
+            }
+
+            return null;
+        }
+
+        private void PauseSelectedChannel()
+        {
+            m_Session.PauseChannel(m_PlayTargetChannelName);
+            RefreshPlaybackPauseState();
+            RefreshPlaybackViews();
+            RenderPreview();
+            SetStatus($"已暂停 {m_PlayTargetChannelName} Channel。");
+        }
+
+        private void StopSelectedChannel()
+        {
+            m_Session.SetPaused(false);
+            m_Session.ResumeChannel(m_PlayTargetChannelName);
+            m_Session.Stop(m_PlayTargetChannelName);
+            RefreshPlaybackPauseState();
+            MarkStatePlaybackUiDirty();
+            MarkClipPlaybackUiDirty();
+            RefreshPlaybackViews();
+            RenderPreview();
+            SetStatus($"已停止 {m_PlayTargetChannelName} Channel。");
+        }
+
+        private void RefreshPlaybackPauseState()
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                m_IsPaused = false;
+                return;
+            }
+
+            m_IsPaused = m_Session.IsPaused;
+            if (!m_IsPaused && TryGetNonBasePauseTarget(out string channelName))
+            {
+                m_IsPaused = m_Session.IsChannelPaused(channelName);
+            }
+        }
+
+        private bool TryGetNonBasePauseTarget(out string channelName)
+        {
+            channelName = m_PlayTargetChannelName;
+            if (string.IsNullOrWhiteSpace(channelName) || m_Session.GetChannelState(channelName) == null)
+            {
+                return false;
+            }
+
+            XAnimationCompiledChannel channel = m_Session.CompiledAsset.GetChannel(channelName);
+            return channel.Config.layerType != XAnimationChannelLayerType.Base;
+        }
+
+        private void SetPlaybackPaused(bool paused)
+        {
+            if (TryGetNonBasePauseTarget(out string channelName))
+            {
+                m_Session.SetPaused(false);
+                m_Session.SetChannelPaused(channelName, paused);
+            }
+            else
+            {
+                m_Session.SetPaused(paused);
+            }
+
+            m_IsPaused = paused;
+        }
+
+        private void ResumePlaybackChannel(string channelName)
+        {
+            SetPlaybackTargetChannel(channelName);
+            m_Session.SetPaused(false);
+            m_Session.ResumeChannel(channelName);
+            m_IsPaused = false;
+        }
+
+        private void RestorePlaybackPauseState()
+        {
+            if (TryGetNonBasePauseTarget(out string channelName) && m_Session.IsChannelPaused(channelName))
+            {
+                m_Session.SetPaused(false);
+                return;
+            }
+
+            m_Session.SetPaused(m_IsPaused);
+        }
+
+        private void StepPausedPlayback(float deltaTime)
+        {
+            if (TryGetNonBasePauseTarget(out string channelName) && m_Session.IsChannelPaused(channelName))
+            {
+                m_Session.ResumeChannel(channelName);
+                m_Session.Step(deltaTime);
+                m_Session.PauseChannel(channelName);
+                return;
+            }
+
+            m_Session.Step(deltaTime);
         }
 
         private void ResetPreviewTransform()
@@ -286,6 +437,7 @@ namespace XAnimationEditor
             }
 
             string resolvedClipChannel = string.IsNullOrWhiteSpace(channelName) ? playingChannelName : channelName;
+            ResumePlaybackChannel(resolvedClipChannel);
             m_Session.PlayClip(clipKey, resolvedClipChannel, BuildPreviewTransitionOptions());
             RefreshPlaybackViews();
             return true;
@@ -304,6 +456,7 @@ namespace XAnimationEditor
                 return false;
             }
 
+            ResumePlaybackChannel(playingChannelName);
             m_Session.PlayState(playingChannelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             return true;
@@ -562,8 +715,7 @@ namespace XAnimationEditor
                 return false;
             }
 
-            m_IsPaused = false;
-            m_Session.SetPaused(false);
+            ResumePlaybackChannel(firstState.Config.channelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -774,8 +926,7 @@ namespace XAnimationEditor
                 }
             }
 
-            m_IsPaused = true;
-            m_Session.SetPaused(true);
+            SetPlaybackPaused(true);
             SetPauseButtonState(true, true);
             SetStepForwardButtonEnabled(true);
             return true;
@@ -824,8 +975,7 @@ namespace XAnimationEditor
                 returnTransition = null,
             };
 
-            m_IsPaused = false;
-            m_Session.SetPaused(false);
+            ResumePlaybackChannel(m_Session.CompiledAsset.GetState(m_ActionStateKey).Config.channelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
@@ -989,13 +1139,13 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_IsPaused = true;
-            m_Session.SetPaused(true);
+            SetPlaybackTargetChannel(state.channelName);
+            SetPlaybackPaused(true);
             SetPauseButtonState(true, true);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
 
-            m_Session.Step(0.0001f);
+            StepPausedPlayback(0.0001f);
             m_PlaybackHudView?.Refresh();
             MarkEventUiDirty();
             RefreshPlaybackAndLogViews();
@@ -1596,6 +1746,7 @@ namespace XAnimationEditor
                 return;
             }
 
+            ResumePlaybackChannel(state.Config.channelName);
             m_Session.PlayState(state.Config.channelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();
@@ -1620,6 +1771,7 @@ namespace XAnimationEditor
                 return;
             }
 
+            ResumePlaybackChannel(state.Config.channelName);
             m_Session.PlayState(state.Config.channelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();

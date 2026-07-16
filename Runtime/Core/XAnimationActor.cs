@@ -366,6 +366,31 @@ namespace XAnimationEngine
             m_Driver.SetChannelWeight(channelName, weight);
         }
 
+        public float GetChannelWeight(string channelName)
+        {
+            return m_Driver.GetChannelWeight(channelName);
+        }
+
+        public void PauseChannel(string channelName)
+        {
+            m_Driver.PauseChannel(channelName);
+        }
+
+        public void ResumeChannel(string channelName)
+        {
+            m_Driver.ResumeChannel(channelName);
+        }
+
+        public void SetChannelPaused(string channelName, bool paused)
+        {
+            m_Driver.SetChannelPaused(channelName, paused);
+        }
+
+        public bool IsChannelPaused(string channelName)
+        {
+            return m_Driver.IsChannelPaused(channelName);
+        }
+
         public void SetRootMotionEnabled(bool enabled)
         {
             m_Driver.SetRootMotionEnabled(enabled);

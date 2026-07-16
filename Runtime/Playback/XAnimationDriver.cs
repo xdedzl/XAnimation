@@ -248,6 +248,34 @@ namespace XAnimationEngine
             m_Runtime.SetChannelWeight(channelName, weight);
         }
 
+        public float GetChannelWeight(string channelName)
+        {
+            EnsureInitialized();
+            return m_Runtime.GetChannelWeight(channelName);
+        }
+
+        public void PauseChannel(string channelName)
+        {
+            SetChannelPaused(channelName, true);
+        }
+
+        public void ResumeChannel(string channelName)
+        {
+            SetChannelPaused(channelName, false);
+        }
+
+        public void SetChannelPaused(string channelName, bool paused)
+        {
+            EnsureInitialized();
+            m_Runtime.SetChannelPaused(channelName, paused);
+        }
+
+        public bool IsChannelPaused(string channelName)
+        {
+            EnsureInitialized();
+            return m_Runtime.IsChannelPaused(channelName);
+        }
+
         public bool SeekChannel(string channelName, float normalizedTime)
         {
             EnsureInitialized();

@@ -353,7 +353,7 @@ namespace XAnimationEditor
         private VisualElement m_ChannelsGroupContainer;
         private VisualElement m_ParametersGroupContainer;
         private readonly HashSet<string> m_ExpandedStateKeys = new(StringComparer.Ordinal);
-        private readonly HashSet<string> m_CollapsedStateGroupKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_ExpandedStateGroupKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedBlendSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedDirectionalSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedBehaviorStateKeys = new(StringComparer.Ordinal);
@@ -707,7 +707,7 @@ namespace XAnimationEditor
 
                 if (becameVisible)
                 {
-                    window.m_Session.SetPaused(window.m_IsPaused);
+                    window.RestorePlaybackPauseState();
                 }
 
                 bool shouldUpdatePreview = becameVisible || now - m_LastActivePreviewUpdateTime >= ActivePreviewUpdateIntervalSeconds;
@@ -720,7 +720,7 @@ namespace XAnimationEditor
                 {
                     float deltaTime = (float)Math.Max(0d, now - m_LastActivePreviewUpdateTime);
                     m_LastActivePreviewUpdateTime = now;
-                    bool hadSchedulerAdvance = !window.m_IsPaused && deltaTime > 0f;
+                    bool hadSchedulerAdvance = !window.m_Session.IsPaused && deltaTime > 0f;
                     bool didVisualUpdate = window.ProcessCameraMovement(deltaTime);
 
                     if (hadSchedulerAdvance || becameVisible)

@@ -240,6 +240,36 @@ namespace XAnimationEditor
             m_Driver.SetChannelWeight(channelName, weight);
         }
 
+        public float GetChannelWeight(string channelName)
+        {
+            EnsureLoaded();
+            return m_Driver.GetChannelWeight(channelName);
+        }
+
+        public void PauseChannel(string channelName)
+        {
+            EnsureLoaded();
+            m_Driver.PauseChannel(channelName);
+        }
+
+        public void ResumeChannel(string channelName)
+        {
+            EnsureLoaded();
+            m_Driver.ResumeChannel(channelName);
+        }
+
+        public void SetChannelPaused(string channelName, bool paused)
+        {
+            EnsureLoaded();
+            m_Driver.SetChannelPaused(channelName, paused);
+        }
+
+        public bool IsChannelPaused(string channelName)
+        {
+            EnsureLoaded();
+            return m_Driver.IsChannelPaused(channelName);
+        }
+
         public void SetRootMotionEnabled(bool enabled)
         {
             m_RootMotionEnabled = enabled;

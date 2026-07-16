@@ -2304,6 +2304,7 @@ namespace XAnimationEngine
         private XAnimationStatePlaybackInstance m_Current;
         private XAnimationStatePlaybackInstance m_Previous;
         private float m_ChannelWeight;
+        private bool m_IsPaused;
         private XAnimationTransitionRejectReason m_LastRejectReason;
         private string m_LastRejectedStateKey = string.Empty;
         private string m_LastRejectedClipKey = string.Empty;
@@ -2336,6 +2337,7 @@ namespace XAnimationEngine
         public XAnimationCompiledChannel CompiledChannel { get; }
         public AnimationMixerPlayable Mixer { get; }
         public float ChannelWeight => m_ChannelWeight;
+        public bool IsPaused => m_IsPaused;
         public XAnimationStatePlaybackInstance CurrentPlayback => m_Current;
         public bool HasActivePlayback => m_Current != null || m_Previous != null;
 
@@ -2439,11 +2441,16 @@ namespace XAnimationEngine
 
         public void PrepareFrame(float deltaTime, XAnimationContext context, bool applyChannelWeightToInputs, float playableSpeedScale)
         {
+            float channelDeltaTime = m_IsPaused ? 0f : deltaTime;
+            float channelPlayableSpeedScale = m_IsPaused ? 0f : playableSpeedScale;
             float outputWeightScale = applyChannelWeightToInputs ? m_ChannelWeight : 1f;
             if (m_Current != null)
             {
-                m_Current.PrepareFrame(deltaTime, context, playableSpeedScale);
-                m_Current.InvokeStateBehaviorUpdate(m_Animator, deltaTime, ResolveGlobalSpeed());
+                m_Current.PrepareFrame(channelDeltaTime, context, channelPlayableSpeedScale);
+                if (!m_IsPaused)
+                {
+                    m_Current.InvokeStateBehaviorUpdate(m_Animator, channelDeltaTime, ResolveGlobalSpeed());
+                }
                 SetMixerInputWeight(0, m_Current.CurrentWeight * outputWeightScale);
             }
             else
@@ -2453,7 +2460,7 @@ namespace XAnimationEngine
 
             if (m_Previous != null)
             {
-                m_Previous.PrepareFrame(deltaTime, context, playableSpeedScale);
+                m_Previous.PrepareFrame(channelDeltaTime, context, channelPlayableSpeedScale);
                 SetMixerInputWeight(1, m_Previous.CurrentWeight * outputWeightScale);
             }
             else
@@ -2490,6 +2497,11 @@ namespace XAnimationEngine
             m_ChannelWeight = Mathf.Max(0f, weight);
         }
 
+        public void SetPaused(bool paused)
+        {
+            m_IsPaused = paused;
+        }
+
         public bool SeekCurrent(float normalizedTime)
         {
             if (m_Current == null)
@@ -2504,7 +2516,8 @@ namespace XAnimationEngine
 
         public XAnimationChannelState GetState(float globalSpeed = 1f)
         {
-            XAnimationChannelState state = m_Current?.BuildState(m_ChannelWeight, globalSpeed);
+            float effectiveGlobalSpeed = m_IsPaused ? 0f : globalSpeed;
+            XAnimationChannelState state = m_Current?.BuildState(m_ChannelWeight, effectiveGlobalSpeed);
             if (state != null && !string.IsNullOrWhiteSpace(state.stateKey))
             {
                 state.nextStateKey = string.Empty;
@@ -2584,7 +2597,7 @@ namespace XAnimationEngine
                     0,
                     inputWeight,
                     m_ChannelWeight,
-                    globalSpeed,
+                    m_IsPaused ? 0f : globalSpeed,
                     connected);
                 child.isTransitioning = m_Previous != null;
                 children.Add(child);
@@ -2601,7 +2614,7 @@ namespace XAnimationEngine
                     1,
                     inputWeight,
                     m_ChannelWeight,
-                    globalSpeed,
+                    m_IsPaused ? 0f : globalSpeed,
                     connected);
                 child.isTransitioning = true;
                 children.Add(child);

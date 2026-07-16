@@ -37,15 +37,21 @@ namespace XAnimationEditor
 
             leftPane.Add(BuildStatesGraphPane());
 
+            ScrollView detailsScrollView = new(ScrollViewMode.Vertical);
+            detailsScrollView.verticalScrollerVisibility = ScrollerVisibility.Auto;
+            detailsScrollView.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+            detailsScrollView.style.minWidth = 220;
+            detailsScrollView.style.minHeight = 0;
+            detailsScrollView.style.flexShrink = 0;
+            detailsScrollView.style.backgroundColor = new Color(0.16f, 0.17f, 0.19f, 1f);
+
             m_StatesGraphDetailsView = new();
-            m_StatesGraphDetailsView.style.minWidth = 220;
-            m_StatesGraphDetailsView.style.minHeight = 0;
             m_StatesGraphDetailsView.style.flexShrink = 0;
             m_StatesGraphDetailsView.style.paddingLeft = 8;
             m_StatesGraphDetailsView.style.paddingRight = 8;
             m_StatesGraphDetailsView.style.paddingTop = 8;
-            m_StatesGraphDetailsView.style.backgroundColor = new Color(0.16f, 0.17f, 0.19f, 1f);
-            body.Add(m_StatesGraphDetailsView);
+            detailsScrollView.Add(m_StatesGraphDetailsView);
+            body.Add(detailsScrollView);
             body.RegisterCallback<GeometryChangedEvent>(_ => m_StatesGraphView?.RefreshViewportAfterLayout());
 
             Label status = new("滚轮缩放，拖动空白处平移；右键空白处新增 state/folder；双击 folder 下钻，拖动节点调整位置。");

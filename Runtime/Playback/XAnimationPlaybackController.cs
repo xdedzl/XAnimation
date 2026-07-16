@@ -107,7 +107,8 @@ namespace XAnimationEngine
             for (int i = 0; i < channels.Count; i++)
             {
                 XAnimationChannel channel = channels[i];
-                if (!channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
+                if (channel.IsPaused ||
+                    !channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
                     playback == null ||
                     playback.IsLooping ||
                     playback.IsTemporaryState ||

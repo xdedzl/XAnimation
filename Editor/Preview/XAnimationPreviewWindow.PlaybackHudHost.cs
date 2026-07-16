@@ -7,7 +7,7 @@ namespace XAnimationEditor
 {
     public sealed partial class XAnimationPreviewWindow
     {
-        private sealed class PreviewPlaybackHudHost : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost
+        private sealed class PreviewPlaybackHudHost : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost, IXAnimationChannelPlaybackHudHost
         {
             private readonly XAnimationPreviewWindow m_Window;
             private readonly XAnimationPlaybackSettings m_Settings = new();
@@ -74,6 +74,17 @@ namespace XAnimationEditor
             public float NormalizedTime => m_Window.TryGetDominantPlaybackState(out XAnimationChannelState state)
                 ? Mathf.Clamp01(state.normalizedTime)
                 : 0f;
+            public bool CanControlSelectedChannel => HasSelectedChannel;
+            public bool CanPlaySelectedChannel => HasSelectedChannelPlayback
+                ? m_Window.m_Session.IsPaused || m_Window.m_Session.IsChannelPaused(m_Window.m_PlayTargetChannelName)
+                : HasSelectedChannel && m_Window.FindFirstSelectedChannelState() != null;
+            public bool CanPauseSelectedChannel => HasSelectedChannelPlayback &&
+                                                   !m_Window.m_Session.IsPaused &&
+                                                   !m_Window.m_Session.IsChannelPaused(m_Window.m_PlayTargetChannelName);
+            public bool CanStopSelectedChannel => HasSelectedChannelPlayback;
+            public float SelectedChannelWeight => HasSelectedChannel
+                ? m_Window.m_Session.GetChannelWeight(m_Window.m_PlayTargetChannelName)
+                : 0f;
 
             public IReadOnlyList<string> ChannelChoices
             {
@@ -136,6 +147,11 @@ namespace XAnimationEditor
                                               m_Window.m_Session.IsLoaded &&
                                               m_Window.m_Session.CompiledAsset?.States != null &&
                                               m_Window.m_Session.CompiledAsset.States.Count > 0;
+            private bool HasSelectedChannel => m_Window.m_Session != null &&
+                                               m_Window.m_Session.IsLoaded &&
+                                               !string.IsNullOrWhiteSpace(m_Window.m_PlayTargetChannelName);
+            private bool HasSelectedChannelPlayback => HasSelectedChannel &&
+                                                       m_Window.m_Session.GetChannelState(m_Window.m_PlayTargetChannelName) != null;
 
             public void SaveSettings()
             {
@@ -149,8 +165,27 @@ namespace XAnimationEditor
 
             public void SetChannel(string channelName)
             {
-                m_Window.m_PlayTargetChannelName = channelName ?? string.Empty;
-                m_Window.SavePlaybackPrefs();
+                m_Window.SetPlaybackTargetChannel(channelName);
+            }
+
+            public void SetSelectedChannelWeight(float weight)
+            {
+                m_Window.SetSelectedChannelWeight(weight);
+            }
+
+            public void PlaySelectedChannel()
+            {
+                m_Window.PlaySelectedChannel();
+            }
+
+            public void PauseSelectedChannel()
+            {
+                m_Window.PauseSelectedChannel();
+            }
+
+            public void StopSelectedChannel()
+            {
+                m_Window.StopSelectedChannel();
             }
 
             public void SetRootMotionEnabled(bool enabled)
