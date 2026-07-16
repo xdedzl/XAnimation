@@ -114,6 +114,7 @@ namespace XAnimationEngine
         public string StateKey { get; }
         public string RequestedStateKey { get; private set; }
         public string[] ActiveStateNodeKeys { get; private set; }
+        internal string SelectorControlStateKey { get; private set; }
         public XAnimationStateType StateType { get; }
         public bool IsTemporaryState { get; }
         public abstract string PrimaryClipKey { get; }
@@ -130,9 +131,13 @@ namespace XAnimationEngine
         public bool HasExitEventBeenRaised => m_HasExitEventBeenRaised;
         public bool HasCompletedExitOrTransition { get; private set; }
 
-        internal void SetStateNodeContext(string requestedStateKey, IReadOnlyList<string> activeStateNodeKeys)
+        internal void SetStateNodeContext(
+            string requestedStateKey,
+            IReadOnlyList<string> activeStateNodeKeys,
+            string selectorControlStateKey = null)
         {
             RequestedStateKey = requestedStateKey ?? string.Empty;
+            SelectorControlStateKey = selectorControlStateKey ?? string.Empty;
             if (activeStateNodeKeys == null || activeStateNodeKeys.Count == 0)
             {
                 ActiveStateNodeKeys = Array.Empty<string>();

@@ -421,6 +421,9 @@ public sealed class HeroAnimationController : MonoBehaviour
 - `SetUnityAnimationEventsEnabled(enabled)`：控制 Unity 原生 `AnimationEvent` 是否通过 `Animator.fireEvents` 触发，默认关闭；关闭后仍可从 `AnimationClip.events` 派生 XAnimation Cue。
 - `SetRootMotionEnabled(enabled)`：全局启停 Root Motion 输出；运行时和 `XAnimation Preview` 都直接切换 Unity 原生 `Animator.applyRootMotion`。
 - `GetChannelState(channelName)`：查询当前播放 clip、归一化时间、权重、速度、优先级，以及当前是否处于 transition、previous state、transition 来源、最近一次拒绝原因等调试信息。
+- `IsPlaying(stateKey, channelName)`：查询当前叶 State 所在子树；当前播放节点本身及其全部 Normal / Selector 父节点都会返回 `true`。`GetChannelState().stateKey` 是实际播放的叶 State，`requestedStateKey` 保留业务调用 `PlayState` 时传入的 key。
+
+Selector 子树内直接 `PlayState(子节点)`，或 `autoTransitions.nextStateKey` 指向其子节点时，运行时会从该子树最外层的 Selector 按当前 Int 参数解析实际要播放的叶 State。后续修改该 Selector 链上的参数会继续按 Selector 重选并切换 State；参数值超出子节点范围时，显式播放会失败，已由 Selector 控制的 channel 在参数变更时会停止。
 
 ### 4.1 Action Playback
 

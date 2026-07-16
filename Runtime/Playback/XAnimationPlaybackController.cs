@@ -19,10 +19,12 @@ namespace XAnimationEngine
         {
             internal StateNodeResolution(
                 XAnimationCompiledStateNode requestedNode,
+                string selectorControlStateKey,
                 XAnimationCompiledState state,
                 XAnimationCompiledStateNode[] activeNodes)
             {
                 RequestedNode = requestedNode;
+                SelectorControlStateKey = selectorControlStateKey ?? string.Empty;
                 State = state;
                 ActiveNodes = activeNodes;
                 ActiveNodeKeys = new string[activeNodes.Length];
@@ -33,6 +35,7 @@ namespace XAnimationEngine
             }
 
             internal XAnimationCompiledStateNode RequestedNode { get; }
+            internal string SelectorControlStateKey { get; }
             internal XAnimationCompiledState State { get; }
             internal XAnimationCompiledStateNode[] ActiveNodes { get; }
             internal string[] ActiveNodeKeys { get; }
@@ -122,10 +125,14 @@ namespace XAnimationEngine
                     XAnimationTransitionRejectReason.None);
             }
 
-            return StartStatePlayback(resolution, transition, force);
+            return StartStatePlayback(resolution, transition, force, requestedNode.Key);
         }
 
-        private XAnimationPlaybackStartInfo StartStatePlayback(StateNodeResolution resolution, XAnimationTransitionOptions transition, bool force)
+        private XAnimationPlaybackStartInfo StartStatePlayback(
+            StateNodeResolution resolution,
+            XAnimationTransitionOptions transition,
+            bool force,
+            string requestedStateKey = null)
         {
             XAnimationCompiledState state = resolution.State;
             XAnimationCompiledChannel channel = GetStateChannel(state);
@@ -139,7 +146,7 @@ namespace XAnimationEngine
             }
 
             XAnimationTransitionRequest request = BuildTransitionRequest(resolution, channel, transition, transition != null ? XAnimationTransitionRequestSource.ExplicitPlay : ResolveRequestSource(resolution, channel), force);
-            return TryPlayCompiledState(resolution, channel, request);
+            return TryPlayCompiledState(resolution, channel, request, requestedStateKey);
         }
 
         internal void ProcessSelectorParameterChange(string parameterName)
@@ -151,6 +158,7 @@ namespace XAnimationEngine
                 if (!channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
                     playback == null ||
                     playback.IsTemporaryState ||
+                    string.IsNullOrWhiteSpace(playback.SelectorControlStateKey) ||
                     !ActiveChainUsesSelectorParameter(channel.Name, playback.ActiveStateNodeKeys, parameterName))
                 {
                     continue;
@@ -198,8 +206,12 @@ namespace XAnimationEngine
                     continue;
                 }
 
-                StateNodeResolution nextResolution = CreateLeafResolution(
-                    CompiledAsset.GetState(channel.Name, autoTransition.NextStateKey));
+                XAnimationCompiledStateNode nextNode = CompiledAsset.GetStateNode(channel.Name, autoTransition.NextStateKey);
+                if (!TryResolveStateNode(nextNode, out StateNodeResolution nextResolution))
+                {
+                    continue;
+                }
+
                 XAnimationCompiledState nextState = nextResolution.State;
                 float fadeIn = autoTransition.TransitionDuration > 0f ? autoTransition.TransitionDuration : channel.CompiledChannel.Config.defaultFadeIn;
                 float fadeOut = autoTransition.TransitionDuration > 0f ? autoTransition.TransitionDuration : channel.CompiledChannel.Config.defaultFadeOut;
@@ -211,11 +223,15 @@ namespace XAnimationEngine
                     continue;
                 }
 
-                TryPlayCompiledState(nextResolution, channel.CompiledChannel, request);
+                TryPlayCompiledState(nextResolution, channel.CompiledChannel, request, autoTransition.NextStateKey);
             }
         }
 
-        private XAnimationPlaybackStartInfo TryPlayCompiledState(StateNodeResolution resolution, XAnimationCompiledChannel channel, XAnimationTransitionRequest request)
+        private XAnimationPlaybackStartInfo TryPlayCompiledState(
+            StateNodeResolution resolution,
+            XAnimationCompiledChannel channel,
+            XAnimationTransitionRequest request,
+            string requestedStateKey = null)
         {
             if (request == null)
             {
@@ -226,7 +242,10 @@ namespace XAnimationEngine
             if (!m_Runtime.TryPlay(m_Runtime.GetChannel(channel.Name), (playbackId, actualOptions) =>
                 {
                     XAnimationStatePlaybackInstance createdPlayback = CreateStatePlayback(playbackId, channel.Name, state, actualOptions);
-                    createdPlayback.SetStateNodeContext(resolution.RequestedNode.Key, resolution.ActiveNodeKeys);
+                    createdPlayback.SetStateNodeContext(
+                        requestedStateKey ?? resolution.RequestedNode.Key,
+                        resolution.ActiveNodeKeys,
+                        resolution.SelectorControlStateKey);
                     return createdPlayback;
                 },
                     request, out XAnimationStatePlaybackInstance playback, out XAnimationTransitionRejectReason rejectReason))
@@ -348,8 +367,9 @@ namespace XAnimationEngine
                 throw new XAnimationException($"XAnimation Normal state node '{requestedNode.Key}' cannot be played.");
             }
 
-            List<XAnimationCompiledStateNode> activeNodes = new() { requestedNode };
-            XAnimationCompiledStateNode current = requestedNode;
+            XAnimationCompiledSelectorStateNode selectorControl = FindOutermostSelectorAncestor(requestedNode);
+            XAnimationCompiledStateNode resolutionEntry = selectorControl ?? requestedNode;
+            XAnimationCompiledStateNode current = resolutionEntry;
             while (current is XAnimationCompiledSelectorStateNode selector)
             {
                 if (!m_Runtime.Context.TryGetInt(selector.ParameterIndex, out int value))
@@ -362,16 +382,58 @@ namespace XAnimationEngine
                     resolution = null;
                     return false;
                 }
-                activeNodes.Add(current);
             }
 
-            resolution = new StateNodeResolution(requestedNode, (XAnimationCompiledState)current, activeNodes.ToArray());
+            resolution = new StateNodeResolution(
+                resolutionEntry,
+                selectorControl?.Key,
+                (XAnimationCompiledState)current,
+                BuildActiveNodePath(current));
             return true;
         }
 
-        private static StateNodeResolution CreateLeafResolution(XAnimationCompiledState state)
+        private StateNodeResolution CreateLeafResolution(XAnimationCompiledState state)
         {
-            return new StateNodeResolution(state, state, new XAnimationCompiledStateNode[] { state });
+            return new StateNodeResolution(state, string.Empty, state, BuildActiveNodePath(state));
+        }
+
+        private XAnimationCompiledSelectorStateNode FindOutermostSelectorAncestor(XAnimationCompiledStateNode node)
+        {
+            XAnimationCompiledSelectorStateNode outermostSelector = null;
+            for (XAnimationCompiledStateNode current = node; current != null && !string.IsNullOrWhiteSpace(current.Key);)
+            {
+                if (current is XAnimationCompiledSelectorStateNode selector)
+                {
+                    outermostSelector = selector;
+                }
+
+                if (string.IsNullOrWhiteSpace(current.ParentKey))
+                {
+                    break;
+                }
+
+                current = CompiledAsset.GetStateNode(current.ChannelName, current.ParentKey);
+            }
+
+            return outermostSelector;
+        }
+
+        private XAnimationCompiledStateNode[] BuildActiveNodePath(XAnimationCompiledStateNode leaf)
+        {
+            List<XAnimationCompiledStateNode> nodes = new();
+            for (XAnimationCompiledStateNode current = leaf; current != null && !string.IsNullOrWhiteSpace(current.Key);)
+            {
+                nodes.Add(current);
+                if (string.IsNullOrWhiteSpace(current.ParentKey))
+                {
+                    break;
+                }
+
+                current = CompiledAsset.GetStateNode(current.ChannelName, current.ParentKey);
+            }
+
+            nodes.Reverse();
+            return nodes.ToArray();
         }
 
         private bool TryGetDefaultTransition(
@@ -417,7 +479,7 @@ namespace XAnimationEngine
         private void ReselectActiveStateNode(XAnimationChannel channel, XAnimationStatePlaybackInstance playback)
         {
             if (!TryResolveStateNode(
-                    CompiledAsset.GetStateNode(channel.Name, playback.RequestedStateKey),
+                    CompiledAsset.GetStateNode(channel.Name, playback.SelectorControlStateKey),
                     out StateNodeResolution resolution))
             {
                 m_PendingSelectorStateKeyByChannel.Remove(channel.Name);
@@ -426,15 +488,18 @@ namespace XAnimationEngine
             }
             if (string.Equals(playback.StateKey, resolution.State.Key, StringComparison.Ordinal))
             {
-                playback.SetStateNodeContext(resolution.RequestedNode.Key, resolution.ActiveNodeKeys);
+                playback.SetStateNodeContext(
+                    playback.RequestedStateKey,
+                    resolution.ActiveNodeKeys,
+                    resolution.SelectorControlStateKey);
                 m_PendingSelectorStateKeyByChannel.Remove(channel.Name);
                 return;
             }
 
-            XAnimationPlaybackStartInfo startInfo = StartStatePlayback(resolution, null, false);
+            XAnimationPlaybackStartInfo startInfo = StartStatePlayback(resolution, null, false, playback.RequestedStateKey);
             if (!startInfo.Started)
             {
-                m_PendingSelectorStateKeyByChannel[channel.Name] = resolution.RequestedNode.Key;
+                m_PendingSelectorStateKeyByChannel[channel.Name] = resolution.SelectorControlStateKey;
             }
         }
 
@@ -452,7 +517,7 @@ namespace XAnimationEngine
                 XAnimationChannel channel = m_Runtime.GetChannel(pending.Key);
                 if (!channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
                     playback == null ||
-                    !string.Equals(playback.RequestedStateKey, pending.Value, StringComparison.Ordinal))
+                    !string.Equals(playback.SelectorControlStateKey, pending.Value, StringComparison.Ordinal))
                 {
                     m_PendingSelectorStateKeyByChannel.Remove(pending.Key);
                     continue;

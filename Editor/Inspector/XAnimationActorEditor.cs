@@ -895,10 +895,19 @@ namespace XAnimationEditor
                 return;
             }
 
-            ClearCurrentPlayback();
-            XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
-            controller.ToggleStatePlayback(actor, state, GetPlaybackSpeed(), BuildTransitionOptions());
-            SetStatus(controller.StatusText, controller.StatusIsError);
+            try
+            {
+                XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(LoadCurrentAnimationAsset(), state);
+                ClearCurrentPlayback();
+                XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
+                controller.ToggleStatePlayback(actor, location.Channel.name, location.Key, GetPlaybackSpeed(), BuildTransitionOptions());
+                SetStatus(controller.StatusText, controller.StatusIsError);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+            }
 
             RefreshRuntimeViews();
         }

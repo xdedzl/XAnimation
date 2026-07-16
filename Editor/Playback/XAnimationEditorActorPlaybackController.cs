@@ -68,7 +68,9 @@ namespace XAnimationEditor
         public bool StatusIsError => m_StatusIsError;
         public bool CanPlayOrPause => ResolveDefaultState() != null || TryGetDominantPlaybackState(out _);
         public bool HasPlayback => TryGetDominantPlaybackState(out _);
-        public bool IsPaused => Application.isPlaying ? m_Actor != null && m_Actor.IsPaused : m_EditModeSession.IsLoaded && m_EditModeSession.IsPaused;
+        public bool IsPaused => Application.isPlaying
+            ? m_Actor != null && m_Actor.IsPaused
+            : m_EditModeSession.IsLoaded && m_EditModeSession.Matches(m_Actor) && m_EditModeSession.IsPaused;
         public bool CanStep => TryGetDominantPlaybackState(out _);
         public bool CanStop => TryGetDominantPlaybackState(out _) || (!Application.isPlaying && m_EditModeSession.IsLoaded);
         public bool CanSeek => TryGetDominantPlaybackState(out _);
@@ -119,8 +121,6 @@ namespace XAnimationEditor
             XAnimationActor actor = ResolveSelectedActor();
             if (actor != m_Actor)
             {
-                ReleaseEditModeSession();
-                m_EditModeSession.ClearParameterOverrides();
                 ClearActionDebugRuntimeState();
                 m_Actor = actor;
                 m_Asset = null;
@@ -129,10 +129,6 @@ namespace XAnimationEditor
             }
 
             if (Application.isPlaying)
-            {
-                ReleaseEditModeSession();
-            }
-            else if (m_EditModeSession.IsLoaded && !m_EditModeSession.Matches(m_Actor))
             {
                 ReleaseEditModeSession();
             }
@@ -700,8 +696,32 @@ namespace XAnimationEditor
             try
             {
                 XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(m_Asset, state);
-                string channelName = location.Channel.name;
-                string stateKey = location.Key;
+                return ToggleStatePlayback(actor, location.Channel.name, location.Key, speed, transition);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, actor);
+                SetStatus(ex.Message, true);
+                return false;
+            }
+        }
+
+        public bool ToggleStatePlayback(XAnimationActor actor, string channelName, string stateKey, float speed, XAnimationTransitionOptions transition)
+        {
+            if (actor == null || string.IsNullOrWhiteSpace(channelName) || string.IsNullOrWhiteSpace(stateKey))
+            {
+                return false;
+            }
+
+            RefreshSelection();
+            if (m_Actor != actor)
+            {
+                SetStatus("Scene Overlay 只控制当前选中的 XAnimationActor。", true);
+                return false;
+            }
+
+            try
+            {
                 if (Application.isPlaying)
                 {
                     XAnimationChannelState channelState = TryGetActorChannelState(actor, channelName, out XAnimationChannelState runtimeState) ? runtimeState : null;
@@ -722,7 +742,7 @@ namespace XAnimationEditor
                 {
                     m_EditModeSession.EnsureLoaded(actor);
                     m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
-                    XAnimationChannelState channelState = string.IsNullOrWhiteSpace(channelName) ? null : m_EditModeSession.GetChannelState(channelName);
+                    XAnimationChannelState channelState = m_EditModeSession.GetChannelState(channelName);
                     bool isPlaying = channelState != null && string.Equals(channelState.stateKey, stateKey, StringComparison.Ordinal);
                     if (isPlaying)
                     {
@@ -981,7 +1001,9 @@ namespace XAnimationEditor
 
             return Application.isPlaying
                 ? TryGetActorChannelState(m_Actor, channelName, out XAnimationChannelState state) ? state : null
-                : m_EditModeSession.IsLoaded ? m_EditModeSession.GetChannelState(channelName) : null;
+                : m_EditModeSession.IsLoaded && m_EditModeSession.Matches(m_Actor)
+                    ? m_EditModeSession.GetChannelState(channelName)
+                    : null;
         }
 
         private void RefreshAssetCache()

@@ -101,6 +101,7 @@ namespace XAnimationEditor
 
             m_StatesGraphView.ContainerDoubleClicked += SetStatesGraphPath;
             m_StatesGraphView.NodeSelected += SelectStatesGraphNode;
+            m_StatesGraphView.NodeTreeFocusRequested += FocusStatesGraphNodeInNodeTree;
             m_StatesGraphView.NodePositionChanged += SetStatesGraphNodePosition;
             m_StatesGraphView.PanOffsetChanged += SetStatesGraphPanOffset;
             m_StatesGraphView.AddNodeRequested += AddStatesGraphNode;
@@ -197,6 +198,42 @@ namespace XAnimationEditor
                 panOffset);
             m_StatesGraphView.SetEditEnabled(!m_Session.IsOverrideAsset);
             BuildStatesGraphDetails(selectedNode);
+        }
+
+        private void FocusStatesGraphNodeInNodeTree(string nodePath, XAnimationStateNodeKind nodeKind)
+        {
+            if (string.IsNullOrWhiteSpace(m_StatesGraphChannelName) || string.IsNullOrWhiteSpace(nodePath))
+            {
+                return;
+            }
+
+            if (nodeKind == XAnimationStateNodeKind.State)
+            {
+                FocusStateInInspector(m_StatesGraphChannelName, nodePath);
+                return;
+            }
+
+            SetStateTabChannel(m_StatesGraphChannelName, rebuild: false);
+            SetDebugToolbarGroup(DebugToolbarGroup.Main);
+            m_StatesSectionExpanded = true;
+            m_StatesCard?.SetExpanded?.Invoke(true);
+
+            string parentPath = GetStatePathParent(nodePath);
+            List<string> segments = SplitStatePathSegments(parentPath);
+            string currentPath = string.Empty;
+            for (int i = 0; i < segments.Count; i++)
+            {
+                currentPath = BuildStatePathKey(currentPath, segments[i]);
+                SetStateGroupCollapsed(BuildStateGroupKey(m_StatesGraphChannelName, currentPath), false);
+            }
+
+            RebuildStateList();
+            string groupKey = BuildStateGroupKey(m_StatesGraphChannelName, nodePath);
+            if (m_StateGroupRowMap.TryGetValue(groupKey, out VisualElement groupRow))
+            {
+                ScheduleInspectorScrollIntoView(groupRow);
+                FlashElement(groupRow);
+            }
         }
 
         private void RebuildStatesGraphTabIfVisible()
@@ -1151,6 +1188,7 @@ namespace XAnimationEditor
 
             public event Action<string> ContainerDoubleClicked;
             public event Action<string> NodeSelected;
+            public event Action<string, XAnimationStateNodeKind> NodeTreeFocusRequested;
             public event Action<string, XAnimationStateNodeKind, Vector2> NodePositionChanged;
             public event Action<Vector2> PanOffsetChanged;
             public event Action<XAnimationStateNodeKind, string, Vector2> AddNodeRequested;
@@ -1481,6 +1519,9 @@ namespace XAnimationEditor
                 node.RegisterCallback<PointerCancelEvent>(OnNodePointerCancel);
                 node.AddManipulator(new ContextualMenuManipulator(evt =>
                 {
+                    evt.menu.AppendAction(
+                        "在 NodeTree 中定位",
+                        _ => NodeTreeFocusRequested?.Invoke(nodeData.Path, nodeData.Kind));
                     if (nodeData.Kind == XAnimationStateNodeKind.Selector)
                     {
                         int directChildCount = 0;
