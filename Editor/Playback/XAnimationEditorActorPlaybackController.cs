@@ -106,7 +106,7 @@ namespace XAnimationEditor
             get => m_ActionForce;
             set => m_ActionForce = value;
         }
-        public bool CanPlayAction => m_Actor != null && m_Asset?.states != null && !string.IsNullOrWhiteSpace(m_ActionStateKey);
+        public bool CanPlayAction => m_Actor != null && m_Asset != null && !string.IsNullOrWhiteSpace(m_ActionStateKey);
         public bool CanCancelAction => m_ActionHandle != null && m_ActionHandle.CanCancel;
         public string ActionStatusText => BuildActionStatusText();
         public bool ActionStatusIsError => m_ActionHandle != null && m_ActionHandle.Status == XAnimationActionStatus.Rejected;
@@ -645,17 +645,25 @@ namespace XAnimationEditor
 
         public XAnimationStateConfig FindStateConfig(string stateKey)
         {
+            return FindStateConfig(null, stateKey);
+        }
+
+        public XAnimationStateConfig FindStateConfig(string channelName, string stateKey)
+        {
             if (string.IsNullOrWhiteSpace(stateKey))
             {
                 return null;
             }
 
-            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(m_Asset);
+            for (int i = 0; i < nodes.Count; i++)
             {
-                if (states[i] != null && string.Equals(states[i].key, stateKey, StringComparison.Ordinal))
+                XAnimationStateNodeLocation node = nodes[i];
+                if (node.Node.kind == XAnimationStateNodeKind.State &&
+                    (string.IsNullOrWhiteSpace(channelName) || string.Equals(node.Channel.name, channelName, StringComparison.Ordinal)) &&
+                    string.Equals(node.Key, stateKey, StringComparison.Ordinal))
                 {
-                    return states[i];
+                    return node.Node.state;
                 }
             }
 
@@ -671,7 +679,7 @@ namespace XAnimationEditor
                 return false;
             }
 
-            stateConfig = FindStateConfig(channelState.stateKey);
+            stateConfig = FindStateConfig(channelState.channelName, channelState.stateKey);
             return IsBlendState(stateConfig);
         }
 
@@ -691,40 +699,41 @@ namespace XAnimationEditor
 
             try
             {
+                XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(m_Asset, state);
+                string channelName = location.Channel.name;
+                string stateKey = location.Key;
                 if (Application.isPlaying)
                 {
-                    string channelName = state.channelName;
                     XAnimationChannelState channelState = TryGetActorChannelState(actor, channelName, out XAnimationChannelState runtimeState) ? runtimeState : null;
-                    bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
+                    bool isPlaying = channelState != null && string.Equals(channelState.stateKey, stateKey, StringComparison.Ordinal);
                     if (isPlaying)
                     {
                         actor.Stop(channelName, 0f);
-                        SetStatus($"已停止 state {state.key}。");
+                        SetStatus($"已停止 state {stateKey}。");
                     }
                     else
                     {
                         actor.GlobalSpeed = XAnimationPlaybackHudView.ClampSpeed(speed);
-                        actor.PlayState(state.channelName, state.key, transition);
-                        SetStatus($"正在播放 state {state.key}。");
+                        actor.PlayState(channelName, stateKey, transition);
+                        SetStatus($"正在播放 state {stateKey}。");
                     }
                 }
                 else
                 {
                     m_EditModeSession.EnsureLoaded(actor);
                     m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
-                    string channelName = state.channelName;
                     XAnimationChannelState channelState = string.IsNullOrWhiteSpace(channelName) ? null : m_EditModeSession.GetChannelState(channelName);
-                    bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
+                    bool isPlaying = channelState != null && string.Equals(channelState.stateKey, stateKey, StringComparison.Ordinal);
                     if (isPlaying)
                     {
                         m_EditModeSession.StopAll(restorePose: true);
-                        SetStatus($"已停止 state {state.key}，并恢复编辑态姿势。");
+                        SetStatus($"已停止 state {stateKey}，并恢复编辑态姿势。");
                     }
                     else
                     {
                         m_EditModeSession.SetGlobalSpeed(XAnimationPlaybackHudView.ClampSpeed(speed));
-                        m_EditModeSession.PlayState(actor, state.channelName, state.key, transition);
-                        SetStatus($"正在当前 Actor 上预览 state {state.key}。");
+                        m_EditModeSession.PlayState(actor, channelName, stateKey, transition);
+                        SetStatus($"正在当前 Actor 上预览 state {stateKey}。");
                     }
                 }
 
@@ -809,12 +818,12 @@ namespace XAnimationEditor
         private IReadOnlyList<string> GetActionStateChoices(List<string> choices)
         {
             choices.Clear();
-            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(m_Asset);
+            for (int i = 0; i < nodes.Count; i++)
             {
-                if (!string.IsNullOrWhiteSpace(states[i]?.key))
+                if (nodes[i].Node.kind != XAnimationStateNodeKind.Normal)
                 {
-                    choices.Add(states[i].key);
+                    choices.Add(nodes[i].Key);
                 }
             }
 
@@ -823,39 +832,41 @@ namespace XAnimationEditor
 
         private void EnsureActionStateSelection()
         {
-            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(m_Asset);
+            for (int i = 0; i < nodes.Count; i++)
             {
-                if (states[i] != null && string.Equals(states[i].key, m_ActionStateKey, StringComparison.Ordinal))
+                if (nodes[i].Node.kind != XAnimationStateNodeKind.Normal &&
+                    string.Equals(nodes[i].Key, m_ActionStateKey, StringComparison.Ordinal))
                 {
                     return;
                 }
             }
 
-            m_ActionStateKey = FindFirstActionStateKey(states);
+            m_ActionStateKey = FindFirstActionStateKey(nodes);
         }
 
         private void EnsureActionReturnStateSelection()
         {
-            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(m_Asset);
+            for (int i = 0; i < nodes.Count; i++)
             {
-                if (states[i] != null && string.Equals(states[i].key, m_ActionReturnStateKey, StringComparison.Ordinal))
+                if (nodes[i].Node.kind != XAnimationStateNodeKind.Normal &&
+                    string.Equals(nodes[i].Key, m_ActionReturnStateKey, StringComparison.Ordinal))
                 {
                     return;
                 }
             }
 
-            m_ActionReturnStateKey = FindFirstActionStateKey(states);
+            m_ActionReturnStateKey = FindFirstActionStateKey(nodes);
         }
 
-        private static string FindFirstActionStateKey(XAnimationStateConfig[] states)
+        private static string FindFirstActionStateKey(IReadOnlyList<XAnimationStateNodeLocation> nodes)
         {
-            for (int i = 0; i < states.Length; i++)
+            for (int i = 0; i < nodes.Count; i++)
             {
-                if (!string.IsNullOrWhiteSpace(states[i]?.key))
+                if (nodes[i].Node.kind != XAnimationStateNodeKind.Normal)
                 {
-                    return states[i].key;
+                    return nodes[i].Key;
                 }
             }
 
@@ -900,11 +911,12 @@ namespace XAnimationEditor
 
             try
             {
+                XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(m_Asset, state);
                 if (Application.isPlaying)
                 {
                     m_Actor.GlobalSpeed = m_Settings.Speed;
-                    m_Actor.PlayState(state.channelName, state.key, BuildTransitionOptions());
-                    SetStatus($"正在播放 state {state.key}。");
+                    m_Actor.PlayState(location.Channel.name, location.Key, BuildTransitionOptions());
+                    SetStatus($"正在播放 state {location.Key}。");
                     XAnimationSceneOverlaySelection.RequestRepaint();
                     return true;
                 }
@@ -912,8 +924,8 @@ namespace XAnimationEditor
                 m_EditModeSession.EnsureLoaded(m_Actor);
                 m_EditModeSession.SetGlobalSpeed(m_Settings.Speed);
                 m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
-                m_EditModeSession.PlayState(m_Actor, state.channelName, state.key, BuildTransitionOptions());
-                SetStatus($"正在当前 Actor 上预览 state {state.key}。");
+                m_EditModeSession.PlayState(m_Actor, location.Channel.name, location.Key, BuildTransitionOptions());
+                SetStatus($"正在当前 Actor 上预览 state {location.Key}。");
                 XAnimationSceneOverlaySelection.RequestRepaint();
                 return true;
             }
@@ -946,10 +958,12 @@ namespace XAnimationEditor
 
         private XAnimationStateConfig ResolveDefaultState()
         {
-            XAnimationStateConfig[] states = m_Asset?.states ?? Array.Empty<XAnimationStateConfig>();
+            XAnimationStateConfig[] states = m_Asset == null
+                ? Array.Empty<XAnimationStateConfig>()
+                : XAnimationEditorStateNodeUtility.GetStates(m_Asset);
             for (int i = 0; i < states.Length; i++)
             {
-                if (states[i] != null && !string.IsNullOrWhiteSpace(states[i].key))
+                if (states[i] != null)
                 {
                     return states[i];
                 }

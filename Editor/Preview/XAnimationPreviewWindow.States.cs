@@ -546,14 +546,17 @@ namespace XAnimationEditor
 
                 evt.menu.AppendAction(
                     "Batch Edit State Clips",
-                    _ => OpenBatchClipSettingsForState(state.Config.channelName, state.Key),
-                    _ => CollectAnimationClipsForState(state.Config.channelName, state.Key).Count > 0
+                    _ => OpenBatchClipSettingsForState(state.ChannelName, state.Key),
+                    _ => CollectAnimationClipsForState(state.ChannelName, state.Key).Count > 0
                         ? DropdownMenuAction.Status.Normal
                         : DropdownMenuAction.Status.Disabled);
             }));
         }
 
-        private void RegisterStateGroupContextMenu(EditableLabel label, string channelName, string groupName)
+        private void RegisterStateGroupContextMenu(
+            EditableLabel label,
+            string channelName,
+            string groupName)
         {
             if (label == null || string.IsNullOrWhiteSpace(channelName) || string.IsNullOrWhiteSpace(groupName))
             {
@@ -562,6 +565,7 @@ namespace XAnimationEditor
 
             label.AddManipulator(new ContextualMenuManipulator(evt =>
             {
+                bool selectorParent = m_Session.CompiledAsset.GetStateNode(channelName, groupName).Kind == XAnimationStateNodeKind.Selector;
                 evt.menu.AppendAction(
                     "Rename",
                     _ => label.BeginEdit(),
@@ -572,15 +576,25 @@ namespace XAnimationEditor
                 evt.menu.AppendSeparator();
 
                 evt.menu.AppendAction(
-                    "Add Folder",
-                    _ => AddStateGroup(channelName, groupName),
+                    "Add Node/State",
+                    _ => AddState(channelName, groupName),
                     _ => m_Session == null || m_Session.IsOverrideAsset
                         ? DropdownMenuAction.Status.Disabled
                         : DropdownMenuAction.Status.Normal);
 
+                if (!selectorParent)
+                {
+                    evt.menu.AppendAction(
+                        "Add Node/Normal",
+                        _ => AddStateNode(channelName, groupName, XAnimationStateNodeKind.Normal),
+                        _ => m_Session == null || m_Session.IsOverrideAsset
+                            ? DropdownMenuAction.Status.Disabled
+                            : DropdownMenuAction.Status.Normal);
+                }
+
                 evt.menu.AppendAction(
-                    "Add State",
-                    _ => AddState(channelName, groupName),
+                    "Add Node/Selector",
+                    _ => AddStateNode(channelName, groupName, XAnimationStateNodeKind.Selector),
                     _ => m_Session == null || m_Session.IsOverrideAsset
                         ? DropdownMenuAction.Status.Disabled
                         : DropdownMenuAction.Status.Normal);
@@ -588,8 +602,8 @@ namespace XAnimationEditor
                 evt.menu.AppendSeparator();
 
                 evt.menu.AppendAction(
-                    "Delete Folder",
-                    _ => DeleteStateGroup(channelName, groupName),
+                    "Remove Node",
+                    _ => RemoveStateGroupNode(channelName, groupName),
                     _ => m_Session == null || m_Session.IsOverrideAsset
                         ? DropdownMenuAction.Status.Disabled
                         : DropdownMenuAction.Status.Normal);
@@ -1805,7 +1819,7 @@ namespace XAnimationEditor
                 for (int i = 0; i < states.Count; i++)
                 {
                     XAnimationCompiledState state = states[i];
-                    if (!string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal))
+                    if (!string.Equals(state.ChannelName, channelName, StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -1818,8 +1832,8 @@ namespace XAnimationEditor
                     string parentPath = GetStatePathParent(stateKey);
                     bool hasParentPath = !string.IsNullOrWhiteSpace(parentPath);
                     string title = hasParentPath
-                        ? $"{state.Config.channelName} - {FormatStateDisplayPath(parentPath)} / {GetStatePathLeafName(stateKey)}"
-                        : $"{state.Config.channelName} - {stateKey}";
+                        ? $"{state.ChannelName} - {FormatStateDisplayPath(parentPath)} / {GetStatePathLeafName(stateKey)}"
+                        : $"{state.ChannelName} - {stateKey}";
                     string detail = isLoop && !isCurrent
                         ? "循环 state 不能配置 Auto Transition"
                         : isOccupied
@@ -1827,8 +1841,8 @@ namespace XAnimationEditor
                             : hasParentPath
                                 ? $"path={FormatStateDisplayPath(parentPath)}"
                                 : string.Empty;
-                    string searchText = $"{stateKey} {state.Config.channelName} {parentPath} {title} {detail}";
-                    string groupKey = hasParentPath ? $"{state.Config.channelName} - {parentPath}" : string.Empty;
+                    string searchText = $"{stateKey} {state.ChannelName} {parentPath} {title} {detail}";
+                    string groupKey = hasParentPath ? $"{state.ChannelName} - {parentPath}" : string.Empty;
                     entries.Add(new SearchableSelectionItem(stateKey, title, detail, searchText, groupKey, isEnabled: isEnabled));
                 }
             }
@@ -1841,7 +1855,8 @@ namespace XAnimationEditor
             return m_Session != null &&
                    m_Session.IsLoaded &&
                    !string.IsNullOrWhiteSpace(stateKey) &&
-                   m_Session.CompiledAsset.TryGetStateIndex(stateKey, out _);
+                   m_Session.CompiledAsset.TryGetStateNodeIndex(stateKey, out int nodeIndex) &&
+                   m_Session.CompiledAsset.StateNodes[nodeIndex].IsPlayable;
         }
 
         private bool HasChannel(string channelName)
@@ -2058,7 +2073,7 @@ namespace XAnimationEditor
             for (int i = 0; i < segments.Count; i++)
             {
                 currentPath = BuildStatePathKey(currentPath, segments[i]);
-                SetStateGroupCollapsed(BuildStateGroupKey(state.Config.channelName, currentPath), false);
+                SetStateGroupCollapsed(BuildStateGroupKey(state.ChannelName, currentPath), false);
             }
         }
 
@@ -2157,14 +2172,13 @@ namespace XAnimationEditor
                 return false;
             }
 
-            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
-            for (int i = 0; i < states.Count; i++)
+            IReadOnlyList<XAnimationCompiledStateNode> nodes = m_Session.CompiledAsset.StateNodes;
+            for (int i = 0; i < nodes.Count; i++)
             {
-                XAnimationCompiledState state = states[i];
-                if (state != null &&
-                    string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal) &&
-                    (string.Equals(GetStatePathParent(state.Key), path, StringComparison.Ordinal) ||
-                     GetStatePathParent(state.Key).StartsWith($"{path}/", StringComparison.Ordinal)))
+                XAnimationCompiledStateNode node = nodes[i];
+                if (node != null &&
+                    string.Equals(node.ChannelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(node.Key, path, StringComparison.Ordinal))
                 {
                     return true;
                 }
@@ -2173,7 +2187,11 @@ namespace XAnimationEditor
             return false;
         }
 
-        private List<StateSelectionItem> CollectSelectableStates(string excludeStateKey = null, bool includeNone = false, string channelFilterName = null)
+        private List<StateSelectionItem> CollectSelectableStates(
+            string excludeStateKey = null,
+            bool includeNone = false,
+            string channelFilterName = null,
+            bool includeSelectors = false)
         {
             List<StateSelectionItem> items = new();
             if (m_Session == null || !m_Session.IsLoaded)
@@ -2181,19 +2199,21 @@ namespace XAnimationEditor
                 return items;
             }
 
-            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
-            for (int i = 0; i < states.Count; i++)
+            IReadOnlyList<XAnimationCompiledStateNode> nodes = m_Session.CompiledAsset.StateNodes;
+            for (int i = 0; i < nodes.Count; i++)
             {
-                XAnimationCompiledState state = states[i];
-                if (state == null ||
-                    string.Equals(state.Key, excludeStateKey, StringComparison.Ordinal) ||
+                XAnimationCompiledStateNode node = nodes[i];
+                if (node == null ||
+                    !node.IsPlayable ||
+                    (!includeSelectors && node.Kind != XAnimationStateNodeKind.State) ||
+                    string.Equals(node.Key, excludeStateKey, StringComparison.Ordinal) ||
                     (!string.IsNullOrWhiteSpace(channelFilterName) &&
-                        !string.Equals(state.Config.channelName, channelFilterName, StringComparison.Ordinal)))
+                        !string.Equals(node.ChannelName, channelFilterName, StringComparison.Ordinal)))
                 {
                     continue;
                 }
 
-                items.Add(new StateSelectionItem(state.Key, state.Config.channelName));
+                items.Add(new StateSelectionItem(node.Key, node.ChannelName));
             }
 
             return items;
@@ -2225,7 +2245,8 @@ namespace XAnimationEditor
 
         private static List<SearchableSelectionItem> BuildStateSelectionEntries(
             List<StateSelectionItem> items,
-            bool includeNone)
+            bool includeNone,
+            bool includeChannelName = true)
         {
             List<SearchableSelectionItem> entries = new();
             if (includeNone)
@@ -2241,12 +2262,14 @@ namespace XAnimationEditor
             for (int i = 0; i < items.Count; i++)
             {
                 StateSelectionItem item = items[i];
-                string title = FormatStateSelectionTitle(item);
+                string title = FormatStateSelectionTitle(item, includeChannelName);
                 string detail = item.HasParentPath
                     ? $"path={FormatStateDisplayPath(item.ParentPath)}"
                     : string.Empty;
                 string searchText = $"{item.StateKey} {item.ChannelName} {item.ParentPath} {title}";
-                string groupKey = item.HasParentPath ? $"{item.ChannelName} - {item.ParentPath}" : string.Empty;
+                string groupKey = item.HasParentPath
+                    ? includeChannelName ? $"{item.ChannelName} - {item.ParentPath}" : item.ParentPath
+                    : string.Empty;
                 entries.Add(new SearchableSelectionItem(item.StateKey, title, detail, searchText, groupKey));
             }
 
@@ -2276,8 +2299,15 @@ namespace XAnimationEditor
             return entries;
         }
 
-        private static string FormatStateSelectionTitle(StateSelectionItem item)
+        private static string FormatStateSelectionTitle(StateSelectionItem item, bool includeChannelName = true)
         {
+            if (!includeChannelName)
+            {
+                return item.HasParentPath
+                    ? $"{FormatStateDisplayPath(item.ParentPath)} / {item.LeafName}"
+                    : item.StateKey;
+            }
+
             return item.HasParentPath
                 ? $"{item.ChannelName} - {FormatStateDisplayPath(item.ParentPath)} / {item.LeafName}"
                 : $"{item.ChannelName} - {item.StateKey}";
@@ -2318,12 +2348,13 @@ namespace XAnimationEditor
             string currentValue,
             string excludeStateKey = null,
             bool includeNone = false,
-            string channelFilterName = null)
+            string channelFilterName = null,
+            bool includeSelectors = false)
         {
             XAnimationEditorSelectionField field = new(label, string.IsNullOrWhiteSpace(currentValue) && includeNone ? string.Empty : currentValue, _ => { });
             void ShowMenu(XAnimationEditorSelectionField target)
             {
-                List<StateSelectionItem> items = CollectSelectableStates(excludeStateKey, includeNone, channelFilterName);
+                List<StateSelectionItem> items = CollectSelectableStates(excludeStateKey, includeNone, channelFilterName, includeSelectors);
                 List<SearchableSelectionItem> entries = BuildStateSelectionEntries(items, includeNone);
                 SearchableSelectionWindow.Show(
                     GetSelectionActivatorRect(target),

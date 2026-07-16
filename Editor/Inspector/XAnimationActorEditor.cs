@@ -20,16 +20,18 @@ namespace XAnimationEditor
 
         private sealed class StatePathNode
         {
-            public StatePathNode(string name, string fullPath)
+            public StatePathNode(string name, string fullPath, XAnimationStateNodeKind kind = XAnimationStateNodeKind.Normal)
             {
                 Name = name ?? string.Empty;
                 FullPath = fullPath ?? string.Empty;
+                Kind = kind;
                 Children = new List<StatePathNode>();
                 States = new List<XAnimationStateConfig>();
             }
 
             public string Name { get; }
             public string FullPath { get; }
+            public XAnimationStateNodeKind Kind { get; }
             public List<StatePathNode> Children { get; }
             public List<XAnimationStateConfig> States { get; }
         }
@@ -614,7 +616,7 @@ namespace XAnimationEditor
             m_StateVisualStateMap.Clear();
 
             XAnimationAsset asset = LoadCurrentAnimationAsset();
-            if (m_StatesListView == null || asset?.states == null || asset.states.Length == 0 || asset.channels == null)
+            if (m_StatesListView == null || asset?.channels == null)
             {
                 AddEmptyLabel(m_StatesListView, "No states");
                 return;
@@ -632,30 +634,13 @@ namespace XAnimationEditor
                 statesByChannel[channel.name] = new StatePathNode(string.Empty, string.Empty);
             }
 
-            for (int i = 0; i < asset.states.Length; i++)
+            for (int i = 0; i < asset.channels.Length; i++)
             {
-                XAnimationStateConfig state = asset.states[i];
-                if (state == null || string.IsNullOrWhiteSpace(state.key))
+                XAnimationChannelConfig channel = asset.channels[i];
+                if (channel != null && statesByChannel.TryGetValue(channel.name, out StatePathNode rootNode))
                 {
-                    continue;
+                    AppendStateNodes(rootNode, channel.stateNodes, string.Empty);
                 }
-
-                string channelName = state.channelName ?? string.Empty;
-                if (!statesByChannel.TryGetValue(channelName, out StatePathNode rootNode))
-                {
-                    rootNode = new StatePathNode(string.Empty, string.Empty);
-                    statesByChannel[channelName] = rootNode;
-                }
-
-                string parentPath = GetStatePathParent(state.key);
-                if (string.IsNullOrWhiteSpace(parentPath))
-                {
-                    rootNode.States.Add(state);
-                    continue;
-                }
-
-                StatePathNode node = FindOrCreateStatePathNode(rootNode, parentPath);
-                node.States.Add(state);
             }
 
             for (int i = 0; i < asset.channels.Length; i++)
@@ -689,9 +674,9 @@ namespace XAnimationEditor
             header.Add(title);
 
             int stateCount = CountStatePathNodeStates(rootNode);
-            int groupedCount = CountStatePathNodeFolders(rootNode);
+            int groupedCount = CountContainerStateNodes(rootNode);
             Label info = CreateSmallInfoLabel(groupedCount > 0
-                ? $"{channel.layerType} | {stateCount} states | {groupedCount} folders"
+                ? $"{channel.layerType} | {stateCount} states | {groupedCount} nodes"
                 : $"{channel.layerType} | {stateCount} states");
             header.Add(info);
 
@@ -741,13 +726,17 @@ namespace XAnimationEditor
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            Label title = CreateBoldLabel(node.Name);
+            string nodeTitle = node.Kind == XAnimationStateNodeKind.Selector ? $"◆ {node.Name}" : node.Name;
+            Label title = CreateBoldLabel(nodeTitle);
             title.style.flexGrow = 1;
             title.style.minWidth = 0;
             title.tooltip = FormatStateDisplayPath(node.FullPath);
             header.Add(title);
 
-            Label info = CreateSmallInfoLabel($"{CountStatePathNodeStates(node)} states");
+            string nodeInfo = node.Kind == XAnimationStateNodeKind.Selector
+                ? $"Selector | {CountStatePathNodeStates(node)} states"
+                : $"{CountStatePathNodeStates(node)} states";
+            Label info = CreateSmallInfoLabel(nodeInfo);
             header.Add(info);
             group.Add(header);
 
@@ -783,6 +772,8 @@ namespace XAnimationEditor
 
         private VisualElement CreateStateRow(XAnimationStateConfig state, int rowIndex)
         {
+            XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(LoadCurrentAnimationAsset(), state);
+            string stateKey = location.Key;
             string stateUiKey = BuildStateUiKey(state);
             VisualElement container = CreateRowContainer(rowIndex);
             VisualElement progressFill = CreateRowProgressFill();
@@ -806,8 +797,8 @@ namespace XAnimationEditor
             VisualElement row = CreateRowContent();
             container.Add(row);
 
-            Label nameLabel = new(XAnimationStatePathUtility.GetLeafName(state.key));
-            nameLabel.tooltip = XAnimationStatePathUtility.FormatDisplayPath(state.key);
+            Label nameLabel = new(XAnimationStatePathUtility.GetLeafName(stateKey));
+            nameLabel.tooltip = XAnimationStatePathUtility.FormatDisplayPath(stateKey);
             nameLabel.style.width = 140;
             nameLabel.style.flexShrink = 0;
             nameLabel.style.color = TextNormal;
@@ -825,7 +816,7 @@ namespace XAnimationEditor
             stateTypeLabel.style.position = Position.Relative;
             row.Add(stateTypeLabel);
 
-            Button locateButton = new(() => OpenPreviewAndFocusState(target as XAnimationActor, state.key))
+            Button locateButton = new(() => OpenPreviewAndFocusState(target as XAnimationActor, stateKey))
             {
                 text = "↗"
             };
@@ -868,21 +859,23 @@ namespace XAnimationEditor
 
             try
             {
-                string channelName = FindPlayingChannelForState(actor, state.key) ?? state.channelName;
+                XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(LoadCurrentAnimationAsset(), state);
+                string stateKey = location.Key;
+                string channelName = FindPlayingChannelForState(actor, stateKey) ?? location.Channel.name;
                 XAnimationChannelState channelState = TryGetActorChannelState(actor, channelName, out XAnimationChannelState runtimeState) ? runtimeState : null;
-                bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.key, StringComparison.Ordinal);
+                bool isPlaying = channelState != null && string.Equals(channelState.stateKey, stateKey, StringComparison.Ordinal);
                 if (isPlaying)
                 {
                     actor.Stop(channelName, 0f);
-                    ClearCurrentPlaybackIfMatches(channelName, state.key, null);
-                    SetStatus($"已停止 state {state.key}。");
+                    ClearCurrentPlaybackIfMatches(channelName, stateKey, null);
+                    SetStatus($"已停止 state {stateKey}。");
                 }
                 else
                 {
                     actor.GlobalSpeed = GetPlaybackSpeed();
-                    actor.PlayState(state.channelName, state.key, BuildTransitionOptions());
-                    SetCurrentPlayback(channelName, state.key, null);
-                    SetStatus($"正在播放 state {state.key}。");
+                    actor.PlayState(location.Channel.name, stateKey, BuildTransitionOptions());
+                    SetCurrentPlayback(channelName, stateKey, null);
+                    SetStatus($"正在播放 state {stateKey}。");
                 }
             }
             catch (Exception ex)
@@ -1096,13 +1089,13 @@ namespace XAnimationEditor
             }
 
             XAnimationAsset asset = LoadCurrentAnimationAsset();
-            XAnimationStateConfig[] states = asset?.states ?? Array.Empty<XAnimationStateConfig>();
-            for (int i = 0; i < states.Length; i++)
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(asset);
+            for (int i = 0; i < nodes.Count; i++)
             {
-                XAnimationStateConfig state = states[i];
-                if (state != null && string.Equals(state.key, stateKey, StringComparison.Ordinal))
+                if (nodes[i].Node.kind == XAnimationStateNodeKind.State &&
+                    string.Equals(nodes[i].Key, stateKey, StringComparison.Ordinal))
                 {
-                    return state;
+                    return nodes[i].Node.state;
                 }
             }
 
@@ -1123,14 +1116,15 @@ namespace XAnimationEditor
 
             try
             {
+                XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(LoadCurrentAnimationAsset(), state);
                 XAnimationPreviewWindow.ShowWindowAndPlayState(
                     animationAsset,
                     prefab,
-                    state.channelName,
-                    state.key,
+                    location.Channel.name,
+                    location.Key,
                     GetPlaybackSpeed(),
                     BuildTransitionOptions());
-                SetStatus($"已在预览窗口打开并播放 state {state.key}。");
+                SetStatus($"已在预览窗口打开并播放 state {location.Key}。");
             }
             catch (Exception ex)
             {
@@ -1322,14 +1316,14 @@ namespace XAnimationEditor
 
             List<string> stateKeys = new();
             XAnimationAsset asset = LoadCurrentAnimationAsset();
-            if (asset?.states != null)
+            if (asset != null)
             {
-                for (int i = 0; i < asset.states.Length; i++)
+                IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(asset);
+                for (int i = 0; i < nodes.Count; i++)
                 {
-                    XAnimationStateConfig state = asset.states[i];
-                    if (state != null && !string.IsNullOrWhiteSpace(state.key))
+                    if (nodes[i].Node.kind != XAnimationStateNodeKind.Normal)
                     {
-                        stateKeys.Add(state.key);
+                        stateKeys.Add(nodes[i].Key);
                     }
                 }
             }
@@ -2035,9 +2029,14 @@ namespace XAnimationEditor
             m_StatusLabel.style.color = TextMuted;
         }
 
-        private static string BuildStateUiKey(XAnimationStateConfig state)
+        private string BuildStateUiKey(XAnimationStateConfig state)
         {
-            return state == null ? string.Empty : BuildStateUiKey(state.channelName, state.key);
+            if (state == null)
+            {
+                return string.Empty;
+            }
+            XAnimationStateNodeLocation location = XAnimationEditorStateNodeUtility.GetStateLocation(LoadCurrentAnimationAsset(), state);
+            return BuildStateUiKey(location.Channel.name, location.Key);
         }
 
         private static string BuildStateUiKey(string channelName, string stateKey)
@@ -2164,45 +2163,23 @@ namespace XAnimationEditor
             }
         }
 
-        private static StatePathNode FindOrCreateStatePathNode(StatePathNode rootNode, string path)
+        private static void AppendStateNodes(StatePathNode parent, XAnimationStateNodeConfig[] nodes, string parentKey)
         {
-            StatePathNode currentNode = rootNode;
-            List<string> segments = SplitStatePathSegments(path);
-            string currentPath = string.Empty;
-            for (int i = 0; i < segments.Count; i++)
+            nodes ??= Array.Empty<XAnimationStateNodeConfig>();
+            for (int i = 0; i < nodes.Length; i++)
             {
-                string segment = segments[i];
-                currentPath = string.IsNullOrWhiteSpace(currentPath) ? segment : $"{currentPath}/{segment}";
-                StatePathNode nextNode = FindStatePathChild(currentNode, segment);
-                if (nextNode == null)
+                XAnimationStateNodeConfig node = nodes[i];
+                string key = string.IsNullOrWhiteSpace(parentKey) ? node.name : $"{parentKey}/{node.name}";
+                if (node.kind == XAnimationStateNodeKind.State)
                 {
-                    nextNode = new StatePathNode(segment, currentPath);
-                    currentNode.Children.Add(nextNode);
+                    parent.States.Add(node.state);
+                    continue;
                 }
 
-                currentNode = nextNode;
+                StatePathNode group = new(node.name, key, node.kind);
+                parent.Children.Add(group);
+                AppendStateNodes(group, node.children, key);
             }
-
-            return currentNode;
-        }
-
-        private static StatePathNode FindStatePathChild(StatePathNode node, string name)
-        {
-            if (node == null)
-            {
-                return null;
-            }
-
-            for (int i = 0; i < node.Children.Count; i++)
-            {
-                StatePathNode child = node.Children[i];
-                if (child != null && string.Equals(child.Name, name, StringComparison.Ordinal))
-                {
-                    return child;
-                }
-            }
-
-            return null;
         }
 
         private static List<string> SplitStatePathSegments(string path)
@@ -2285,7 +2262,7 @@ namespace XAnimationEditor
             return count;
         }
 
-        private static int CountStatePathNodeFolders(StatePathNode node)
+        private static int CountContainerStateNodes(StatePathNode node)
         {
             if (node == null)
             {
@@ -2295,7 +2272,7 @@ namespace XAnimationEditor
             int count = string.IsNullOrWhiteSpace(node.FullPath) ? 0 : 1;
             for (int i = 0; i < node.Children.Count; i++)
             {
-                count += CountStatePathNodeFolders(node.Children[i]);
+                count += CountContainerStateNodes(node.Children[i]);
             }
 
             return count;

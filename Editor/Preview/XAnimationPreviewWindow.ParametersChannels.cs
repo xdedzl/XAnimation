@@ -361,7 +361,7 @@ namespace XAnimationEditor
                 XAnimationCompiledState state = states[i];
                 if (state != null && string.Equals(state.Key, stateKey, StringComparison.Ordinal))
                 {
-                    return state.Config.channelName;
+                    return state.ChannelName;
                 }
             }
 
@@ -392,6 +392,7 @@ namespace XAnimationEditor
                 return;
             }
 
+            SetStateTabChannel(channelName, rebuild: false);
             SetDebugToolbarGroup(DebugToolbarGroup.Main);
             m_StatesSectionExpanded = true;
             m_StatesCard?.SetExpanded?.Invoke(true);
@@ -434,10 +435,10 @@ namespace XAnimationEditor
             }
 
             string stateUiKey = BuildStateUiKey(channelName, preStateKey);
+            SetStateTabChannel(channelName, rebuild: false);
             SetDebugToolbarGroup(DebugToolbarGroup.Main);
             m_AutoTransitionSectionExpanded = true;
             m_AutoTransitionCard?.SetExpanded?.Invoke(true);
-            SetAutoTransitionChannelCollapsed(channelName, false);
             SetAutoTransitionExpanded(stateUiKey, true);
             RebuildAutoTransitionEditor();
             if (m_AutoTransitionRowMap.TryGetValue(stateUiKey, out VisualElement row))
@@ -454,6 +455,13 @@ namespace XAnimationEditor
                 return;
             }
 
+            IReadOnlyList<XAnimationCompiledDefaultTransition> transitions = m_Session.CompiledAsset.DefaultTransitions;
+            if (transitionIndex >= transitions.Count)
+            {
+                return;
+            }
+
+            SetStateTabChannel(transitions[transitionIndex].ChannelName, rebuild: false);
             SetDebugToolbarGroup(DebugToolbarGroup.Main);
             m_DefaultTransitionsSectionExpanded = true;
             m_DefaultTransitionsCard?.SetExpanded?.Invoke(true);
@@ -492,7 +500,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            SetDebugToolbarGroup(DebugToolbarGroup.Channels);
+            SetDebugToolbarGroup(DebugToolbarGroup.Setting);
             m_ChannelsSectionExpanded = true;
             m_ChannelsCard?.SetExpanded?.Invoke(true);
             RebuildChannelControls();
@@ -637,7 +645,6 @@ namespace XAnimationEditor
             m_ChannelStateLabels.Clear();
             m_DefaultTransitionsEditorView?.Clear();
             m_DefaultTransitionRowMap.Clear();
-            m_CollapsedDefaultTransitionChannelKeys.Clear();
             m_CollapsedDefaultTransitionIndices.Clear();
             m_PendingClipRenameKey = null;
             m_PendingChannelRenameKey = null;

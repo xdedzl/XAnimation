@@ -18,7 +18,7 @@ namespace XAnimationEditor
         private VisualElement CreateDefaultTransitionEditor(int transitionIndex, XAnimationDefaultTransitionConfig config)
         {
             bool editable = m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset;
-            string channelName = config.channelName;
+            string channelName = GetDefaultTransitionChannelName(config);
 
             XAnimationEditorSelectionField preStateField = CreateStateSelectionField(
                 string.Empty,
@@ -209,164 +209,11 @@ namespace XAnimationEditor
             return container;
         }
 
-        private VisualElement BuildDefaultTransitionTab()
+        private XAnimationCompiledState GetDefaultTransitionEditingState()
         {
-            VisualElement root = new();
-            root.style.flexGrow = 1;
-            root.style.minHeight = 0;
-            root.style.display = DisplayStyle.None;
-            root.style.backgroundColor = new Color(0.13f, 0.14f, 0.16f, 1f);
-            SetBorder(root, SectionDivider, 1, 4);
-
-            VisualElement body = Row();
-            body.style.flexGrow = 1;
-            body.style.minHeight = 0;
-            body.style.alignItems = Align.Stretch;
-            root.Add(body);
-
-            VisualElement leftPane = new();
-            leftPane.style.flexGrow = 1;
-            leftPane.style.flexShrink = 1;
-            leftPane.style.minWidth = 0;
-            leftPane.style.minHeight = 0;
-            leftPane.style.flexDirection = FlexDirection.Column;
-            leftPane.style.borderRightWidth = 1;
-            leftPane.style.borderRightColor = SectionDivider;
-            body.Add(leftPane);
-
-            leftPane.Add(BuildDefaultTransitionGraphPane());
-
-            m_DefaultTransitionDetailsView = new();
-            m_DefaultTransitionDetailsView.style.width = DefaultTransitionDetailsWidth;
-            m_DefaultTransitionDetailsView.style.minWidth = DefaultTransitionDetailsWidth;
-            m_DefaultTransitionDetailsView.style.maxWidth = DefaultTransitionDetailsWidth;
-            m_DefaultTransitionDetailsView.style.flexShrink = 0;
-            m_DefaultTransitionDetailsView.style.paddingLeft = 8;
-            m_DefaultTransitionDetailsView.style.paddingRight = 8;
-            m_DefaultTransitionDetailsView.style.paddingTop = 8;
-            m_DefaultTransitionDetailsView.style.backgroundColor = new Color(0.16f, 0.17f, 0.19f, 1f);
-            body.Add(m_DefaultTransitionDetailsView);
-
-            Label status = new("Scene 与旧列表保持不变；本页只提供 Default Transition 的 state 视角编辑。");
-            status.style.height = 23;
-            status.style.flexShrink = 0;
-            status.style.paddingLeft = 8;
-            status.style.paddingTop = 3;
-            status.style.borderTopWidth = 1;
-            status.style.borderTopColor = SectionDivider;
-            status.style.backgroundColor = ListHeaderBg;
-            status.style.color = TextMuted;
-            status.style.fontSize = BodyFontSize;
-            root.Add(status);
-
-            RebuildDefaultTransitionTab();
-            return root;
-        }
-
-        private VisualElement BuildDefaultTransitionGraphPane()
-        {
-            VisualElement pane = new();
-            pane.style.flexGrow = 1;
-            pane.style.minHeight = 0;
-            pane.style.flexDirection = FlexDirection.Column;
-
-            VisualElement toolbar = Row();
-            toolbar.style.flexShrink = 0;
-            toolbar.style.paddingLeft = 8;
-            toolbar.style.paddingRight = 8;
-            toolbar.style.paddingTop = 6;
-            toolbar.style.paddingBottom = 6;
-            toolbar.style.borderBottomWidth = 1;
-            toolbar.style.borderBottomColor = SectionDivider;
-            toolbar.style.backgroundColor = new Color(0.12f, 0.13f, 0.145f, 1f);
-            pane.Add(toolbar);
-
-            m_DefaultTransitionEditingStateButton = new Button(ShowDefaultTransitionEditingStateMenu);
-            m_DefaultTransitionEditingStateButton.style.flexGrow = 1;
-            m_DefaultTransitionEditingStateButton.style.flexShrink = 1;
-            m_DefaultTransitionEditingStateButton.style.minWidth = 160;
-            m_DefaultTransitionEditingStateButton.style.unityTextAlign = TextAnchor.MiddleLeft;
-            m_DefaultTransitionEditingStateButton.style.paddingLeft = 6;
-            m_DefaultTransitionEditingStateButton.style.paddingRight = 6;
-            toolbar.Add(m_DefaultTransitionEditingStateButton);
-
-            m_DefaultTransitionGraphZoomLabel = new("100%");
-            m_DefaultTransitionGraphZoomLabel.style.color = TextMuted;
-            m_DefaultTransitionGraphZoomLabel.style.fontSize = BodyFontSize;
-            m_DefaultTransitionGraphZoomLabel.style.marginRight = 8;
-            toolbar.Add(m_DefaultTransitionGraphZoomLabel);
-
-            Button resetZoomButton = CreateStyledButton("Reset Zoom", () =>
-            {
-                m_DefaultTransitionGraphView?.ResetZoom();
-                UpdateDefaultTransitionGraphZoomLabel();
-            }, AccentColor);
-            resetZoomButton.tooltip = "把 Default Transition graph 缩放还原到 100%。";
-            toolbar.Add(resetZoomButton);
-
-            m_AddDefaultTransitionInPairButton = CreateStyledButton("+ In", () => ShowAddDefaultTransitionPairMenu(true), AccentColor, 6);
-            m_AddDefaultTransitionInPairButton.tooltip = "新增一个指向当前 state 的 Default Transition pair。";
-            toolbar.Add(m_AddDefaultTransitionInPairButton);
-
-            m_AddDefaultTransitionOutPairButton = CreateStyledButton("+ Out", () => ShowAddDefaultTransitionPairMenu(false), AccentColor, 6);
-            m_AddDefaultTransitionOutPairButton.tooltip = "新增一个从当前 state 出发的 Default Transition pair。";
-            toolbar.Add(m_AddDefaultTransitionOutPairButton);
-
-            m_DefaultTransitionGraphView = new XAnimationDefaultTransitionGraphElement();
-            m_DefaultTransitionGraphView.PairSelected += SelectDefaultTransitionTabPair;
-            m_DefaultTransitionGraphView.PairDeleteRequested += DeleteDefaultTransitionTabPair;
-            m_DefaultTransitionGraphView.StateEditRequested += SetDefaultTransitionEditingState;
-            m_DefaultTransitionGraphView.ZoomChanged += _ => UpdateDefaultTransitionGraphZoomLabel();
-            pane.Add(m_DefaultTransitionGraphView);
-            return pane;
-        }
-
-        private void UpdateDefaultTransitionGraphZoomLabel()
-        {
-            if (m_DefaultTransitionGraphZoomLabel == null)
-            {
-                return;
-            }
-
-            float zoom = m_DefaultTransitionGraphView?.Zoom ?? 1f;
-            m_DefaultTransitionGraphZoomLabel.text = $"{Mathf.RoundToInt(zoom * 100f)}%";
-        }
-
-        private void RebuildDefaultTransitionTab()
-        {
-            if (m_DefaultTransitionTabView == null ||
-                m_DefaultTransitionGraphView == null ||
-                m_DefaultTransitionDetailsView == null)
-            {
-                return;
-            }
-
-            EnsureDefaultTransitionEditingState();
-            XAnimationCompiledState editingState = GetDefaultTransitionEditingState();
-            bool canAddPair = CanAddDefaultTransitionPairFromTab();
-            m_AddDefaultTransitionInPairButton?.SetEnabled(canAddPair);
-            m_AddDefaultTransitionOutPairButton?.SetEnabled(canAddPair);
-            UpdateDefaultTransitionEditingStateButton(editingState);
-            m_DefaultTransitionDetailsView.Clear();
-
-            if (m_Session == null || !m_Session.IsLoaded || editingState == null)
-            {
-                m_DefaultTransitionGraphView.SetEmpty("No asset loaded");
-                BuildDefaultTransitionDetails(null);
-                return;
-            }
-
-            string editingChannelName = editingState.Config.channelName;
-            string editingStateKey = editingState.Key;
-            List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(editingChannelName, editingStateKey, true);
-            List<DefaultTransitionPairEntry> outEntries = CollectDefaultTransitionPairEntries(editingChannelName, editingStateKey, false);
-            EnsureDefaultTransitionTabSelection(inEntries, outEntries);
-            m_DefaultTransitionGraphView.SetData(
-                m_DefaultTransitionEditingStateUiKey,
-                FormatCompiledStateDisplayName(editingState),
-                BuildDefaultTransitionGraphPairs(inEntries, outEntries));
-            UpdateDefaultTransitionGraphZoomLabel();
-            BuildDefaultTransitionDetails(GetSelectedDefaultTransitionPairEntry(inEntries, outEntries));
+            return TryGetCompiledStateByUiKey(m_DefaultTransitionEditingStateUiKey, out XAnimationCompiledState state)
+                ? state
+                : null;
         }
 
         private bool CanAddDefaultTransitionPairFromTab()
@@ -376,94 +223,6 @@ namespace XAnimationEditor
                    !m_Session.IsOverrideAsset &&
                    m_Session.CompiledAsset.States.Count >= 2 &&
                    GetDefaultTransitionEditingState() != null;
-        }
-
-        private void EnsureDefaultTransitionEditingState()
-        {
-            if (m_Session == null || !m_Session.IsLoaded || m_Session.CompiledAsset.States.Count == 0)
-            {
-                m_DefaultTransitionEditingStateUiKey = string.Empty;
-                m_DefaultTransitionTabTransitionIndex = -1;
-                m_DefaultTransitionTabPairIndex = -1;
-                return;
-            }
-
-            if (GetDefaultTransitionEditingState() != null)
-            {
-                return;
-            }
-
-            m_DefaultTransitionEditingStateUiKey = BuildStateUiKey(m_Session.CompiledAsset.States[0]);
-        }
-
-        private void SetDefaultTransitionEditingState(string stateUiKey)
-        {
-            if (string.IsNullOrWhiteSpace(stateUiKey) ||
-                !TryGetCompiledStateByUiKey(stateUiKey, out _))
-            {
-                return;
-            }
-
-            if (string.Equals(m_DefaultTransitionEditingStateUiKey, stateUiKey, StringComparison.Ordinal))
-            {
-                UpdateDefaultTransitionEditingStateButton(GetDefaultTransitionEditingState());
-                return;
-            }
-
-            m_DefaultTransitionEditingStateUiKey = stateUiKey;
-            m_DefaultTransitionTabTransitionIndex = -1;
-            m_DefaultTransitionTabPairIndex = -1;
-            m_DefaultTransitionTabPairWaitingSwitch = false;
-            RebuildDefaultTransitionTab();
-        }
-
-        private XAnimationCompiledState GetDefaultTransitionEditingState()
-        {
-            return TryGetCompiledStateByUiKey(m_DefaultTransitionEditingStateUiKey, out XAnimationCompiledState state)
-                ? state
-                : null;
-        }
-
-        private void UpdateDefaultTransitionEditingStateButton(XAnimationCompiledState state)
-        {
-            if (m_DefaultTransitionEditingStateButton == null)
-            {
-                return;
-            }
-
-            string text = state == null ? "None" : FormatCompiledStateDisplayName(state);
-            m_DefaultTransitionEditingStateButton.text = text;
-            m_DefaultTransitionEditingStateButton.tooltip = text;
-        }
-
-        private static string FormatCompiledStateDisplayName(XAnimationCompiledState state)
-        {
-            if (state == null)
-            {
-                return string.Empty;
-            }
-
-            string parentPath = GetStatePathParent(state.Key);
-            return string.IsNullOrWhiteSpace(parentPath)
-                ? $"{state.Config.channelName} - {state.Key}"
-                : $"{state.Config.channelName} - {FormatStateDisplayPath(parentPath)} / {GetStatePathLeafName(state.Key)}";
-        }
-
-        private void ShowDefaultTransitionEditingStateMenu()
-        {
-            if (m_DefaultTransitionEditingStateButton == null)
-            {
-                return;
-            }
-
-            List<StateSelectionItem> items = CollectSelectableStates();
-            List<SearchableSelectionItem> entries = BuildScopedStateSelectionEntries(items);
-            SearchableSelectionWindow.Show(
-                GetSelectionActivatorRect(m_DefaultTransitionEditingStateButton),
-                "Select State",
-                m_DefaultTransitionEditingStateUiKey,
-                entries,
-                SetDefaultTransitionEditingState);
         }
 
         private List<DefaultTransitionPairEntry> CollectDefaultTransitionPairEntries(string channelName, string stateKey, bool inState)
@@ -487,26 +246,51 @@ namespace XAnimationEditor
                 }
 
                 bool matches = inState
-                    ? string.Equals(config.channelName, channelName, StringComparison.Ordinal) &&
+                    ? string.Equals(transitions[transitionIndex].ChannelName, channelName, StringComparison.Ordinal) &&
                       string.Equals(config.nextStateKey, stateKey, StringComparison.Ordinal)
-                    : string.Equals(config.channelName, channelName, StringComparison.Ordinal) &&
+                    : string.Equals(transitions[transitionIndex].ChannelName, channelName, StringComparison.Ordinal) &&
                       string.Equals(config.preStateKey, stateKey, StringComparison.Ordinal);
                 if (matches)
                 {
-                    entries.Add(new DefaultTransitionPairEntry(transitionIndex, 0, config, inState));
+                    entries.Add(new DefaultTransitionPairEntry(
+                        transitionIndex,
+                        0,
+                        transitions[transitionIndex].ChannelName,
+                        config,
+                        inState));
+                }
+            }
+
+            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions = m_Session.CompiledAsset.AutoTransitions;
+            for (int transitionIndex = 0; transitionIndex < autoTransitions.Count; transitionIndex++)
+            {
+                XAnimationCompiledAutoTransition transition = autoTransitions[transitionIndex];
+                XAnimationAutoTransitionConfig config = transition.Config;
+                bool matches = inState
+                    ? string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal) &&
+                      string.Equals(config.nextStateKey, stateKey, StringComparison.Ordinal)
+                    : string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal) &&
+                      string.Equals(config.preStateKey, stateKey, StringComparison.Ordinal);
+                if (matches)
+                {
+                    entries.Add(new DefaultTransitionPairEntry(
+                        transitionIndex,
+                        transition.ChannelName,
+                        config,
+                        inState));
                 }
             }
 
             return entries;
         }
 
-        private List<XAnimationDefaultTransitionGraphElement.PairViewData> BuildDefaultTransitionGraphPairs(
+        private List<XAnimationStateTransitionGraphElement.PairViewData> BuildDefaultTransitionGraphPairs(
             List<DefaultTransitionPairEntry> inEntries,
             List<DefaultTransitionPairEntry> outEntries)
         {
             int inCount = inEntries?.Count ?? 0;
             int outCount = outEntries?.Count ?? 0;
-            List<XAnimationDefaultTransitionGraphElement.PairViewData> pairs = new(inCount + outCount);
+            List<XAnimationStateTransitionGraphElement.PairViewData> pairs = new(inCount + outCount);
             if (inEntries != null)
             {
                 for (int i = 0; i < inEntries.Count; i++)
@@ -526,23 +310,27 @@ namespace XAnimationEditor
             return pairs;
         }
 
-        private XAnimationDefaultTransitionGraphElement.PairViewData CreateDefaultTransitionGraphPair(DefaultTransitionPairEntry entry)
+        private XAnimationStateTransitionGraphElement.PairViewData CreateDefaultTransitionGraphPair(DefaultTransitionPairEntry entry)
         {
-            XAnimationDefaultTransitionConfig transition = entry.Transition;
             bool selected = entry.TransitionIndex == m_DefaultTransitionTabTransitionIndex &&
-                            entry.PairIndex == m_DefaultTransitionTabPairIndex;
+                            entry.PairIndex == m_DefaultTransitionTabPairIndex &&
+                            entry.IsAuto == m_DefaultTransitionTabPairIsAuto;
             bool editable = m_Session != null &&
                             m_Session.IsLoaded &&
                             !m_Session.IsOverrideAsset;
-            return new XAnimationDefaultTransitionGraphElement.PairViewData(
+            float fadeIn = entry.IsAuto ? entry.AutoTransition.transitionDuration : entry.Transition.fadeIn;
+            float fadeOut = entry.IsAuto ? entry.AutoTransition.transitionDuration : entry.Transition.fadeOut;
+            int priority = entry.IsAuto ? 0 : entry.Transition.priority;
+            return new XAnimationStateTransitionGraphElement.PairViewData(
                 entry.TransitionIndex,
                 entry.PairIndex,
                 entry.PreStateKey,
                 entry.NextStateKey,
-                transition?.channelName ?? string.Empty,
-                transition?.fadeIn ?? 0f,
-                transition?.fadeOut ?? 0f,
-                transition?.priority ?? 0,
+                entry.ChannelName,
+                fadeIn,
+                fadeOut,
+                priority,
+                entry.IsAuto,
                 entry.IsInState,
                 selected,
                 selected && m_DefaultTransitionTabPairWaitingSwitch,
@@ -553,8 +341,8 @@ namespace XAnimationEditor
             List<DefaultTransitionPairEntry> inEntries,
             List<DefaultTransitionPairEntry> outEntries)
         {
-            if (ContainsDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex) ||
-                ContainsDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex))
+            if (ContainsDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, m_DefaultTransitionTabPairIsAuto) ||
+                ContainsDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, m_DefaultTransitionTabPairIsAuto))
             {
                 return;
             }
@@ -573,10 +361,15 @@ namespace XAnimationEditor
 
             m_DefaultTransitionTabTransitionIndex = -1;
             m_DefaultTransitionTabPairIndex = -1;
+            m_DefaultTransitionTabPairIsAuto = false;
             m_DefaultTransitionTabPairWaitingSwitch = false;
         }
 
-        private static bool ContainsDefaultTransitionPairEntry(List<DefaultTransitionPairEntry> entries, int transitionIndex, int pairIndex)
+        private static bool ContainsDefaultTransitionPairEntry(
+            List<DefaultTransitionPairEntry> entries,
+            int transitionIndex,
+            int pairIndex,
+            bool isAuto)
         {
             if (entries == null)
             {
@@ -585,7 +378,9 @@ namespace XAnimationEditor
 
             for (int i = 0; i < entries.Count; i++)
             {
-                if (entries[i].TransitionIndex == transitionIndex && entries[i].PairIndex == pairIndex)
+                if (entries[i].TransitionIndex == transitionIndex &&
+                    entries[i].PairIndex == pairIndex &&
+                    entries[i].IsAuto == isAuto)
                 {
                     return true;
                 }
@@ -598,8 +393,8 @@ namespace XAnimationEditor
             List<DefaultTransitionPairEntry> inEntries,
             List<DefaultTransitionPairEntry> outEntries)
         {
-            if (TryFindDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, out DefaultTransitionPairEntry entry) ||
-                TryFindDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, out entry))
+            if (TryFindDefaultTransitionPairEntry(outEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, m_DefaultTransitionTabPairIsAuto, out DefaultTransitionPairEntry entry) ||
+                TryFindDefaultTransitionPairEntry(inEntries, m_DefaultTransitionTabTransitionIndex, m_DefaultTransitionTabPairIndex, m_DefaultTransitionTabPairIsAuto, out entry))
             {
                 return entry;
             }
@@ -611,13 +406,16 @@ namespace XAnimationEditor
             List<DefaultTransitionPairEntry> entries,
             int transitionIndex,
             int pairIndex,
+            bool isAuto,
             out DefaultTransitionPairEntry entry)
         {
             if (entries != null)
             {
                 for (int i = 0; i < entries.Count; i++)
                 {
-                    if (entries[i].TransitionIndex == transitionIndex && entries[i].PairIndex == pairIndex)
+                    if (entries[i].TransitionIndex == transitionIndex &&
+                        entries[i].PairIndex == pairIndex &&
+                        entries[i].IsAuto == isAuto)
                     {
                         entry = entries[i];
                         return true;
@@ -632,10 +430,12 @@ namespace XAnimationEditor
         private void SelectDefaultTransitionTabPair(DefaultTransitionPairEntry entry, bool rebuild = true)
         {
             bool changed = entry.TransitionIndex != m_DefaultTransitionTabTransitionIndex ||
-                           entry.PairIndex != m_DefaultTransitionTabPairIndex;
+                           entry.PairIndex != m_DefaultTransitionTabPairIndex ||
+                           entry.IsAuto != m_DefaultTransitionTabPairIsAuto;
             m_DefaultTransitionTabTransitionIndex = entry.TransitionIndex;
             m_DefaultTransitionTabPairIndex = entry.PairIndex;
-            m_SelectedDefaultTransitionIndex = entry.TransitionIndex;
+            m_DefaultTransitionTabPairIsAuto = entry.IsAuto;
+            m_SelectedDefaultTransitionIndex = entry.IsAuto ? -1 : entry.TransitionIndex;
             if (changed)
             {
                 m_DefaultTransitionTabPairWaitingSwitch = false;
@@ -643,19 +443,23 @@ namespace XAnimationEditor
 
             if (rebuild)
             {
-                RebuildDefaultTransitionTab();
+                RebuildStatesGraphTabIfVisible();
             }
         }
 
-        private void SelectDefaultTransitionTabPair(int transitionIndex, int pairIndex)
+        private void SelectDefaultTransitionTabPair(int transitionIndex, int pairIndex, bool isAuto)
         {
-            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, out DefaultTransitionPairEntry entry))
+            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, isAuto, out DefaultTransitionPairEntry entry))
             {
                 SelectDefaultTransitionTabPair(entry);
             }
         }
 
-        private bool TryGetDefaultTransitionTabPairEntry(int transitionIndex, int pairIndex, out DefaultTransitionPairEntry entry)
+        private bool TryGetDefaultTransitionTabPairEntry(
+            int transitionIndex,
+            int pairIndex,
+            bool isAuto,
+            out DefaultTransitionPairEntry entry)
         {
             XAnimationCompiledState editingState = GetDefaultTransitionEditingState();
             if (editingState == null)
@@ -664,83 +468,132 @@ namespace XAnimationEditor
                 return false;
             }
 
-            List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(editingState.Config.channelName, editingState.Key, true);
-            List<DefaultTransitionPairEntry> outEntries = CollectDefaultTransitionPairEntries(editingState.Config.channelName, editingState.Key, false);
-            return TryFindDefaultTransitionPairEntry(outEntries, transitionIndex, pairIndex, out entry) ||
-                   TryFindDefaultTransitionPairEntry(inEntries, transitionIndex, pairIndex, out entry);
+            List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(editingState.ChannelName, editingState.Key, true);
+            List<DefaultTransitionPairEntry> outEntries = CollectDefaultTransitionPairEntries(editingState.ChannelName, editingState.Key, false);
+            return TryFindDefaultTransitionPairEntry(outEntries, transitionIndex, pairIndex, isAuto, out entry) ||
+                   TryFindDefaultTransitionPairEntry(inEntries, transitionIndex, pairIndex, isAuto, out entry);
         }
 
-        private void BuildDefaultTransitionDetails(DefaultTransitionPairEntry? selectedEntry)
+        private void BuildDefaultTransitionDetails(VisualElement detailsView, DefaultTransitionPairEntry? selectedEntry)
         {
-            m_DefaultTransitionDetailsView.Clear();
-            Label title = new("Selected Pair");
+            detailsView.Clear();
+            Label title = new("Selected Transition");
             title.style.color = TextNormal;
             title.style.fontSize = SectionTitleFontSize;
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
             title.style.marginBottom = 8;
-            m_DefaultTransitionDetailsView.Add(title);
+            detailsView.Add(title);
 
             if (!selectedEntry.HasValue)
             {
-                AddEmptyLabel(m_DefaultTransitionDetailsView, "No pair selected");
+                AddEmptyLabel(detailsView, "No transition selected");
                 return;
             }
 
             DefaultTransitionPairEntry entry = selectedEntry.Value;
-            XAnimationDefaultTransitionConfig config = entry.Transition;
             bool editable = m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset;
 
             VisualElement pairPreview = CreateSubBox();
-            pairPreview.style.backgroundColor = new Color(0.14f, 0.18f, 0.25f, 1f);
+            pairPreview.style.backgroundColor = entry.IsAuto
+                ? new Color(0.30f, 0.20f, 0.08f, 1f)
+                : new Color(0.14f, 0.18f, 0.25f, 1f);
             pairPreview.style.marginBottom = 8;
-            Label pairTitle = CreateBoldLabel($"{entry.PreStateKey} -> {entry.NextStateKey}");
+            string nextStateLabel = string.IsNullOrWhiteSpace(entry.NextStateKey) ? "None" : entry.NextStateKey;
+            Label pairTitle = CreateBoldLabel($"{entry.PreStateKey} -> {nextStateLabel}");
             pairTitle.style.color = Color.white;
             pairPreview.Add(pairTitle);
-            Label pairName = new(string.IsNullOrWhiteSpace(config.channelName) ? "Channel: ?" : $"Channel: {config.channelName}");
+            Label pairName = new($"{(entry.IsAuto ? "Auto" : "Default")} · Channel: {entry.ChannelName}");
             pairName.style.color = TextMuted;
             pairName.style.fontSize = BodyFontSize;
             pairName.style.marginTop = 2;
             pairPreview.Add(pairName);
-            m_DefaultTransitionDetailsView.Add(pairPreview);
+            detailsView.Add(pairPreview);
 
-            float currentExitTime = 0.5f;
-            float currentTransitionDuration = GetDefaultTransitionDuration(config);
-            float currentEnterTime = Mathf.Clamp01(config.enterTime);
+            Toggle isAutoToggle = new("isAuto") { value = entry.IsAuto };
+            isAutoToggle.tooltip = "切换 Transition 的资源类型。Default 转 Auto 时 ExitTime 设为 1；Auto 转 Default 时 Priority 设为 0、Interruptible 设为 true。";
+            isAutoToggle.SetEnabled(editable);
+            isAutoToggle.style.marginBottom = 8;
+            detailsView.Add(isAutoToggle);
+            isAutoToggle.RegisterValueChangedCallback(evt =>
+            {
+                try
+                {
+                    int transitionIndex = evt.newValue
+                        ? m_Session.ConvertDefaultTransitionToAuto(entry.TransitionIndex, save: false)
+                        : m_Session.ConvertAutoTransitionToDefault(entry.ChannelName, entry.PreStateKey, save: false);
+                    m_DefaultTransitionTabTransitionIndex = transitionIndex;
+                    m_DefaultTransitionTabPairIndex = 0;
+                    m_DefaultTransitionTabPairIsAuto = evt.newValue;
+                    m_DefaultTransitionTabPairWaitingSwitch = false;
+                    m_SelectedDefaultTransitionIndex = evt.newValue ? -1 : transitionIndex;
+                    ScheduleAssetSave();
+                    RebuildAutoTransitionEditor();
+                    RebuildDefaultTransitionsEditor();
+                    RefreshChannelStates();
+                    SetStatus($"Transition 已转换为 {(evt.newValue ? "Auto" : "Default")}。");
+                }
+                catch (Exception ex)
+                {
+                    isAutoToggle.SetValueWithoutNotify(entry.IsAuto);
+                    SetStatus(ex.Message, true);
+                    Debug.LogException(ex);
+                }
+            });
+
+            float currentExitTime = entry.IsAuto ? entry.AutoTransition.exitTime : 0.5f;
+            float currentTransitionDuration = entry.IsAuto
+                ? entry.AutoTransition.transitionDuration
+                : GetDefaultTransitionDuration(entry.Transition);
+            float currentEnterTime = Mathf.Clamp01(entry.IsAuto ? entry.AutoTransition.enterTime : entry.Transition.enterTime);
             XAnimationTransitionTimelineEditor timelineEditor = new();
             timelineEditor.SetData(
                 entry.PreStateKey,
                 entry.NextStateKey,
-                ResolveTimelineStateDuration(entry.PreStateKey, 1f),
-                ResolveTimelineStateDuration(entry.NextStateKey, 1f),
+                ResolveTimelineStateDuration(entry.ChannelName, entry.PreStateKey, 1f),
+                ResolveTimelineStateDuration(entry.ChannelName, entry.NextStateKey, 1f),
                 currentExitTime,
                 currentTransitionDuration,
                 currentEnterTime,
                 editable,
-                false,
-                "只读显示。拖拽 timeline 的起点可调整这个编辑器临时值，不会写入 Default Transition 数据。");
+                entry.IsAuto,
+                "Default Transition 不保存 ExitTime。切换为 Auto 后可编辑。");
             timelineEditor.TimingChanged += (exitTime, transitionDuration, enterTime) =>
             {
-                bool optionsChanged =
+                bool timingChanged =
+                    (entry.IsAuto && !Mathf.Approximately(currentExitTime, Mathf.Clamp01(exitTime))) ||
                     !Mathf.Approximately(currentTransitionDuration, Mathf.Max(0f, transitionDuration)) ||
                     !Mathf.Approximately(currentEnterTime, Mathf.Clamp01(enterTime));
                 currentExitTime = Mathf.Clamp01(exitTime);
                 currentTransitionDuration = Mathf.Max(0f, transitionDuration);
                 currentEnterTime = Mathf.Clamp01(enterTime);
-                if (!optionsChanged || m_Session == null || !m_Session.IsLoaded)
+                if (!timingChanged || m_Session == null || !m_Session.IsLoaded)
                 {
                     return;
                 }
 
                 try
                 {
-                    m_Session.SetDefaultTransitionOptions(
-                        entry.TransitionIndex,
-                        currentTransitionDuration,
-                        currentTransitionDuration,
-                        currentEnterTime,
-                        config.priority,
-                        config.interruptible,
-                        save: false);
+                    if (entry.IsAuto)
+                    {
+                        m_Session.SetAutoTransitionTiming(
+                            entry.ChannelName,
+                            entry.PreStateKey,
+                            currentExitTime,
+                            currentTransitionDuration,
+                            currentEnterTime,
+                            save: false);
+                    }
+                    else
+                    {
+                        m_Session.SetDefaultTransitionOptions(
+                            entry.TransitionIndex,
+                            currentTransitionDuration,
+                            currentTransitionDuration,
+                            currentEnterTime,
+                            entry.Transition.priority,
+                            entry.Transition.interruptible,
+                            save: false);
+                    }
                     ScheduleAssetSave();
                     RefreshChannelStates();
                 }
@@ -750,32 +603,30 @@ namespace XAnimationEditor
                     Debug.LogException(ex);
                 }
             };
-            timelineEditor.DragStatusChanged += statusText => SetStatus($"Default Transition {entry.TransitionIndex + 1} {statusText}");
-            m_DefaultTransitionDetailsView.Add(timelineEditor);
+            timelineEditor.DragStatusChanged += statusText => SetStatus($"{(entry.IsAuto ? "Auto" : "Default")} Transition {statusText}");
+            detailsView.Add(timelineEditor);
         }
-        private void ShowAddDefaultTransitionPairMenu(bool inState)
+        private void ShowAddDefaultTransitionPairMenu(bool inState, Rect activatorRect)
         {
             if (!CanAddDefaultTransitionPairFromTab())
             {
                 return;
             }
 
-            Button sourceButton = inState
-                ? m_AddDefaultTransitionInPairButton
-                : m_AddDefaultTransitionOutPairButton;
-            VisualElement activator = sourceButton ?? m_DefaultTransitionTabView;
             XAnimationCompiledState editingState = GetDefaultTransitionEditingState();
             if (editingState == null)
             {
                 return;
             }
 
-            string channelName = editingState.Config.channelName;
+            string channelName = editingState.ChannelName;
             string editingStateKey = editingState.Key;
-            List<StateSelectionItem> items = CollectSelectableStates(editingStateKey, channelFilterName: channelName);
-            List<SearchableSelectionItem> entries = BuildStateSelectionEntries(items, includeNone: false);
+            List<StateSelectionItem> items = CollectSelectableStates(
+                editingStateKey,
+                channelFilterName: channelName);
+            List<SearchableSelectionItem> entries = BuildStateSelectionEntries(items, includeNone: false, includeChannelName: false);
             SearchableSelectionWindow.Show(
-                GetSelectionActivatorRect(activator),
+                activatorRect,
                 inState ? "Select In State" : "Select Out State",
                 string.Empty,
                 entries,
@@ -803,7 +654,9 @@ namespace XAnimationEditor
             {
                 int transitionIndex = m_DefaultTransitionTabTransitionIndex;
                 int pairIndex;
-                if (transitionIndex >= 0 && transitionIndex < m_Session.CompiledAsset.DefaultTransitions.Count)
+                if (!m_DefaultTransitionTabPairIsAuto &&
+                    transitionIndex >= 0 &&
+                    transitionIndex < m_Session.CompiledAsset.DefaultTransitions.Count)
                 {
                     pairIndex = m_Session.AddDefaultTransitionPair(transitionIndex, preStateKey, nextStateKey, save: false);
                 }
@@ -816,6 +669,7 @@ namespace XAnimationEditor
                 m_SelectedDefaultTransitionIndex = transitionIndex;
                 m_DefaultTransitionTabTransitionIndex = transitionIndex;
                 m_DefaultTransitionTabPairIndex = pairIndex;
+                m_DefaultTransitionTabPairIsAuto = false;
                 m_DefaultTransitionTabPairWaitingSwitch = false;
                 ScheduleAssetSave();
                 RebuildDefaultTransitionsEditor();
@@ -838,15 +692,23 @@ namespace XAnimationEditor
 
             try
             {
-                m_Session.DeleteDefaultTransition(entry.TransitionIndex);
+                if (entry.IsAuto)
+                {
+                    m_Session.DeleteAutoTransition(entry.ChannelName, entry.PreStateKey);
+                }
+                else
+                {
+                    m_Session.DeleteDefaultTransition(entry.TransitionIndex);
+                }
                 m_SelectedDefaultTransitionIndex = -1;
                 m_DefaultTransitionTabTransitionIndex = -1;
-
                 m_DefaultTransitionTabPairIndex = -1;
+                m_DefaultTransitionTabPairIsAuto = false;
                 m_DefaultTransitionTabPairWaitingSwitch = false;
+                RebuildAutoTransitionEditor();
                 RebuildDefaultTransitionsEditor();
                 RefreshChannelStates();
-                SetStatus($"已删除 Default Transition pair。");
+                SetStatus($"已删除 {(entry.IsAuto ? "Auto" : "Default")} Transition。");
             }
             catch (Exception ex)
             {
@@ -855,9 +717,9 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteDefaultTransitionTabPair(int transitionIndex, int pairIndex)
+        private void DeleteDefaultTransitionTabPair(int transitionIndex, int pairIndex, bool isAuto)
         {
-            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, out DefaultTransitionPairEntry entry))
+            if (TryGetDefaultTransitionTabPairEntry(transitionIndex, pairIndex, isAuto, out DefaultTransitionPairEntry entry))
             {
                 DeleteDefaultTransitionTabPair(entry);
             }
@@ -866,6 +728,7 @@ namespace XAnimationEditor
         private VisualElement CreateStateEditor(XAnimationCompiledState state)
         {
             XAnimationStateConfig config = state.Config;
+            string channelName = state.ChannelName;
             VisualElement editor = CreateFoldoutRowEditor();
             VisualElement configBox = CreateStateConfigSection();
             editor.Add(configBox);
@@ -878,8 +741,8 @@ namespace XAnimationEditor
             {
                 parameterField = CreateFloatParameterDropdown("parameter", config.parameterName);
                 parameterField.tooltip = "Blend1D 绑定的 Float 参数。";
-                parameterField.RegisterValueChangedCallback(evt => ChangeStateBlendParameter(config.channelName, state.Key, evt.newValue, parameterField, evt.previousValue));
-                deferredTypeSpecificEditor = CreateBlendSampleEditor(config.channelName, state.Key, config, parameterField);
+                parameterField.RegisterValueChangedCallback(evt => ChangeStateBlendParameter(channelName, state.Key, evt.newValue, parameterField, evt.previousValue));
+                deferredTypeSpecificEditor = CreateBlendSampleEditor(channelName, state.Key, config, parameterField);
             }
             else if (IsDirectionalBlendStateType(config.stateType))
             {
@@ -889,7 +752,7 @@ namespace XAnimationEditor
                 parameterYField.tooltip = $"{config.stateType} 的 Y 方向 Float 参数。";
                 parameterXField.RegisterValueChangedCallback(evt =>
                     ChangeStateDirectionalBlendParameters(
-                        config.channelName,
+                        channelName,
                         state.Key,
                         evt.newValue,
                         parameterYField.value,
@@ -899,7 +762,7 @@ namespace XAnimationEditor
                         parameterYField.value));
                 parameterYField.RegisterValueChangedCallback(evt =>
                     ChangeStateDirectionalBlendParameters(
-                        config.channelName,
+                        channelName,
                         state.Key,
                         parameterXField.value,
                         evt.newValue,
@@ -907,7 +770,7 @@ namespace XAnimationEditor
                         parameterYField,
                         parameterXField.value,
                         evt.previousValue));
-                deferredTypeSpecificEditor = CreateDirectionalBlendSampleEditor(config.channelName, state.Key, config, parameterXField, parameterYField);
+                deferredTypeSpecificEditor = CreateDirectionalBlendSampleEditor(channelName, state.Key, config, parameterXField, parameterYField);
             }
 
             Toggle loopField = new("loop") { value = config.loop };
@@ -916,9 +779,9 @@ namespace XAnimationEditor
             {
                 if (m_Session == null || !m_Session.IsLoaded) return;
 
-                m_Session.SetStateLoop(config.channelName, state.Key, evt.newValue);
+                m_Session.SetStateLoop(channelName, state.Key, evt.newValue);
                 RebuildStateList();
-                RestartStateIfPlaying(state.Key, config.channelName);
+                RestartStateIfPlaying(state.Key, channelName);
                 SetStatus($"{state.Key} loop = {evt.newValue}。");
             });
 
@@ -936,7 +799,7 @@ namespace XAnimationEditor
                     speedField.SetValueWithoutNotify(speed);
                 }
 
-                m_Session.SetStateSpeed(config.channelName, state.Key, speed, save: false);
+                m_Session.SetStateSpeed(channelName, state.Key, speed, save: false);
                 ScheduleAssetSave();
                 SetStatus($"{state.Key} speed = {speed:0.###}。");
             });
@@ -948,7 +811,7 @@ namespace XAnimationEditor
                 clipBox.style.marginTop = 5;
                 XAnimationEditorSelectionField clipField = CreateClipSelectionField("clipKey", config.clipKey);
                 clipField.tooltip = "Single state 播放的 clip。";
-                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(config.channelName, state.Key, newValue, clipField, previousValue);
+                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(channelName, state.Key, newValue, clipField, previousValue);
                 AttachClipKeyPingButton(clipField, config.clipKey, enabled: true);
                 clipBox.Add(clipField);
                 editor.Add(clipBox);
@@ -958,9 +821,9 @@ namespace XAnimationEditor
                 editor.Add(deferredTypeSpecificEditor);
             }
 
-            editor.Add(CreateStateGateEditor(config.channelName, state.Key, "Allowed Next States", config.allowedNextStateKeys, addPreviousGate: false));
-            editor.Add(CreateStateGateEditor(config.channelName, state.Key, "Allowed Previous States", config.allowedPreviousStateKeys, addPreviousGate: true));
-            editor.Add(CreateStateBehaviorEditor(config.channelName, state.Key, config));
+            editor.Add(CreateStateGateEditor(channelName, state.Key, "Allowed Next States", config.allowedNextStateKeys, addPreviousGate: false));
+            editor.Add(CreateStateGateEditor(channelName, state.Key, "Allowed Previous States", config.allowedPreviousStateKeys, addPreviousGate: true));
+            editor.Add(CreateStateBehaviorEditor(channelName, state.Key, config));
             return editor;
         }
 
@@ -1054,7 +917,8 @@ namespace XAnimationEditor
                 string.Empty,
                 targetStateKey,
                 stateKey,
-                channelFilterName: channelName);
+                channelFilterName: channelName,
+                includeSelectors: !previousGate);
             stateField.style.flexGrow = 1;
             stateField.tooltip = previousGate ? "允许哪些 state 切到当前 state。" : "当前 state 允许切到哪些 state。";
             stateField.SetEnabled(editable);
@@ -1312,48 +1176,6 @@ namespace XAnimationEditor
             m_CollapsedAutoTransitionKeys.Remove(stateUiKey);
         }
 
-        private bool IsAutoTransitionChannelCollapsed(string channelName)
-        {
-            return !string.IsNullOrWhiteSpace(channelName) && m_CollapsedAutoTransitionChannelKeys.Contains(channelName);
-        }
-
-        private void SetAutoTransitionChannelCollapsed(string channelName, bool collapsed)
-        {
-            if (string.IsNullOrWhiteSpace(channelName))
-            {
-                return;
-            }
-
-            if (collapsed)
-            {
-                m_CollapsedAutoTransitionChannelKeys.Add(channelName);
-                return;
-            }
-
-            m_CollapsedAutoTransitionChannelKeys.Remove(channelName);
-        }
-
-        private bool IsDefaultTransitionChannelCollapsed(string channelName)
-        {
-            return !string.IsNullOrWhiteSpace(channelName) && m_CollapsedDefaultTransitionChannelKeys.Contains(channelName);
-        }
-
-        private void SetDefaultTransitionChannelCollapsed(string channelName, bool collapsed)
-        {
-            if (string.IsNullOrWhiteSpace(channelName))
-            {
-                return;
-            }
-
-            if (collapsed)
-            {
-                m_CollapsedDefaultTransitionChannelKeys.Add(channelName);
-                return;
-            }
-
-            m_CollapsedDefaultTransitionChannelKeys.Remove(channelName);
-        }
-
         private bool IsDefaultTransitionExpanded(int transitionIndex)
         {
             return !m_CollapsedDefaultTransitionIndices.Contains(transitionIndex);
@@ -1426,27 +1248,36 @@ namespace XAnimationEditor
             }
         }
 
-        private static string FormatDefaultTransitionPairSummary(XAnimationDefaultTransitionConfig config)
+        private string GetDefaultTransitionChannelName(XAnimationDefaultTransitionConfig config)
+        {
+            return config == null || m_Session == null || !m_Session.IsLoaded
+                ? string.Empty
+                : XAnimationEditorStateNodeUtility.GetDefaultTransitionChannelName(m_Session.CompiledAsset.Asset, config);
+        }
+
+        private string FormatDefaultTransitionPairSummary(XAnimationDefaultTransitionConfig config)
         {
             if (config == null)
             {
                 return "Invalid";
             }
 
-            string channelName = string.IsNullOrWhiteSpace(config.channelName) ? "?" : config.channelName;
+            string resolvedChannelName = GetDefaultTransitionChannelName(config);
+            string channelName = string.IsNullOrWhiteSpace(resolvedChannelName) ? "?" : resolvedChannelName;
             string preStateKey = string.IsNullOrWhiteSpace(config.preStateKey) ? "?" : config.preStateKey;
             string nextStateKey = string.IsNullOrWhiteSpace(config.nextStateKey) ? "?" : config.nextStateKey;
             return $"{channelName}: {preStateKey} -> {nextStateKey}";
         }
 
-        private static string FormatDefaultTransitionDisplayName(XAnimationDefaultTransitionConfig config, int transitionIndex)
+        private string FormatDefaultTransitionDisplayName(XAnimationDefaultTransitionConfig config, int transitionIndex)
         {
             if (config == null)
             {
                 return $"Default Transition {transitionIndex + 1}";
             }
 
-            string channelName = string.IsNullOrWhiteSpace(config.channelName) ? "?" : config.channelName;
+            string resolvedChannelName = GetDefaultTransitionChannelName(config);
+            string channelName = string.IsNullOrWhiteSpace(resolvedChannelName) ? "?" : resolvedChannelName;
             return $"{channelName} #{transitionIndex + 1}";
         }
 
@@ -1524,7 +1355,7 @@ namespace XAnimationEditor
             {
                 XAnimationCompiledState state = states[i];
                 if (state == null ||
-                    !string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal))
+                    !string.Equals(state.ChannelName, channelName, StringComparison.Ordinal))
                 {
                     continue;
                 }
@@ -1539,7 +1370,7 @@ namespace XAnimationEditor
             return string.Empty;
         }
 
-        private sealed class XAnimationDefaultTransitionGraphElement : VisualElement
+        private sealed class XAnimationStateTransitionGraphElement : VisualElement
         {
             public readonly struct PairViewData
             {
@@ -1552,6 +1383,7 @@ namespace XAnimationEditor
                     float fadeIn,
                     float fadeOut,
                     int priority,
+                    bool isAuto,
                     bool isInState,
                     bool isSelected,
                     bool isWaitingSwitch,
@@ -1565,6 +1397,7 @@ namespace XAnimationEditor
                     FadeIn = fadeIn;
                     FadeOut = fadeOut;
                     Priority = priority;
+                    IsAuto = isAuto;
                     IsInState = isInState;
                     IsSelected = isSelected;
                     IsWaitingSwitch = isWaitingSwitch;
@@ -1579,12 +1412,17 @@ namespace XAnimationEditor
                 public float FadeIn { get; }
                 public float FadeOut { get; }
                 public int Priority { get; }
+                public bool IsAuto { get; }
                 public bool IsInState { get; }
                 public bool IsSelected { get; }
                 public bool IsWaitingSwitch { get; }
                 public bool CanDelete { get; }
-                public string StateKey => IsInState ? PreStateKey : NextStateKey;
-                public string StateUiKey => BuildStateUiKey(TransitionName, StateKey);
+                public string ConnectedStateKey => IsInState ? PreStateKey : NextStateKey;
+                public string StateKey => string.IsNullOrWhiteSpace(ConnectedStateKey) ? "None" : ConnectedStateKey;
+                public string StateUiKey => string.IsNullOrWhiteSpace(ConnectedStateKey)
+                    ? string.Empty
+                    : BuildStateUiKey(TransitionName, ConnectedStateKey);
+                public string LayoutKey => $"{StateKey}::{(IsAuto ? "Auto" : "Default")}::{TransitionIndex}:{PairIndex}";
             }
 
             private readonly struct EdgeLayout
@@ -1601,7 +1439,7 @@ namespace XAnimationEditor
                 public PairViewData Pair { get; }
             }
 
-            private const float MinZoom = 0.45f;
+            private const float MinZoom = 0.9f;
             private const float MaxZoom = 1.85f;
             private const float WheelZoomBase = 1.12f;
             private const float CanvasPadding = 46f;
@@ -1623,6 +1461,8 @@ namespace XAnimationEditor
             private static readonly Color SelectedBorder = new(0.48f, 0.74f, 1f, 1f);
             private static readonly Color EdgeColor = new(0.48f, 0.72f, 1f, 0.64f);
             private static readonly Color EdgeSelected = new(0.58f, 0.86f, 1f, 0.96f);
+            private static readonly Color AutoEdgeColor = new(1f, 0.58f, 0.18f, 0.82f);
+            private static readonly Color AutoEdgeSelected = new(1f, 0.76f, 0.28f, 1f);
 
             private readonly List<PairViewData> m_Pairs = new();
             private readonly List<EdgeLayout> m_Edges = new();
@@ -1644,11 +1484,12 @@ namespace XAnimationEditor
             private Vector2 m_CanvasOrigin = Vector2.zero;
             private Vector2 m_PanOffset = Vector2.zero;
             private bool m_IsPanning;
+            private bool m_CanAddPair;
             private int m_PanPointerId = PointerId.invalidPointerId;
             private Vector2 m_PanStartPointer;
             private Vector2 m_PanStartOffset;
 
-            public XAnimationDefaultTransitionGraphElement()
+            public XAnimationStateTransitionGraphElement()
             {
                 style.flexGrow = 1;
                 style.minHeight = 0;
@@ -1656,12 +1497,18 @@ namespace XAnimationEditor
                 BuildUi();
             }
 
-            public event Action<int, int> PairSelected;
-            public event Action<int, int> PairDeleteRequested;
+            public event Action<int, int, bool> PairSelected;
+            public event Action<int, int, bool> PairDeleteRequested;
             public event Action<string> StateEditRequested;
+            public event Action<bool, Rect> AddPairRequested;
             public event Action<float> ZoomChanged;
 
             public float Zoom => m_Zoom;
+
+            public void SetCanAddPair(bool canAddPair)
+            {
+                m_CanAddPair = canAddPair;
+            }
 
             public void SetData(string editingStateUiKey, string editingStateLabel, IReadOnlyList<PairViewData> pairs)
             {
@@ -1689,9 +1536,12 @@ namespace XAnimationEditor
                 RefreshViewportAfterLayout();
             }
 
-            public void ResetZoom()
+            public void ResetView()
             {
-                SetZoom(1f);
+                m_Zoom = 1f;
+                m_PanOffset = Vector2.zero;
+                RebuildGraph();
+                ZoomChanged?.Invoke(m_Zoom);
             }
 
             public void RefreshViewportAfterLayout()
@@ -1724,6 +1574,7 @@ namespace XAnimationEditor
                 m_Canvas.RegisterCallback<PointerUpEvent>(OnPointerUp);
                 m_Canvas.RegisterCallback<PointerCancelEvent>(OnPointerCancel);
                 m_Canvas.RegisterCallback<PointerCaptureOutEvent>(_ => EndPan());
+                m_Canvas.AddManipulator(new ContextualMenuManipulator(OnCanvasContextMenu));
                 m_ScrollView.Add(m_Canvas);
 
                 m_EdgeCanvas = new VisualElement();
@@ -1747,6 +1598,21 @@ namespace XAnimationEditor
                 m_EmptyLabel.style.color = TextMuted;
                 m_EmptyLabel.style.fontSize = 11;
                 m_Canvas.Add(m_EmptyLabel);
+            }
+
+            private void OnCanvasContextMenu(ContextualMenuPopulateEvent evt)
+            {
+                Rect activatorRect = GUIUtility.GUIToScreenRect(new Rect(evt.mousePosition, Vector2.one));
+                DropdownMenuAction.Status GetStatus()
+                {
+                    return m_CanAddPair
+                        ? DropdownMenuAction.Status.Normal
+                        : DropdownMenuAction.Status.Disabled;
+                }
+
+                evt.menu.AppendAction("+ In", _ => AddPairRequested?.Invoke(true, activatorRect), _ => GetStatus());
+                evt.menu.AppendAction("+ Out", _ => AddPairRequested?.Invoke(false, activatorRect), _ => GetStatus());
+                evt.StopPropagation();
             }
 
             private void RebuildGraph(string emptyMessage = null)
@@ -1785,13 +1651,13 @@ namespace XAnimationEditor
                     PairViewData pair = m_Pairs[i];
                     if (pair.IsInState)
                     {
-                        Rect nodeRect = GetStateNodeRect(pair.StateKey, true, graphHeight);
+                        Rect nodeRect = GetStateNodeRect(pair.LayoutKey, true, graphHeight);
                         CreateNode(nodeRect, pair.StateKey, BuildPairSummary(pair), false, pair.IsSelected, pair);
                         m_Edges.Add(new EdgeLayout(nodeRect, centerRect, pair));
                     }
                     else
                     {
-                        Rect nodeRect = GetStateNodeRect(pair.StateKey, false, graphHeight);
+                        Rect nodeRect = GetStateNodeRect(pair.LayoutKey, false, graphHeight);
                         CreateNode(nodeRect, pair.StateKey, BuildPairSummary(pair), false, pair.IsSelected, pair);
                         m_Edges.Add(new EdgeLayout(centerRect, nodeRect, pair));
                     }
@@ -1799,7 +1665,7 @@ namespace XAnimationEditor
 
                 if (m_Pairs.Count == 0)
                 {
-                    m_EmptyLabel.text = "No pairs for current state";
+                    m_EmptyLabel.text = "No transitions for current state";
                     m_EmptyLabel.style.display = DisplayStyle.Flex;
                 }
 
@@ -1830,8 +1696,10 @@ namespace XAnimationEditor
                 node.style.position = Position.Absolute;
                 node.style.left = rect.x;
                 node.style.top = rect.y;
-                node.style.width = rect.width;
-                node.style.height = rect.height;
+                node.style.width = graphRect.width;
+                node.style.height = graphRect.height;
+                node.style.transformOrigin = new TransformOrigin(0f, 0f);
+                node.style.scale = new Vector2(m_Zoom, m_Zoom);
                 node.style.paddingLeft = 8;
                 node.style.paddingRight = 8;
                 node.style.paddingTop = 6;
@@ -1853,15 +1721,15 @@ namespace XAnimationEditor
 
                 Label titleLabel = new(title);
                 titleLabel.style.color = TextNormal;
-                titleLabel.style.fontSize = Mathf.Max(10f, 12f * Mathf.Clamp(m_Zoom, 0.72f, 1f));
+                titleLabel.style.fontSize = 12f;
                 titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
                 titleLabel.style.overflow = Overflow.Hidden;
                 titleLabel.style.textOverflow = TextOverflow.Ellipsis;
                 node.Add(titleLabel);
 
                 Label detailLabel = new(detail);
-                detailLabel.style.color = TextMuted;
-                detailLabel.style.fontSize = Mathf.Max(9f, 10f * Mathf.Clamp(m_Zoom, 0.72f, 1f));
+                detailLabel.style.color = pair.HasValue && pair.Value.IsAuto ? AutoEdgeColor : TextMuted;
+                detailLabel.style.fontSize = 10f;
                 detailLabel.style.marginTop = 2;
                 detailLabel.style.overflow = Overflow.Hidden;
                 detailLabel.style.textOverflow = TextOverflow.Ellipsis;
@@ -1884,7 +1752,7 @@ namespace XAnimationEditor
                     if (pair.HasValue)
                     {
                         PairViewData pairValue = pair.Value;
-                        PairSelected?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex);
+                        PairSelected?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex, pairValue.IsAuto);
                         evt.StopPropagation();
                     }
                 });
@@ -1898,8 +1766,8 @@ namespace XAnimationEditor
                     actions.style.marginTop = 3;
                     node.Add(actions);
 
-                    Button delete = CreateIconButton("x", () => PairDeleteRequested?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex));
-                    delete.tooltip = pairValue.CanDelete ? "删除这组 pair。" : "Override 资源不可编辑。";
+                    Button delete = CreateIconButton("x", () => PairDeleteRequested?.Invoke(pairValue.TransitionIndex, pairValue.PairIndex, pairValue.IsAuto));
+                    delete.tooltip = pairValue.CanDelete ? "删除这条 Transition。" : "Override 资源不可编辑。";
                     delete.SetEnabled(pairValue.CanDelete);
                     actions.Add(delete);
                 }
@@ -1941,18 +1809,40 @@ namespace XAnimationEditor
                 Vector2 c1 = from + new Vector2(tangent, 0f);
                 Vector2 c2 = to - new Vector2(tangent, 0f);
 
+                Color color = edge.Pair.IsAuto
+                    ? (edge.Pair.IsSelected ? AutoEdgeSelected : AutoEdgeColor)
+                    : (edge.Pair.IsSelected ? EdgeSelected : EdgeColor);
                 painter.lineWidth = (edge.Pair.IsSelected ? 3.25f : 1.7f) * Mathf.Clamp(m_Zoom, 0.65f, 1.25f);
-                painter.strokeColor = edge.Pair.IsSelected ? EdgeSelected : EdgeColor;
-                painter.BeginPath();
-                painter.MoveTo(from);
-                for (int i = 1; i <= 18; i++)
+                painter.strokeColor = color;
+                if (edge.Pair.IsAuto)
                 {
-                    float t = i / 18f;
-                    painter.LineTo(EvaluateCubic(from, c1, c2, to, t));
+                    Vector2 previous = from;
+                    for (int i = 1; i <= 24; i++)
+                    {
+                        Vector2 current = EvaluateCubic(from, c1, c2, to, i / 24f);
+                        if (i % 2 != 0)
+                        {
+                            painter.BeginPath();
+                            painter.MoveTo(previous);
+                            painter.LineTo(current);
+                            painter.Stroke();
+                        }
+                        previous = current;
+                    }
+                    DrawFilledCircle(painter, EvaluateCubic(from, c1, c2, to, 0.5f), 4f * Mathf.Clamp(m_Zoom, 0.72f, 1.2f), color);
                 }
-                painter.Stroke();
+                else
+                {
+                    painter.BeginPath();
+                    painter.MoveTo(from);
+                    for (int i = 1; i <= 18; i++)
+                    {
+                        float t = i / 18f;
+                        painter.LineTo(EvaluateCubic(from, c1, c2, to, t));
+                    }
+                    painter.Stroke();
+                }
 
-                Color color = edge.Pair.IsSelected ? EdgeSelected : EdgeColor;
                 DrawFilledCircle(painter, from, 3f * Mathf.Clamp(m_Zoom, 0.72f, 1.2f), color);
                 DrawFilledCircle(painter, to, 3f * Mathf.Clamp(m_Zoom, 0.72f, 1.2f), color);
             }
@@ -2166,7 +2056,7 @@ namespace XAnimationEditor
                     PairViewData pair = m_Pairs[i];
                     if (pair.IsInState == inState)
                     {
-                        states.Add(pair.StateKey);
+                        states.Add(pair.LayoutKey);
                     }
                 }
 
@@ -2175,6 +2065,11 @@ namespace XAnimationEditor
 
             private static string BuildPairSummary(PairViewData pair)
             {
+                if (pair.IsAuto)
+                {
+                    return $"AUTO  duration {pair.FadeIn:0.###}";
+                }
+
                 string name = string.IsNullOrWhiteSpace(pair.TransitionName) ? "Default Transition" : pair.TransitionName;
                 return $"{name}  fade {pair.FadeIn:0.###}/{pair.FadeOut:0.###}  p{pair.Priority}";
             }

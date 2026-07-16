@@ -41,12 +41,13 @@ namespace XAnimationEditor
                 return;
             }
 
+            string stateKey = XAnimationEditorStateNodeUtility.GetStateKey(m_Controller.Asset, state);
             m_Frame.TitleLabel.text = state.stateType switch
             {
-                XAnimationStateType.Blend1D => $"{state.key} | Blend1D",
-                XAnimationStateType.Blend2DSimpleDirectional => $"{state.key} | Simple 2D Directional",
-                XAnimationStateType.Blend2DFreeformDirectional => $"{state.key} | Freeform 2D Blend",
-                _ => state.key,
+                XAnimationStateType.Blend1D => $"{stateKey} | Blend1D",
+                XAnimationStateType.Blend2DSimpleDirectional => $"{stateKey} | Simple 2D Directional",
+                XAnimationStateType.Blend2DFreeformDirectional => $"{stateKey} | Freeform 2D Blend",
+                _ => stateKey,
             };
 
             if (state.stateType == XAnimationStateType.Blend1D)

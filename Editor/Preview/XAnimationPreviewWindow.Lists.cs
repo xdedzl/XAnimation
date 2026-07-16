@@ -192,8 +192,10 @@ namespace XAnimationEditor
             m_BlendSampleRowMap.Clear();
             m_StateButtonMap.Clear();
             m_StateChannelMap.Clear();
+            m_AddStateNodeButton?.SetEnabled(false);
             if (m_Session == null || !m_Session.IsLoaded)
             {
+                EnsureStateTabChannelSelection();
                 RefreshGlobalBlendGraph();
                 RebuildStatesGraphTabIfVisible();
                 return;
@@ -218,60 +220,16 @@ namespace XAnimationEditor
                 }
             }
 
-            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
-            if (states.Count == 0)
+            if (!EnsureStateTabChannelSelection())
             {
-                Label emptyLabel = new("No states");
-                emptyLabel.style.color = TextMuted;
-                emptyLabel.style.fontSize = BodyFontSize;
-                emptyLabel.style.marginLeft = 4;
-                m_StateListView.Add(emptyLabel);
                 return;
             }
 
-            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
-            Dictionary<string, StatePathNode> statesByChannel = new(StringComparer.Ordinal);
-            for (int i = 0; i < channels.Count; i++)
-            {
-                XAnimationCompiledChannel channel = channels[i];
-                if (channel != null && !string.IsNullOrWhiteSpace(channel.Name))
-                {
-                    statesByChannel[channel.Name] = new StatePathNode(string.Empty, string.Empty);
-                }
-            }
-
-            for (int i = 0; i < states.Count; i++)
-            {
-                XAnimationCompiledState state = states[i];
-                string channelName = state.Config.channelName;
-                if (!statesByChannel.TryGetValue(channelName, out StatePathNode rootNode))
-                {
-                    rootNode = new StatePathNode(string.Empty, string.Empty);
-                    statesByChannel.Add(channelName, rootNode);
-                }
-
-                string parentPath = GetStatePathParent(state.Key);
-                if (string.IsNullOrWhiteSpace(parentPath))
-                {
-                    rootNode.States.Add(state);
-                    continue;
-                }
-
-                StatePathNode node = FindOrCreateStatePathNode(rootNode, parentPath);
-                node.States.Add(state);
-            }
-
-            for (int i = 0; i < channels.Count; i++)
-            {
-                XAnimationCompiledChannel channel = channels[i];
-                if (!statesByChannel.TryGetValue(channel.Name, out StatePathNode rootNode))
-                {
-                    rootNode = new StatePathNode(string.Empty, string.Empty);
-                }
-
-                VisualElement group = CreateStateChannelGroup(channel, rootNode);
-                m_StateListView.Add(group);
-            }
+            XAnimationCompiledChannel channel = m_Session.CompiledAsset.GetChannel(m_StateTabChannelName);
+            StatePathNode rootNode = new(string.Empty, string.Empty);
+            AppendCompiledStateNodes(rootNode, channel.RootStateNodes);
+            m_AddStateNodeButton.SetEnabled(!m_Session.IsOverrideAsset);
+            m_StateListView.Add(CreateStateChannelContent(channel, rootNode));
 
             TryBeginPendingRename();
             RebuildAutoTransitionEditor();
@@ -333,8 +291,15 @@ namespace XAnimationEditor
                 return;
             }
 
+            if (!EnsureStateTabChannelSelection())
+            {
+                SetAutoTransitionButtonsEnabled(false);
+                RefreshSearchIndex();
+                return;
+            }
+
             IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
-            if (states.Count == 0)
+            if (CountStatesInChannel(m_StateTabChannelName) == 0)
             {
                 SetAutoTransitionButtonsEnabled(false);
                 Label emptyLabel = new("No states");
@@ -347,8 +312,15 @@ namespace XAnimationEditor
             }
 
             IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions = m_Session.CompiledAsset.AutoTransitions;
-            bool hasTransitions = autoTransitions.Count > 0;
-            if (!hasTransitions)
+            int transitionCount = 0;
+            for (int i = 0; i < autoTransitions.Count; i++)
+            {
+                if (string.Equals(autoTransitions[i]?.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+                {
+                    transitionCount++;
+                }
+            }
+            if (transitionCount == 0)
             {
                 m_SelectedAutoTransitionStateUiKey = string.Empty;
                 SetAutoTransitionButtonsEnabled(CanAddAutoTransition());
@@ -362,7 +334,9 @@ namespace XAnimationEditor
             }
 
             if (string.IsNullOrWhiteSpace(m_SelectedAutoTransitionStateUiKey) ||
-                !HasAutoTransition(m_SelectedAutoTransitionStateUiKey))
+                !HasAutoTransition(m_SelectedAutoTransitionStateUiKey) ||
+                !TryGetCompiledStateByUiKey(m_SelectedAutoTransitionStateUiKey, out XAnimationCompiledState selectedState) ||
+                !string.Equals(selectedState.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
             {
                 m_SelectedAutoTransitionStateUiKey = GetDefaultAutoTransitionStateUiKey(states);
             }
@@ -395,15 +369,15 @@ namespace XAnimationEditor
             SetAutoTransitionButtonsEnabled(CanAddAutoTransition());
 
             int renderedCount = 0;
-            HashSet<int> renderedTransitionIndices = new();
-            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
-            for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
+            for (int i = 0; i < autoTransitions.Count; i++)
             {
-                string channelName = channels[channelIndex].Name;
-                renderedCount += AddAutoTransitionChannelGroup(channelName, autoTransitions, renderedTransitionIndices);
+                XAnimationCompiledAutoTransition transition = autoTransitions[i];
+                if (transition != null && string.Equals(transition.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+                {
+                    m_AutoTransitionEditorView.Add(CreateAutoTransitionEditor(transition));
+                    renderedCount++;
+                }
             }
-
-            renderedCount += AddAutoTransitionOtherChannelGroup(autoTransitions, renderedTransitionIndices);
 
             if (renderedCount == 0)
             {
@@ -416,154 +390,6 @@ namespace XAnimationEditor
             }
 
             RefreshSearchIndex();
-        }
-
-        private int AddAutoTransitionChannelGroup(
-            string channelName,
-            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
-            HashSet<int> renderedTransitionIndices)
-        {
-            int count = CountAutoTransitionsInChannel(autoTransitions, channelName, renderedTransitionIndices, includeRendered: false);
-            if (count == 0)
-            {
-                return 0;
-            }
-
-            VisualElement content = AddAutoTransitionChannelGroupHeader(channelName, count);
-            if (IsAutoTransitionChannelCollapsed(channelName))
-            {
-                return count;
-            }
-
-            for (int i = 0; i < autoTransitions.Count; i++)
-            {
-                if (renderedTransitionIndices.Contains(i))
-                {
-                    continue;
-                }
-
-                XAnimationCompiledAutoTransition transition = autoTransitions[i];
-                if (transition != null &&
-                    string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal))
-                {
-                    content.Add(CreateAutoTransitionEditor(transition));
-                    renderedTransitionIndices.Add(i);
-                }
-            }
-
-            return count;
-        }
-
-        private int AddAutoTransitionOtherChannelGroup(
-            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
-            HashSet<int> renderedTransitionIndices)
-        {
-            int count = CountAutoTransitionsInChannel(autoTransitions, null, renderedTransitionIndices, includeRendered: false);
-            if (count == 0)
-            {
-                return 0;
-            }
-
-            string channelName = "Other";
-            VisualElement content = AddAutoTransitionChannelGroupHeader(channelName, count);
-            if (IsAutoTransitionChannelCollapsed(channelName))
-            {
-                return count;
-            }
-
-            for (int i = 0; i < autoTransitions.Count; i++)
-            {
-                if (renderedTransitionIndices.Contains(i))
-                {
-                    continue;
-                }
-
-                XAnimationCompiledAutoTransition transition = autoTransitions[i];
-                if (transition != null)
-                {
-                    content.Add(CreateAutoTransitionEditor(transition));
-                    renderedTransitionIndices.Add(i);
-                }
-            }
-
-            return count;
-        }
-
-        private int CountAutoTransitionsInChannel(
-            IReadOnlyList<XAnimationCompiledAutoTransition> autoTransitions,
-            string channelName,
-            HashSet<int> renderedTransitionIndices,
-            bool includeRendered)
-        {
-            int count = 0;
-            for (int i = 0; i < autoTransitions.Count; i++)
-            {
-                if (!includeRendered && renderedTransitionIndices.Contains(i))
-                {
-                    continue;
-                }
-
-                XAnimationCompiledAutoTransition transition = autoTransitions[i];
-                if (transition == null)
-                {
-                    continue;
-                }
-
-                bool matches = string.IsNullOrWhiteSpace(channelName)
-                    ? !HasChannel(transition.ChannelName)
-                    : string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal);
-                if (matches)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
-        private VisualElement AddAutoTransitionChannelGroupHeader(string channelName, int count)
-        {
-            bool collapsed = IsAutoTransitionChannelCollapsed(channelName);
-            VisualElement group = CreateListGroup(marginBottom: 2f);
-            group.style.marginTop = 1;
-            VisualElement header = CreateListHeader();
-            header.style.borderBottomWidth = collapsed ? 0f : PrettyBorderWidth;
-
-            Label foldoutLabel = CreateFoldoutGlyph(!collapsed);
-            header.Add(foldoutLabel);
-
-            Label label = new(channelName);
-            label.style.flexGrow = 1;
-            label.style.color = TextMuted;
-            label.style.fontSize = BodyFontSize;
-            label.style.unityFontStyleAndWeight = FontStyle.Bold;
-            header.Add(label);
-
-            Label countLabel = new($"{count}");
-            countLabel.style.color = TextMuted;
-            countLabel.style.fontSize = BodyFontSize;
-            countLabel.style.marginRight = 4;
-            header.Add(countLabel);
-
-            header.tooltip = "点击展开/收起这个 channel 的 Auto Transition 列表。";
-            header.RegisterCallback<MouseDownEvent>(evt =>
-            {
-                if (evt.button != 0)
-                {
-                    return;
-                }
-
-                SetAutoTransitionChannelCollapsed(channelName, !IsAutoTransitionChannelCollapsed(channelName));
-                ScheduleAutoTransitionEditorRebuild();
-                evt.StopPropagation();
-            });
-            group.Add(header);
-
-            VisualElement content = new() { style = { display = collapsed ? DisplayStyle.None : DisplayStyle.Flex } };
-            ApplyPrettyContentStyle(content);
-            group.Add(content);
-            m_AutoTransitionEditorView.Add(group);
-            return content;
         }
 
         private void ScheduleAutoTransitionEditorRebuild()
@@ -581,7 +407,7 @@ namespace XAnimationEditor
         {
             if (m_DefaultTransitionsEditorView == null)
             {
-                RebuildDefaultTransitionTab();
+                RebuildStatesGraphTabIfVisible();
                 return;
             }
 
@@ -590,16 +416,33 @@ namespace XAnimationEditor
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 SetDefaultTransitionButtonsEnabled(false);
-                RebuildDefaultTransitionTab();
+                RebuildStatesGraphTabIfVisible();
                 RefreshSearchIndex();
                 return;
             }
 
-            bool hasEnoughStates = m_Session.CompiledAsset.States.Count >= 2;
+            if (!EnsureStateTabChannelSelection())
+            {
+                SetDefaultTransitionButtonsEnabled(false);
+                RebuildStatesGraphTabIfVisible();
+                RefreshSearchIndex();
+                return;
+            }
+
+            bool hasEnoughStates = CountStatesInChannel(m_StateTabChannelName) >= 2;
             SetDefaultTransitionButtonsEnabled(!m_Session.IsOverrideAsset && hasEnoughStates);
 
             IReadOnlyList<XAnimationCompiledDefaultTransition> defaultTransitions = m_Session.CompiledAsset.DefaultTransitions;
-            if (defaultTransitions.Count == 0)
+            List<int> transitionIndices = new();
+            for (int i = 0; i < defaultTransitions.Count; i++)
+            {
+                if (string.Equals(defaultTransitions[i]?.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+                {
+                    transitionIndices.Add(i);
+                }
+            }
+
+            if (transitionIndices.Count == 0)
             {
                 m_SelectedDefaultTransitionIndex = -1;
                 Label emptyLabel = new(hasEnoughStates ? "No default transitions" : "Default transitions require at least two states");
@@ -607,169 +450,41 @@ namespace XAnimationEditor
                 emptyLabel.style.fontSize = BodyFontSize;
                 emptyLabel.style.marginLeft = 4;
                 m_DefaultTransitionsEditorView.Add(emptyLabel);
-                RebuildDefaultTransitionTab();
+                RebuildStatesGraphTabIfVisible();
                 RefreshSearchIndex();
                 return;
             }
 
-            if (m_SelectedDefaultTransitionIndex < 0 || m_SelectedDefaultTransitionIndex >= defaultTransitions.Count)
+            if (!transitionIndices.Contains(m_SelectedDefaultTransitionIndex))
             {
-                m_SelectedDefaultTransitionIndex = 0;
+                m_SelectedDefaultTransitionIndex = transitionIndices[0];
             }
 
-            int collapsedCount = m_CollapsedDefaultTransitionIndices.Count;
-            if (defaultTransitions.Count > 0 && collapsedCount < defaultTransitions.Count - 1)
+            int expandedIndex = -1;
+            for (int i = 0; i < transitionIndices.Count; i++)
             {
-                int expandedIndex = -1;
-                for (int i = 0; i < defaultTransitions.Count; i++)
+                int transitionIndex = transitionIndices[i];
+                if (!m_CollapsedDefaultTransitionIndices.Contains(transitionIndex))
                 {
-                    if (!m_CollapsedDefaultTransitionIndices.Contains(i))
+                    if (expandedIndex < 0)
                     {
-                        expandedIndex = i;
-                        break;
+                        expandedIndex = transitionIndex;
                     }
-                }
-
-                m_CollapsedDefaultTransitionIndices.Clear();
-                for (int i = 0; i < defaultTransitions.Count; i++)
-                {
-                    if (i != expandedIndex)
+                    else
                     {
-                        m_CollapsedDefaultTransitionIndices.Add(i);
+                        m_CollapsedDefaultTransitionIndices.Add(transitionIndex);
                     }
                 }
             }
 
-            HashSet<int> renderedTransitionIndices = new();
-            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
-            for (int channelIndex = 0; channelIndex < channels.Count; channelIndex++)
+            for (int i = 0; i < transitionIndices.Count; i++)
             {
-                string channelName = channels[channelIndex].Name;
-                int channelCount = CountDefaultTransitionsInChannel(defaultTransitions, channelName, renderedTransitionIndices, includeRendered: false);
-                if (channelCount == 0)
-                {
-                    continue;
-                }
-
-                VisualElement content = AddDefaultTransitionChannelGroupHeader(channelName, channelCount);
-                for (int i = 0; i < defaultTransitions.Count; i++)
-                {
-                    XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
-                    if (transition != null &&
-                        string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal))
-                    {
-                        if (!IsDefaultTransitionChannelCollapsed(channelName))
-                        {
-                            content.Add(CreateDefaultTransitionEditor(i, transition.Config));
-                        }
-
-                        renderedTransitionIndices.Add(i);
-                    }
-                }
+                int transitionIndex = transitionIndices[i];
+                m_DefaultTransitionsEditorView.Add(CreateDefaultTransitionEditor(transitionIndex, defaultTransitions[transitionIndex].Config));
             }
 
-            const string otherChannelName = "Other";
-            int otherChannelCount = CountDefaultTransitionsInChannel(defaultTransitions, null, renderedTransitionIndices, includeRendered: false);
-            if (otherChannelCount > 0)
-            {
-                VisualElement otherContent = AddDefaultTransitionChannelGroupHeader(otherChannelName, otherChannelCount);
-                for (int i = 0; i < defaultTransitions.Count; i++)
-                {
-                    if (renderedTransitionIndices.Contains(i))
-                    {
-                        continue;
-                    }
-
-                    XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
-                    if (transition != null)
-                    {
-                        if (!IsDefaultTransitionChannelCollapsed(otherChannelName))
-                        {
-                            otherContent.Add(CreateDefaultTransitionEditor(i, transition.Config));
-                        }
-                    }
-                }
-            }
-
-            RebuildDefaultTransitionTab();
+            RebuildStatesGraphTabIfVisible();
             RefreshSearchIndex();
-        }
-
-        private int CountDefaultTransitionsInChannel(
-            IReadOnlyList<XAnimationCompiledDefaultTransition> defaultTransitions,
-            string channelName,
-            HashSet<int> renderedTransitionIndices,
-            bool includeRendered)
-        {
-            int count = 0;
-            for (int i = 0; i < defaultTransitions.Count; i++)
-            {
-                if (!includeRendered && renderedTransitionIndices.Contains(i))
-                {
-                    continue;
-                }
-
-                XAnimationCompiledDefaultTransition transition = defaultTransitions[i];
-                if (transition == null)
-                {
-                    continue;
-                }
-
-                bool matches = string.IsNullOrWhiteSpace(channelName)
-                    ? !HasChannel(transition.ChannelName)
-                    : string.Equals(transition.ChannelName, channelName, StringComparison.Ordinal);
-                if (matches)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
-        private VisualElement AddDefaultTransitionChannelGroupHeader(string channelName, int count)
-        {
-            bool collapsed = IsDefaultTransitionChannelCollapsed(channelName);
-            VisualElement group = CreateListGroup(marginBottom: 2f);
-            group.style.marginTop = 1;
-            VisualElement header = CreateListHeader();
-            header.style.borderBottomWidth = collapsed ? 0f : PrettyBorderWidth;
-
-            Label foldoutLabel = CreateFoldoutGlyph(!collapsed);
-            header.Add(foldoutLabel);
-
-            Label label = new(channelName);
-            label.style.flexGrow = 1;
-            label.style.color = TextMuted;
-            label.style.fontSize = BodyFontSize;
-            label.style.unityFontStyleAndWeight = FontStyle.Bold;
-            header.Add(label);
-
-            Label countLabel = new($"{count}");
-            countLabel.style.color = TextMuted;
-            countLabel.style.fontSize = BodyFontSize;
-            countLabel.style.marginRight = 4;
-            header.Add(countLabel);
-
-            header.tooltip = "点击展开/收起这个 channel 的 Default Transition 列表。";
-            header.RegisterCallback<MouseDownEvent>(evt =>
-            {
-                if (evt.button != 0)
-                {
-                    return;
-                }
-
-                SetDefaultTransitionChannelCollapsed(channelName, !IsDefaultTransitionChannelCollapsed(channelName));
-                ScheduleDefaultTransitionsEditorRebuild();
-                evt.StopPropagation();
-            });
-            group.Add(header);
-
-            VisualElement content = new() { style = { display = collapsed ? DisplayStyle.None : DisplayStyle.Flex } };
-            ApplyPrettyContentStyle(content);
-            group.Add(content);
-            m_DefaultTransitionsEditorView.Add(group);
-            return content;
         }
 
         private void ScheduleDefaultTransitionsEditorRebuild()
@@ -792,6 +507,7 @@ namespace XAnimationEditor
                 {
                     XAnimationCompiledAutoTransition transition = autoTransitions[i];
                     if (transition != null &&
+                        string.Equals(transition.ChannelName, m_StateTabChannelName, StringComparison.Ordinal) &&
                         m_Session.CompiledAsset.TryGetStateIndex(transition.ChannelName, transition.PreStateKey, out _))
                     {
                         return BuildAutoTransitionUiKey(transition);
@@ -799,7 +515,15 @@ namespace XAnimationEditor
                 }
             }
 
-            return states.Count > 0 ? BuildStateUiKey(states[0]) : string.Empty;
+            for (int i = 0; i < states.Count; i++)
+            {
+                if (string.Equals(states[i].ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+                {
+                    return BuildStateUiKey(states[i]);
+                }
+            }
+
+            return string.Empty;
         }
 
         private bool HasAutoTransition(string stateUiKey)
@@ -812,7 +536,7 @@ namespace XAnimationEditor
                 return false;
             }
 
-            return m_Session.CompiledAsset.TryGetAutoTransition(state.Config.channelName, state.Key, out _);
+            return m_Session.CompiledAsset.TryGetAutoTransition(state.ChannelName, state.Key, out _);
         }
 
         private bool CanAddAutoTransition()
@@ -826,13 +550,24 @@ namespace XAnimationEditor
             IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
             for (int i = 0; i < states.Count; i++)
             {
-                if (!states[i].Config.loop)
+                if (string.Equals(states[i].ChannelName, m_StateTabChannelName, StringComparison.Ordinal) &&
+                    !states[i].Config.loop)
                 {
                     eligibleStateCount++;
                 }
             }
 
-            return m_Session.CompiledAsset.AutoTransitions.Count < eligibleStateCount;
+            int transitionCount = 0;
+            IReadOnlyList<XAnimationCompiledAutoTransition> transitions = m_Session.CompiledAsset.AutoTransitions;
+            for (int i = 0; i < transitions.Count; i++)
+            {
+                if (string.Equals(transitions[i]?.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+                {
+                    transitionCount++;
+                }
+            }
+
+            return transitionCount < eligibleStateCount;
         }
 
         private VisualElement CreateParameterRow(XAnimationCompiledParameter parameter, int rowIndex)
@@ -972,71 +707,11 @@ namespace XAnimationEditor
             }
         }
 
-        private VisualElement CreateStateChannelGroup(XAnimationCompiledChannel channel, StatePathNode rootNode)
+        private VisualElement CreateStateChannelContent(XAnimationCompiledChannel channel, StatePathNode rootNode)
         {
-            VisualElement group = CreateListGroup();
-            VisualElement groupHeader = CreateListHeader();
-
-            Label groupFoldoutLabel = CreateFoldoutGlyph(true);
-            groupHeader.Add(groupFoldoutLabel);
-
-            Label groupTitle = CreateBoldLabel(channel.Name);
-            groupTitle.style.flexGrow = 1;
-            groupTitle.style.flexShrink = 1;
-            groupTitle.style.minWidth = 0;
-            groupTitle.tooltip = "点击展开/收起这个 channel 的 state 列表。";
-            groupHeader.Add(groupTitle);
-
-            int stateCount = CountStatePathNodeStates(rootNode);
-            int groupedCount = CountStatePathNodeFolders(rootNode);
-            Label groupInfo = new(groupedCount > 0
-                ? $"{channel.Config.layerType} | {stateCount} states | {groupedCount} folders"
-                : $"{channel.Config.layerType} | {stateCount} states");
-            groupInfo.style.color = TextMuted;
-            groupInfo.style.fontSize = 10;
-            groupInfo.style.flexShrink = 0;
-            groupInfo.tooltip = "点击展开/收起这个 channel 的 state 列表。";
-            groupHeader.Add(groupInfo);
-
-            VisualElement actions = new VisualElement();
-            actions.style.flexDirection = FlexDirection.Row;
-            actions.style.alignItems = Align.Center;
-            actions.style.flexShrink = 0;
-            actions.style.marginLeft = 6;
-
-            Button addStateButton = new(() => AddState(channel.Name))
-            {
-                text = "+ State"
-            };
-            addStateButton.tooltip = m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 state。"
-                : "在这个 channel 下新增一个未分组 state。";
-            addStateButton.SetEnabled(!m_Session.IsOverrideAsset);
-            ApplyClipIconButtonStyle(addStateButton, AccentColor);
-            addStateButton.style.width = 62;
-            addStateButton.style.minWidth = 62;
-            addStateButton.style.flexShrink = 0;
-            actions.Add(addStateButton);
-
-            Button addGroupButton = new(() => AddStateGroup(channel.Name))
-            {
-                text = "+ Folder"
-            };
-            addGroupButton.tooltip = m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 state folder。"
-                : "在这个 channel 下新建路径，并同时创建首个 state。";
-            addGroupButton.SetEnabled(!m_Session.IsOverrideAsset);
-            ApplyClipIconButtonStyle(addGroupButton, AccentColor);
-            addGroupButton.style.width = 66;
-            addGroupButton.style.minWidth = 66;
-            addGroupButton.style.flexShrink = 0;
-            addGroupButton.style.marginLeft = 4;
-            actions.Add(addGroupButton);
-            groupHeader.Add(actions);
-            group.Add(groupHeader);
-            RegisterStateChannelDropTarget(group, groupHeader, channel.Name, string.Empty);
-
-            VisualElement statesContainer = new VisualElement();
+            VisualElement statesContainer = new();
+            statesContainer.style.minHeight = 18;
+            RegisterStateChannelDropTarget(statesContainer, statesContainer, channel.Name, string.Empty);
             int rowIndex = 0;
             for (int i = 0; i < rootNode.Children.Count; i++)
             {
@@ -1051,21 +726,16 @@ namespace XAnimationEditor
                 statesContainer.Add(row);
             }
 
-            groupHeader.RegisterCallback<MouseDownEvent>(evt =>
+            if (rowIndex == 0 && rootNode.Children.Count == 0)
             {
-                if (evt.button != 0 || actions.worldBound.Contains(evt.mousePosition))
-                {
-                    return;
-                }
+                Label emptyLabel = new("No states");
+                emptyLabel.style.color = TextMuted;
+                emptyLabel.style.fontSize = BodyFontSize;
+                emptyLabel.style.marginLeft = 4;
+                statesContainer.Add(emptyLabel);
+            }
 
-                bool expanded = statesContainer.style.display != DisplayStyle.None;
-                statesContainer.style.display = expanded ? DisplayStyle.None : DisplayStyle.Flex;
-                SetFoldoutGlyphText(groupFoldoutLabel, !expanded);
-                evt.StopPropagation();
-            });
-
-            group.Add(statesContainer);
-            return group;
+            return statesContainer;
         }
 
         private VisualElement CreateStatePathGroup(string channelName, StatePathNode node, ref int rowIndex)
@@ -1078,14 +748,21 @@ namespace XAnimationEditor
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
+            if (node.Kind == XAnimationStateNodeKind.Selector)
+            {
+                Label selectorMarker = CreateSmallInfoLabel("◆");
+                selectorMarker.tooltip = "Selector State Node";
+                selectorMarker.style.color = new Color(0.58f, 0.78f, 0.42f, 1f);
+                header.Add(selectorMarker);
+            }
             EditableLabel groupLabel = new(node.Name);
             ConfigureEditableNameLabel(groupLabel, 180f);
-            groupLabel.tooltip = $"{FormatStateDisplayPath(node.FullPath)}\n单击展开/收起这个 state folder；右键 Rename 编辑路径层级。";
+            groupLabel.tooltip = $"{FormatStateDisplayPath(node.FullPath)}\nKind: {node.Kind}\n单击展开/收起这个 State Node；右键 Rename 编辑路径层级。";
             groupLabel.SetEditable(!m_Session.IsOverrideAsset, EditableLabelEditTrigger.ContextMenu);
             groupLabel.EditStarted += BeginNameEdit;
             groupLabel.EditEnded += EndNameEdit;
             groupLabel.ValueCommitted += (_, newValue) =>
-                RenameStateGroup(channelName, node.FullPath, BuildRenamedStateFolderPath(node.FullPath, newValue), groupLabel);
+                RenameStateGroup(channelName, node.FullPath, BuildRenamedStateNodePath(node.FullPath, newValue), groupLabel);
             RegisterStateGroupContextMenu(groupLabel, channelName, node.FullPath);
             m_StateGroupLabelMap[groupKey] = groupLabel;
             header.Add(groupLabel);
@@ -1094,20 +771,21 @@ namespace XAnimationEditor
             spacer.style.flexGrow = 1;
             header.Add(spacer);
 
-            Label info = CreateSmallInfoLabel($"{CountStatePathNodeStates(node)} states");
+            string infoText = node.Kind == XAnimationStateNodeKind.Selector
+                ? $"Selector · {node.Selector?.parameterName} · {node.Children.Count + node.States.Count} 分支"
+                : $"Normal · {CountStatePathNodeStates(node)} states";
+            Label info = CreateSmallInfoLabel(infoText);
             header.Add(info);
 
-            Button addStateButton = new(() => AddState(channelName, node.FullPath))
-            {
-                text = "+"
-            };
-            addStateButton.tooltip = m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 state。"
-                : "在这个 folder 下新增一个 state。";
-            addStateButton.SetEnabled(!m_Session.IsOverrideAsset);
-            ApplyClipIconButtonStyle(addStateButton, AccentColor);
-            addStateButton.style.marginLeft = 4;
-            header.Add(addStateButton);
+            Button addNodeButton = new() { text = "+" };
+            addNodeButton.clicked += () => ShowAddStateNodeMenu(addNodeButton, channelName, node.FullPath);
+            addNodeButton.tooltip = m_Session.IsOverrideAsset
+                ? "Override 资源不能新增 State Node。"
+                : "选择要在这个 Node 下新增的 Node 类型。";
+            addNodeButton.SetEnabled(!m_Session.IsOverrideAsset);
+            ApplyClipIconButtonStyle(addNodeButton, AccentColor);
+            addNodeButton.style.marginLeft = 4;
+            header.Add(addNodeButton);
             group.Add(header);
 
             RegisterStateChannelDropTarget(group, header, channelName, node.FullPath);
@@ -1150,45 +828,24 @@ namespace XAnimationEditor
             return group;
         }
 
-        private static StatePathNode FindOrCreateStatePathNode(StatePathNode rootNode, string path)
+        private static void AppendCompiledStateNodes(
+            StatePathNode parent,
+            IReadOnlyList<XAnimationCompiledStateNode> nodes)
         {
-            StatePathNode currentNode = rootNode;
-            List<string> segments = SplitStatePathSegments(path);
-            string currentPath = string.Empty;
-            for (int i = 0; i < segments.Count; i++)
+            for (int i = 0; i < nodes.Count; i++)
             {
-                string segment = segments[i];
-                currentPath = string.IsNullOrWhiteSpace(currentPath) ? segment : $"{currentPath}/{segment}";
-                StatePathNode nextNode = FindStatePathChild(currentNode, segment);
-                if (nextNode == null)
+                XAnimationCompiledStateNode node = nodes[i];
+                if (node is XAnimationCompiledState state)
                 {
-                    nextNode = new StatePathNode(segment, currentPath);
-                    currentNode.Children.Add(nextNode);
+                    parent.States.Add(state);
+                    continue;
                 }
 
-                currentNode = nextNode;
+                XAnimationSelectorStateNodeConfig selector = (node as XAnimationCompiledSelectorStateNode)?.Config;
+                StatePathNode child = new(node.Name, node.Key, node.Kind, selector);
+                parent.Children.Add(child);
+                AppendCompiledStateNodes(child, node.Children);
             }
-
-            return currentNode;
-        }
-
-        private static StatePathNode FindStatePathChild(StatePathNode node, string name)
-        {
-            if (node == null)
-            {
-                return null;
-            }
-
-            for (int i = 0; i < node.Children.Count; i++)
-            {
-                StatePathNode child = node.Children[i];
-                if (child != null && string.Equals(child.Name, name, StringComparison.Ordinal))
-                {
-                    return child;
-                }
-            }
-
-            return null;
         }
 
         private static int CountStatePathNodeStates(StatePathNode node)
@@ -1207,7 +864,7 @@ namespace XAnimationEditor
             return count;
         }
 
-        private static int CountStatePathNodeFolders(StatePathNode node)
+        private static int CountContainerStateNodes(StatePathNode node)
         {
             if (node == null)
             {
@@ -1217,13 +874,13 @@ namespace XAnimationEditor
             int count = string.IsNullOrWhiteSpace(node.FullPath) ? 0 : 1;
             for (int i = 0; i < node.Children.Count; i++)
             {
-                count += CountStatePathNodeFolders(node.Children[i]);
+                count += CountContainerStateNodes(node.Children[i]);
             }
 
             return count;
         }
 
-        private static string BuildRenamedStateFolderPath(string oldPath, string newLeafName)
+        private static string BuildRenamedStateNodePath(string oldPath, string newLeafName)
         {
             string normalizedNewLeafName = NormalizeStatePath(newLeafName);
             if (string.IsNullOrWhiteSpace(normalizedNewLeafName))
@@ -1354,7 +1011,7 @@ namespace XAnimationEditor
             VisualElement container = CreateInteractiveRowContainer(rowIndex);
             Color baseColor = rowIndex % 2 == 0 ? ListRowEvenBg : ListRowOddBg;
             m_StateRowMap[stateUiKey] = container;
-            m_StateChannelMap[stateUiKey] = state.Config.channelName;
+            m_StateChannelMap[stateUiKey] = state.ChannelName;
 
             VisualElement progressFill = CreateRowProgressFill();
             container.Add(progressFill);
@@ -1396,7 +1053,7 @@ namespace XAnimationEditor
             label.SetEditable(true, EditableLabelEditTrigger.None);
             label.EditStarted += BeginNameEdit;
             label.EditEnded += EndNameEdit;
-            label.ValueCommitted += (_, newValue) => RenameState(state.Config.channelName, stateKey, newValue, label);
+            label.ValueCommitted += (_, newValue) => RenameState(state.ChannelName, stateKey, newValue, label);
             m_StateLabelMap[stateUiKey] = label;
             label.style.position = Position.Relative;
             RegisterStateLabelContextMenu(label, state);
@@ -1422,7 +1079,7 @@ namespace XAnimationEditor
                     return;
                 }
 
-                ChangeStateType(state.Config.channelName, state.Key, stateType, evt.previousValue, stateTypeField);
+                ChangeStateType(state.ChannelName, state.Key, stateType, evt.previousValue, stateTypeField);
             });
             summaryRow.Add(stateTypeField);
 
@@ -1436,7 +1093,7 @@ namespace XAnimationEditor
                 clipField.style.marginLeft = 6;
                 clipField.style.position = Position.Relative;
                 clipField.tooltip = "Single state 播放的 clipKey。";
-                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(state.Config.channelName, state.Key, newValue, clipField, previousValue);
+                clipField.ValueChanged += (previousValue, newValue) => ChangeStateClipKey(state.ChannelName, state.Key, newValue, clipField, previousValue);
                 AttachClipKeyPingButton(clipField, state.Config.clipKey, enabled: true);
                 summaryRow.Add(clipField);
             }
@@ -1464,7 +1121,7 @@ namespace XAnimationEditor
             actionsRow.Add(playButton);
             m_StateButtonMap[stateUiKey] = playButton;
 
-            Button deleteButton = new(() => DeleteState(state.Config.channelName, stateKey))
+            Button deleteButton = new(() => DeleteState(state.ChannelName, stateKey))
             {
                 text = "⌫"
             };
@@ -1503,13 +1160,13 @@ namespace XAnimationEditor
                 return;
             }
 
-            MarkFreeformStateInteracted(state.Config.channelName, state.Key);
+            MarkFreeformStateInteracted(state.ChannelName, state.Key);
 
-            XAnimationChannelState channelState = m_Session.GetChannelState(state.Config.channelName);
+            XAnimationChannelState channelState = m_Session.GetChannelState(state.ChannelName);
             bool isPlaying = channelState != null && string.Equals(channelState.stateKey, state.Key, StringComparison.Ordinal);
             if (isPlaying)
             {
-                SetPlaybackTargetChannel(state.Config.channelName);
+                SetPlaybackTargetChannel(state.ChannelName);
                 SetPlaybackPaused(!m_IsPaused);
                 SetPauseButtonState(true, m_IsPaused);
                 SetStepForwardButtonEnabled(true);
@@ -1518,11 +1175,11 @@ namespace XAnimationEditor
                 return;
             }
 
-            ResumePlaybackChannel(state.Config.channelName);
+            ResumePlaybackChannel(state.ChannelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.Config.channelName, state.Key, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
             RefreshPlaybackViews();
             SetStatus($"正在播放 state {state.Key}。");
         }
@@ -1588,13 +1245,13 @@ namespace XAnimationEditor
                 return;
             }
 
-            MarkFreeformStateInteracted(state.Config.channelName, state.Key);
+            MarkFreeformStateInteracted(state.ChannelName, state.Key);
 
-            ResumePlaybackChannel(state.Config.channelName);
+            ResumePlaybackChannel(state.ChannelName);
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.Config.channelName, state.Key, BuildPreviewTransitionOptions());
+            m_Session.PlayState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
 
             RebuildParameterList();
             RefreshPlaybackViews();
@@ -2567,9 +2224,6 @@ namespace XAnimationEditor
 
             if (expanded)
             {
-                string stateKey = ResolveStateKeyFromUiKey(stateUiKey) ?? stateUiKey;
-                SetDefaultTransitionEditingState(stateKey);
-
                 if (m_ExpandedStateKeys.Count == 1 && m_ExpandedStateKeys.Contains(stateUiKey))
                 {
                     if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement currentEditor))
@@ -2798,7 +2452,7 @@ namespace XAnimationEditor
             for (int i = 0; i < states.Count; i++)
             {
                 XAnimationCompiledState state = states[i];
-                if (state != null && string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal))
+                if (state != null && string.Equals(state.ChannelName, channelName, StringComparison.Ordinal))
                 {
                     count++;
                 }
@@ -2827,11 +2481,11 @@ namespace XAnimationEditor
         {
             try
             {
-                string preferredChannelName = null;
+                string preferredChannelName = m_StateTabChannelName;
                 string preferredPreStateKey = null;
-                if (TryGetCompiledStateByUiKey(m_SelectedAutoTransitionStateUiKey, out XAnimationCompiledState selectedState))
+                if (TryGetCompiledStateByUiKey(m_SelectedAutoTransitionStateUiKey, out XAnimationCompiledState selectedState) &&
+                    string.Equals(selectedState.ChannelName, preferredChannelName, StringComparison.Ordinal))
                 {
-                    preferredChannelName = selectedState.Config.channelName;
                     preferredPreStateKey = selectedState.Key;
                 }
 
@@ -2839,7 +2493,6 @@ namespace XAnimationEditor
                 string stateUiKey = BuildAutoTransitionUiKey(transition);
                 m_SelectedAutoTransitionStateUiKey = stateUiKey;
                 SetAutoTransitionExpanded(stateUiKey, true);
-                SetAutoTransitionChannelCollapsed(transition.ChannelName, false);
                 RebuildAutoTransitionEditor();
                 RefreshChannelStates();
                 SetStatus($"已新增 Auto Transition {transition.ChannelName}: {transition.PreStateKey}。");
@@ -2855,7 +2508,7 @@ namespace XAnimationEditor
         {
             try
             {
-                int transitionIndex = m_Session.AddDefaultTransition();
+                int transitionIndex = m_Session.AddDefaultTransition(m_StateTabChannelName);
                 m_SelectedDefaultTransitionIndex = transitionIndex;
                 SetDefaultTransitionExpanded(transitionIndex, true);
                 RebuildDefaultTransitionsEditor();
@@ -3550,6 +3203,10 @@ namespace XAnimationEditor
             try
             {
                 m_Session.RenameChannel(oldName, newName);
+                if (string.Equals(m_StateTabChannelName, oldName, StringComparison.Ordinal))
+                {
+                    m_StateTabChannelName = newName;
+                }
                 SetStatus($"Channel {oldName} 已重命名为 {newName}。");
                 RebuildStatePresentation(includeChannelPresentation: true);
                 RefreshClipPlayingStates();
@@ -3699,11 +3356,11 @@ namespace XAnimationEditor
             {
                 if (string.IsNullOrWhiteSpace(newName))
                 {
-                    throw new XAnimationException("State folder path cannot be empty.");
+                    throw new XAnimationException("State node path cannot be empty.");
                 }
 
                 m_Session.RenameStatePath(channelName, oldName, newName);
-                SetStatus($"State Folder {oldName} 已重命名为 {newName}。");
+                SetStatus($"State Node {oldName} 已重命名为 {newName}。");
                 RebuildStatePresentation();
             }
             catch (Exception ex)
@@ -3714,22 +3371,22 @@ namespace XAnimationEditor
             }
         }
 
-        private void DeleteStateGroup(string channelName, string groupName)
+        private void RemoveStateGroupNode(string channelName, string groupName)
         {
             if (string.IsNullOrWhiteSpace(groupName))
             {
                 return;
             }
 
-            if (!EditorUtility.DisplayDialog("删除 State Folder", $"确定删除 State Folder '{channelName} / {groupName}'？\n\nfolder 路径会从组内 states 的 key 中移除，states 会移动到父路径。", "删除", "取消"))
+            if (!EditorUtility.DisplayDialog("移除 State Node", $"确定移除 State Node '{channelName} / {groupName}' 及其全部子节点？", "移除", "取消"))
             {
                 return;
             }
 
             try
             {
-                m_Session.ClearStatePath(channelName, groupName);
-                SetStatus($"已删除 State Folder {channelName} / {groupName}。");
+                m_Session.DeleteContainerStateNode(channelName, groupName);
+                SetStatus($"已移除 State Node {channelName} / {groupName}。");
                 RebuildStatePresentation();
             }
             catch (Exception ex)
@@ -3755,137 +3412,49 @@ namespace XAnimationEditor
             }
         }
 
-        private void AddStateGroup(string channelName)
+        private void ShowAddStateNodeMenu(VisualElement activator, string channelName, string parentPath)
         {
-            AddStateGroup(channelName, string.Empty);
+            GenericMenu menu = new();
+            bool selectorParent = !string.IsNullOrWhiteSpace(parentPath) &&
+                                  m_Session.CompiledAsset.GetStateNode(channelName, parentPath).Kind == XAnimationStateNodeKind.Selector;
+            menu.AddItem(
+                new GUIContent("State"),
+                false,
+                () => AddState(channelName, parentPath));
+            if (!selectorParent)
+            {
+                menu.AddItem(
+                    new GUIContent("Normal"),
+                    false,
+                    () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.Normal));
+            }
+            menu.AddItem(
+                new GUIContent("Selector"),
+                false,
+                () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.Selector));
+            menu.DropDown(activator.worldBound);
         }
 
-        private void AddStateGroup(string channelName, string parentPath)
+        private void AddStateNode(string channelName, string parentPath, XAnimationStateNodeKind nodeKind)
         {
             parentPath = NormalizeStatePath(parentPath);
-            string[] stateOptions = BuildChannelStateGroupCandidateOptions(channelName);
-            if (!TryPromptForStateGroupSetup("新建 State Folder", channelName, parentPath, out string groupName, out string selectedStateKey, stateOptions))
+            try
             {
-                return;
-            }
-
-            string groupPath = BuildStatePathKey(parentPath, groupName);
-            if (!string.IsNullOrWhiteSpace(selectedStateKey))
-            {
-                try
+                string nodeKey = nodeKind switch
                 {
-                    m_Session.MoveState(channelName, selectedStateKey, channelName, insertBeforeStateKey: null, groupPath);
-                    SetStateGroupCollapsed(BuildStateGroupKey(channelName, groupPath), false);
-                    RebuildStatePresentation();
-                    SetStatus($"已创建 State Folder {channelName} / {groupPath}，并加入 state {selectedStateKey}。");
-                }
-                catch (Exception ex)
-                {
-                    SetStatus(ex.Message, true);
-                    Debug.LogException(ex);
-                }
-
-                return;
+                    XAnimationStateNodeKind.Normal => m_Session.AddNormalStateNode(channelName, parentPath),
+                    XAnimationStateNodeKind.Selector => m_Session.AddSelectorStateNode(channelName, parentPath),
+                    _ => throw new XAnimationException($"Cannot add container State Node with kind '{nodeKind}'."),
+                };
+                SetStateGroupCollapsed(BuildStateGroupKey(channelName, nodeKey), false);
+                RebuildStatePresentation(includeChannelPresentation: true);
+                SetStatus($"已创建 {nodeKind} State Node {channelName} / {nodeKey}。");
             }
-
-            AddState(channelName, groupPath);
-        }
-
-        private bool TryPromptForStateGroupName(string title, string channelName, string currentGroupName, out string groupName)
-        {
-            groupName = null;
-            string message = string.IsNullOrWhiteSpace(currentGroupName)
-                ? $"为 Channel '{channelName}' 输入新的 State Folder 路径："
-                : $"为 Channel '{channelName}' 输入新的 State Folder 路径：";
-            if (!StringInputPromptWindow.ShowPrompt(title, message, currentGroupName, out string input))
+            catch (Exception ex)
             {
-                return false;
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
             }
-
-            input = NormalizeStatePath(input);
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                SetStatus("State folder path cannot be empty.", true);
-                return false;
-            }
-
-            if (HasStatePath(channelName, input) &&
-                !string.Equals(NormalizeStatePath(currentGroupName), input, StringComparison.Ordinal))
-            {
-                SetStatus($"Channel '{channelName}' 中已存在 State Folder '{input}'。", true);
-                return false;
-            }
-
-            groupName = input;
-            return true;
-        }
-
-        private bool TryPromptForStateGroupSetup(string title, string channelName, string parentPath, out string groupName, out string selectedStateKey, string[] stateOptions)
-        {
-            groupName = null;
-            selectedStateKey = null;
-            parentPath = NormalizeStatePath(parentPath);
-            string message = string.IsNullOrWhiteSpace(parentPath)
-                ? $"为 Channel '{channelName}' 输入新的 State Folder 名称："
-                : $"在 State Folder '{parentPath}' 下输入新的子 Folder 名称：";
-            if (!StringInputPromptWindow.ShowPrompt(
-                    title,
-                    message,
-                    string.Empty,
-                    "移动现有 State",
-                    stateOptions,
-                    stateOptions != null && stateOptions.Length > 0 ? stateOptions[0] : string.Empty,
-                    out string input,
-                    out string selected))
-            {
-                return false;
-            }
-
-            input = NormalizeStatePath(input);
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                SetStatus("State folder path cannot be empty.", true);
-                return false;
-            }
-
-            string groupPath = BuildStatePathKey(parentPath, input);
-            if (HasStatePath(channelName, groupPath))
-            {
-                SetStatus($"Channel '{channelName}' 中已存在 State Folder '{groupPath}'。", true);
-                return false;
-            }
-
-            groupName = input;
-            selectedStateKey = NormalizeStateGroupSelectedState(selected);
-            return true;
-        }
-
-        private string[] BuildChannelStateGroupCandidateOptions(string channelName)
-        {
-            List<string> options = new() { "<新建一个 state>" };
-            if (m_Session == null || !m_Session.IsLoaded || string.IsNullOrWhiteSpace(channelName))
-            {
-                return options.ToArray();
-            }
-
-            IReadOnlyList<XAnimationCompiledState> states = m_Session.CompiledAsset.States;
-            for (int i = 0; i < states.Count; i++)
-            {
-                XAnimationCompiledState state = states[i];
-                if (state == null || !string.Equals(state.Config.channelName, channelName, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                options.Add(state.Key);
-            }
-
-            return options.ToArray();
-        }
-
-        private static string NormalizeStateGroupSelectedState(string value)
-        {
-            return string.Equals(value, "<新建一个 state>", StringComparison.Ordinal) ? string.Empty : value ?? string.Empty;
         }
 
         private void AddStateAllowedNextState(string channelName, string stateKey)
@@ -4306,7 +3875,7 @@ namespace XAnimationEditor
 
             string normalizedGroup = NormalizeStatePath(groupName);
             string stateKey = sourceState.Key;
-            m_Session.MoveState(sourceState.Config.channelName, stateKey, channelName, insertBeforeStateKey, normalizedGroup);
+            m_Session.MoveState(sourceState.ChannelName, stateKey, channelName, insertBeforeStateKey, normalizedGroup);
             string targetKey = BuildStatePathKey(normalizedGroup, GetStatePathLeafName(stateKey));
             m_StateChannelMap[BuildStateUiKey(channelName, targetKey)] = channelName;
             RebuildStatePresentation();

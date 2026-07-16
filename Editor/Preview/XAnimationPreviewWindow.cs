@@ -37,7 +37,6 @@ namespace XAnimationEditor
         {
             Main = 0,
             Clip = 1,
-            Channels = 2,
             Parameters = 3,
             Setting = 4,
         }
@@ -45,7 +44,6 @@ namespace XAnimationEditor
         private enum PreviewPaneTab
         {
             Scene = 0,
-            DefaultTransition = 1,
             StatesGraph = 2,
         }
 
@@ -79,16 +77,24 @@ namespace XAnimationEditor
 
         private sealed class StatePathNode
         {
-            public StatePathNode(string name, string fullPath)
+            public StatePathNode(
+                string name,
+                string fullPath,
+                XAnimationStateNodeKind kind = XAnimationStateNodeKind.Normal,
+                XAnimationSelectorStateNodeConfig selector = null)
             {
                 Name = name ?? string.Empty;
                 FullPath = fullPath ?? string.Empty;
+                Kind = kind;
+                Selector = selector;
                 Children = new List<StatePathNode>();
                 States = new List<XAnimationCompiledState>();
             }
 
             public string Name { get; }
             public string FullPath { get; }
+            public XAnimationStateNodeKind Kind { get; }
+            public XAnimationSelectorStateNodeConfig Selector { get; }
             public List<StatePathNode> Children { get; }
             public List<XAnimationCompiledState> States { get; }
         }
@@ -198,21 +204,43 @@ namespace XAnimationEditor
             public DefaultTransitionPairEntry(
                 int transitionIndex,
                 int pairIndex,
+                string channelName,
                 XAnimationDefaultTransitionConfig transition,
                 bool isInState)
             {
                 TransitionIndex = transitionIndex;
                 PairIndex = pairIndex;
+                ChannelName = channelName ?? string.Empty;
                 Transition = transition;
+                AutoTransition = null;
+                IsAuto = false;
+                IsInState = isInState;
+            }
+
+            public DefaultTransitionPairEntry(
+                int transitionIndex,
+                string channelName,
+                XAnimationAutoTransitionConfig transition,
+                bool isInState)
+            {
+                TransitionIndex = transitionIndex;
+                PairIndex = 0;
+                ChannelName = channelName ?? string.Empty;
+                Transition = null;
+                AutoTransition = transition;
+                IsAuto = true;
                 IsInState = isInState;
             }
 
             public int TransitionIndex { get; }
             public int PairIndex { get; }
+            public string ChannelName { get; }
             public XAnimationDefaultTransitionConfig Transition { get; }
+            public XAnimationAutoTransitionConfig AutoTransition { get; }
+            public bool IsAuto { get; }
             public bool IsInState { get; }
-            public string PreStateKey => Transition?.preStateKey ?? string.Empty;
-            public string NextStateKey => Transition?.nextStateKey ?? string.Empty;
+            public string PreStateKey => IsAuto ? AutoTransition?.preStateKey ?? string.Empty : Transition?.preStateKey ?? string.Empty;
+            public string NextStateKey => IsAuto ? AutoTransition?.nextStateKey ?? string.Empty : Transition?.nextStateKey ?? string.Empty;
         }
 
         private const string MenuPath = "Tools/XAnimation/Preview";
@@ -283,6 +311,7 @@ namespace XAnimationEditor
         [SerializeField] private bool m_DefaultTransitionsSectionExpanded = true;
         [SerializeField] private bool m_ClipsSectionExpanded = true;
         [SerializeField] private bool m_ChannelsSectionExpanded = true;
+        [SerializeField] private string m_StateTabChannelName;
         [SerializeField] private bool m_PreviewRootMotionEnabled = true;
         [SerializeField] private DebugToolbarGroup m_SelectedDebugToolbarGroup;
         [SerializeField] private Vector2 m_FreeformBlendGraphOverlayPosition = new(FreeformBlendGraphOverlayInitialLeft, FreeformBlendGraphOverlayInitialBottom);
@@ -311,16 +340,15 @@ namespace XAnimationEditor
         private Button m_AddParameterButton;
         private Button m_AddAutoTransitionButton;
         private Button m_AddDefaultTransitionButton;
+        private Button m_AddStateNodeButton;
         private Button m_SettingGroupButton;
         private Button m_MainGroupButton;
+        private Label m_MainChannelArrow;
         private Button m_ClipTabButton;
-        private Button m_ChannelsGroupButton;
         private Button m_ParametersGroupButton;
         private Button m_PreviewSceneTabButton;
-        private Button m_PreviewDefaultTransitionTabButton;
         private Button m_PreviewStatesGraphTabButton;
-        private Button m_AddDefaultTransitionInPairButton;
-        private Button m_AddDefaultTransitionOutPairButton;
+        private Label m_PreviewChannelGraphArrow;
         private Button m_OpenGraphButton;
         private Button m_SearchButton;
         private TextField m_SearchField;
@@ -334,13 +362,7 @@ namespace XAnimationEditor
         private VisualElement m_AutoTransitionEditorView;
         private VisualElement m_DefaultTransitionsEditorView;
         private VisualElement m_PreviewSceneTabView;
-        private VisualElement m_DefaultTransitionTabView;
         private VisualElement m_StatesGraphTabView;
-        private Button m_DefaultTransitionEditingStateButton;
-        private XAnimationDefaultTransitionGraphElement m_DefaultTransitionGraphView;
-        private Label m_DefaultTransitionGraphZoomLabel;
-        private VisualElement m_DefaultTransitionDetailsView;
-        private Button m_StatesGraphChannelButton;
         private XAnimationStatesGraphElement m_StatesGraphView;
         private VisualElement m_StatesGraphDetailsView;
         private VisualElement m_ClipListView;
@@ -350,7 +372,6 @@ namespace XAnimationEditor
         private VisualElement m_SettingGroupContainer;
         private VisualElement m_MainGroupContainer;
         private VisualElement m_ClipTabContainer;
-        private VisualElement m_ChannelsGroupContainer;
         private VisualElement m_ParametersGroupContainer;
         private readonly HashSet<string> m_ExpandedStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedStateGroupKeys = new(StringComparer.Ordinal);
@@ -359,8 +380,6 @@ namespace XAnimationEditor
         private readonly HashSet<string> m_ExpandedBehaviorStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedStateGateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedAutoTransitionKeys = new(StringComparer.Ordinal);
-        private readonly HashSet<string> m_CollapsedAutoTransitionChannelKeys = new(StringComparer.Ordinal);
-        private readonly HashSet<string> m_CollapsedDefaultTransitionChannelKeys = new(StringComparer.Ordinal);
         private readonly HashSet<int> m_CollapsedDefaultTransitionIndices = new();
         private readonly Dictionary<string, EditableLabel> m_StateLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_StateGroupLabelMap = new(StringComparer.Ordinal);
@@ -415,6 +434,7 @@ namespace XAnimationEditor
         private string m_DefaultTransitionEditingStateUiKey;
         private int m_DefaultTransitionTabTransitionIndex = -1;
         private int m_DefaultTransitionTabPairIndex = -1;
+        private bool m_DefaultTransitionTabPairIsAuto;
         private bool m_DefaultTransitionTabPairWaitingSwitch;
         private string m_StatesGraphChannelName;
         private string m_StatesGraphCurrentPath = string.Empty;

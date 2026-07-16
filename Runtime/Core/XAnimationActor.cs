@@ -422,6 +422,16 @@ namespace XAnimationEngine
             return m_Driver.HasState(channelName, stateKey);
         }
 
+        public bool HasStateNode(string stateNodeKey)
+        {
+            return m_Driver.HasStateNode(stateNodeKey);
+        }
+
+        public bool HasStateNode(string channelName, string stateNodeKey)
+        {
+            return m_Driver.HasStateNode(channelName, stateNodeKey);
+        }
+
         public float GetStateDuration(string stateKey)
         {
             return m_Driver.GetStateDuration(stateKey);

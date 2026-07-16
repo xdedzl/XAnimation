@@ -336,27 +336,32 @@ namespace XAnimationEngine
 
         internal XAnimationActionHandle PlayAction(string stateKey, XAnimationActionOptions options)
         {
-            XAnimationCompiledState state = m_Driver.CompiledAsset.GetState(stateKey);
-            return PlayAction(state, options);
+            XAnimationCompiledStateNode stateNode = m_Driver.CompiledAsset.GetStateNode(stateKey);
+            return PlayAction(stateNode, options);
         }
 
         internal XAnimationActionHandle PlayAction(string channelName, string stateKey, XAnimationActionOptions options)
         {
-            XAnimationCompiledState state = m_Driver.CompiledAsset.GetState(channelName, stateKey);
-            return PlayAction(state, options);
+            XAnimationCompiledStateNode stateNode = m_Driver.CompiledAsset.GetStateNode(channelName, stateKey);
+            return PlayAction(stateNode, options);
         }
 
-        private XAnimationActionHandle PlayAction(XAnimationCompiledState state, XAnimationActionOptions options)
+        private XAnimationActionHandle PlayAction(XAnimationCompiledStateNode stateNode, XAnimationActionOptions options)
         {
-            XAnimationCompiledChannel channel = (XAnimationCompiledChannel)m_Driver.CompiledAsset.Channels[state.DefaultChannelIndex];
+            if (!stateNode.IsPlayable)
+            {
+                throw new XAnimationException($"XAnimation Normal state node '{stateNode.Key}' cannot be played as an action.");
+            }
+
+            XAnimationCompiledChannel channel = (XAnimationCompiledChannel)m_Driver.CompiledAsset.Channels[stateNode.DefaultChannelIndex];
             string channelName = channel.Name;
             string previousStateKey = ResolvePreviousStateKey(channelName);
 
-            XAnimationPlaybackHandle playbackHandle = m_Driver.PlayState(channelName, state.Key, options.transition, options.force);
+            XAnimationPlaybackHandle playbackHandle = m_Driver.PlayState(channelName, stateNode.Key, options.transition, options.force);
             XAnimationActionHandle actionHandle = new(
                 this,
                 m_NextActionId++,
-                state.Key,
+                stateNode.Key,
                 channelName,
                 previousStateKey,
                 options,
@@ -477,9 +482,9 @@ namespace XAnimationEngine
             if (m_Driver.TryGetCurrentState(channelName, out XAnimationChannelState state) &&
                 state != null &&
                 !state.isTemporaryState &&
-                !string.IsNullOrWhiteSpace(state.stateKey))
+                !string.IsNullOrWhiteSpace(state.requestedStateKey))
             {
-                return state.stateKey;
+                return state.requestedStateKey;
             }
 
             return string.Empty;

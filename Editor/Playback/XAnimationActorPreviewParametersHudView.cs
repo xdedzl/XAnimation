@@ -301,15 +301,16 @@ namespace XAnimationEditor
         {
             min = 0f;
             max = 0f;
-            if (m_Asset?.states == null || string.IsNullOrWhiteSpace(parameterName))
+            if (m_Asset == null || string.IsNullOrWhiteSpace(parameterName))
             {
                 return false;
             }
 
             bool found = false;
-            for (int i = 0; i < m_Asset.states.Length; i++)
+            XAnimationStateConfig[] states = XAnimationEditorStateNodeUtility.GetStates(m_Asset);
+            for (int i = 0; i < states.Length; i++)
             {
-                XAnimationStateConfig state = m_Asset.states[i];
+                XAnimationStateConfig state = states[i];
                 if (state == null ||
                     state.stateType != XAnimationStateType.Blend1D ||
                     !string.Equals(state.parameterName, parameterName, StringComparison.Ordinal))
@@ -332,15 +333,16 @@ namespace XAnimationEditor
         {
             min = 0f;
             max = 0f;
-            if (m_Asset?.states == null || string.IsNullOrWhiteSpace(parameterName))
+            if (m_Asset == null || string.IsNullOrWhiteSpace(parameterName))
             {
                 return false;
             }
 
             bool found = false;
-            for (int i = 0; i < m_Asset.states.Length; i++)
+            XAnimationStateConfig[] states = XAnimationEditorStateNodeUtility.GetStates(m_Asset);
+            for (int i = 0; i < states.Length; i++)
             {
-                XAnimationStateConfig state = m_Asset.states[i];
+                XAnimationStateConfig state = states[i];
                 if (state == null || !IsDirectionalBlendStateType(state.stateType))
                 {
                     continue;

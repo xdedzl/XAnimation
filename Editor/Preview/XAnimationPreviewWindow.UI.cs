@@ -289,8 +289,6 @@ namespace XAnimationEditor
             });
             controls.Add(m_GridToggle);
 
-            m_DefaultTransitionTabView = BuildDefaultTransitionTab();
-            tabContent.Add(m_DefaultTransitionTabView);
             m_StatesGraphTabView = BuildStatesGraphTab();
             tabContent.Add(m_StatesGraphTabView);
             ApplyPreviewPaneTab();
@@ -317,14 +315,43 @@ namespace XAnimationEditor
             toolbar.style.borderTopRightRadius = 3;
 
             m_PreviewSceneTabButton = CreateToolbarTabButton("Scene", () => SetPreviewPaneTab(PreviewPaneTab.Scene));
-            m_PreviewDefaultTransitionTabButton = CreateToolbarTabButton("Default Transition", () => SetPreviewPaneTab(PreviewPaneTab.DefaultTransition));
-            m_PreviewStatesGraphTabButton = CreateToolbarTabButton("States Graph", () => SetPreviewPaneTab(PreviewPaneTab.StatesGraph));
+            m_PreviewStatesGraphTabButton = CreateToolbarTabButton("Channel Graph", HandleChannelGraphTabClicked);
+            m_PreviewStatesGraphTabButton.style.width = 124;
+            m_PreviewStatesGraphTabButton.style.minWidth = 124;
+            m_PreviewStatesGraphTabButton.style.maxWidth = 124;
+            m_PreviewStatesGraphTabButton.style.paddingRight = 24;
+            m_PreviewChannelGraphArrow = new Label("▾");
+            m_PreviewChannelGraphArrow.pickingMode = PickingMode.Ignore;
+            m_PreviewChannelGraphArrow.style.position = Position.Absolute;
+            m_PreviewChannelGraphArrow.style.right = 6;
+            m_PreviewChannelGraphArrow.style.top = 0;
+            m_PreviewChannelGraphArrow.style.bottom = 0;
+            m_PreviewChannelGraphArrow.style.width = 12;
+            m_PreviewChannelGraphArrow.style.unityTextAlign = TextAnchor.MiddleCenter;
+            m_PreviewChannelGraphArrow.style.visibility = Visibility.Hidden;
+            VisualElement channelGraphTab = new();
+            channelGraphTab.style.position = Position.Relative;
+            channelGraphTab.style.width = 124;
+            channelGraphTab.style.minWidth = 124;
+            channelGraphTab.style.maxWidth = 124;
+            channelGraphTab.style.flexShrink = 0;
+            channelGraphTab.Add(m_PreviewStatesGraphTabButton);
+            channelGraphTab.Add(m_PreviewChannelGraphArrow);
             toolbar.Add(m_PreviewSceneTabButton);
             toolbar.Add(CreateToolbarDivider());
-            toolbar.Add(m_PreviewDefaultTransitionTabButton);
-            toolbar.Add(CreateToolbarDivider());
-            toolbar.Add(m_PreviewStatesGraphTabButton);
+            toolbar.Add(channelGraphTab);
             return toolbar;
+        }
+
+        private void HandleChannelGraphTabClicked()
+        {
+            if (m_SelectedPreviewPaneTab != PreviewPaneTab.StatesGraph)
+            {
+                SetPreviewPaneTab(PreviewPaneTab.StatesGraph);
+                return;
+            }
+
+            ShowStatesGraphChannelMenu();
         }
 
         private void SetPreviewPaneTab(PreviewPaneTab tab)
@@ -335,19 +362,15 @@ namespace XAnimationEditor
 
         private void ApplyPreviewPaneTab()
         {
+            if (m_SelectedPreviewPaneTab != PreviewPaneTab.Scene &&
+                m_SelectedPreviewPaneTab != PreviewPaneTab.StatesGraph)
+            {
+                m_SelectedPreviewPaneTab = PreviewPaneTab.StatesGraph;
+            }
+
             if (m_PreviewSceneTabView != null)
             {
                 m_PreviewSceneTabView.style.display = m_SelectedPreviewPaneTab == PreviewPaneTab.Scene ? DisplayStyle.Flex : DisplayStyle.None;
-            }
-
-            if (m_DefaultTransitionTabView != null)
-            {
-                m_DefaultTransitionTabView.style.display = m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition ? DisplayStyle.Flex : DisplayStyle.None;
-                if (m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition)
-                {
-                    RebuildDefaultTransitionTab();
-                    m_DefaultTransitionGraphView?.RefreshViewportAfterLayout();
-                }
             }
 
             if (m_StatesGraphTabView != null)
@@ -361,8 +384,10 @@ namespace XAnimationEditor
             }
 
             ApplyPreviewTabButtonState(m_PreviewSceneTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.Scene);
-            ApplyPreviewTabButtonState(m_PreviewDefaultTransitionTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.DefaultTransition);
             ApplyPreviewTabButtonState(m_PreviewStatesGraphTabButton, m_SelectedPreviewPaneTab == PreviewPaneTab.StatesGraph);
+            m_PreviewChannelGraphArrow.style.visibility = m_SelectedPreviewPaneTab == PreviewPaneTab.StatesGraph
+                ? Visibility.Visible
+                : Visibility.Hidden;
         }
 
         private static void ApplyPreviewTabButtonState(Button button, bool selected)
@@ -388,7 +413,6 @@ namespace XAnimationEditor
             ComposeSettingTab();
             ComposeMainTab();
             ComposeClipTab();
-            ComposeChannelsTab();
             ComposeParametersTab();
 
             Button clearCueLogButton = CreateStyledButton("Clear", ClearCueLog, DangerColor);
@@ -489,9 +513,6 @@ namespace XAnimationEditor
             m_ClipTabContainer = CreateDebugTabContainer();
             m_InspectorScrollView.Add(m_ClipTabContainer);
 
-            m_ChannelsGroupContainer = CreateDebugTabContainer();
-            m_InspectorScrollView.Add(m_ChannelsGroupContainer);
-
             m_ParametersGroupContainer = CreateDebugTabContainer();
             m_InspectorScrollView.Add(m_ParametersGroupContainer);
         }
@@ -508,6 +529,7 @@ namespace XAnimationEditor
             m_SettingGroupContainer.Add(CreateAssetsSection());
             m_SettingGroupContainer.Add(CreateSettingActionsSection());
             m_SettingGroupContainer.Add(CreateAssetOptionsSection());
+            m_SettingGroupContainer.Add(CreateChannelsSection().Root);
         }
 
         private void ComposeMainTab()
@@ -520,11 +542,6 @@ namespace XAnimationEditor
         private void ComposeClipTab()
         {
             m_ClipTabContainer.Add(CreateClipsSection().Root);
-        }
-
-        private void ComposeChannelsTab()
-        {
-            m_ChannelsGroupContainer.Add(CreateChannelsSection().Root);
         }
 
         private void ComposeParametersTab()
@@ -727,7 +744,11 @@ namespace XAnimationEditor
 
         private FoldoutCard CreateStatesSection()
         {
-            m_StatesCard = CreateFoldoutCard("States", m_StatesSectionExpanded, value => m_StatesSectionExpanded = value);
+            m_AddStateNodeButton = CreateStyledButton("+ Node", ShowStateTabAddNodeMenu, AccentColor);
+            m_AddStateNodeButton.tooltip = "在当前 Channel 根层级选择新增的 State Node 类型。";
+            m_AddStateNodeButton.SetEnabled(false);
+
+            m_StatesCard = CreateFoldoutCard("Node Tree", m_StatesSectionExpanded, value => m_StatesSectionExpanded = value, m_AddStateNodeButton);
             m_StateListView = new VisualElement();
             m_StatesCard.Content.Add(m_StateListView);
             return m_StatesCard;
@@ -736,7 +757,7 @@ namespace XAnimationEditor
         private FoldoutCard CreateAutoTransitionsSection()
         {
             m_AddAutoTransitionButton = CreateStyledButton("+", AddAutoTransition, AccentColor);
-            m_AddAutoTransitionButton.tooltip = "新增一个 Auto Transition。";
+            m_AddAutoTransitionButton.tooltip = "在当前 Channel 新增一个 Auto Transition。";
             SetAutoTransitionButtonsEnabled(false);
 
             VisualElement autoTransitionActions = new VisualElement();
@@ -753,7 +774,7 @@ namespace XAnimationEditor
         private FoldoutCard CreateDefaultTransitionsSection()
         {
             m_AddDefaultTransitionButton = CreateStyledButton("+", AddDefaultTransition, AccentColor);
-            m_AddDefaultTransitionButton.tooltip = "新增一个 Default Transition 分组。";
+            m_AddDefaultTransitionButton.tooltip = "在当前 Channel 新增一个 Default Transition。";
             SetDefaultTransitionButtonsEnabled(false);
 
             VisualElement defaultTransitionActions = new VisualElement();

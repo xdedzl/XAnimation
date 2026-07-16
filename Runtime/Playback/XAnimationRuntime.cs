@@ -204,6 +204,12 @@ namespace XAnimationEngine
             return m_PlaybackController.StartStatePlayback(channelName, stateKey, transition, force);
         }
 
+        internal void ProcessSelectorParameterChange(string parameterName)
+        {
+            ThrowIfDisposed();
+            m_PlaybackController.ProcessSelectorParameterChange(parameterName);
+        }
+
         #endregion
 
         #region Runtime Controls
@@ -320,13 +326,13 @@ namespace XAnimationEngine
             if (!string.IsNullOrWhiteSpace(channelName))
             {
                 XAnimationChannelState state = GetChannelState(channelName);
-                return state != null && string.Equals(state.stateKey, stateKey, StringComparison.Ordinal);
+                return state != null && Array.IndexOf(state.activeStateNodeKeys, stateKey) >= 0;
             }
 
             for (int i = 0; i < m_Channels.Count; i++)
             {
                 XAnimationChannelState state = m_Channels[i].GetState(m_GlobalSpeed);
-                if (state != null && string.Equals(state.stateKey, stateKey, StringComparison.Ordinal))
+                if (state != null && Array.IndexOf(state.activeStateNodeKeys, stateKey) >= 0)
                 {
                     return true;
                 }
@@ -711,6 +717,8 @@ namespace XAnimationEngine
             return new XAnimationStateEvent
             {
                 stateKey = playback?.StateKey ?? string.Empty,
+                requestedStateKey = playback?.RequestedStateKey ?? string.Empty,
+                activeStateNodeKeys = playback?.ActiveStateNodeKeys ?? Array.Empty<string>(),
                 channelName = playback?.ChannelName ?? string.Empty,
                 playbackId = playback?.PlaybackId ?? 0,
                 isTemporaryState = playback?.IsTemporaryState ?? false,

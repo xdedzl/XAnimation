@@ -48,18 +48,36 @@ namespace XAnimationEditor
             toolbar.Add(tabContainer);
 
             m_SettingGroupButton = CreateToolbarTabButton("Setting", () => SetDebugToolbarGroup(DebugToolbarGroup.Setting));
-            m_MainGroupButton = CreateToolbarTabButton("State", () => SetDebugToolbarGroup(DebugToolbarGroup.Main));
+            m_MainGroupButton = CreateToolbarTabButton("Channel", HandleStateTabClicked);
+            m_MainGroupButton.style.width = 80;
+            m_MainGroupButton.style.minWidth = 80;
+            m_MainGroupButton.style.maxWidth = 80;
+            m_MainGroupButton.style.paddingRight = 24;
+            m_MainChannelArrow = new Label("▾");
+            m_MainChannelArrow.pickingMode = PickingMode.Ignore;
+            m_MainChannelArrow.style.position = Position.Absolute;
+            m_MainChannelArrow.style.right = 6;
+            m_MainChannelArrow.style.top = 0;
+            m_MainChannelArrow.style.bottom = 0;
+            m_MainChannelArrow.style.width = 12;
+            m_MainChannelArrow.style.unityTextAlign = TextAnchor.MiddleCenter;
+            m_MainChannelArrow.style.visibility = Visibility.Hidden;
+            VisualElement mainTab = new();
+            mainTab.style.position = Position.Relative;
+            mainTab.style.width = 80;
+            mainTab.style.minWidth = 80;
+            mainTab.style.maxWidth = 80;
+            mainTab.style.flexShrink = 0;
+            mainTab.Add(m_MainGroupButton);
+            mainTab.Add(m_MainChannelArrow);
             m_ClipTabButton = CreateToolbarTabButton("Clips", () => SetDebugToolbarGroup(DebugToolbarGroup.Clip));
-            m_ChannelsGroupButton = CreateToolbarTabButton("Channels", () => SetDebugToolbarGroup(DebugToolbarGroup.Channels));
             m_ParametersGroupButton = CreateToolbarTabButton("Parameters", () => SetDebugToolbarGroup(DebugToolbarGroup.Parameters));
 
             tabContainer.Add(m_SettingGroupButton);
             tabContainer.Add(CreateToolbarDivider());
-            tabContainer.Add(m_MainGroupButton);
+            tabContainer.Add(mainTab);
             tabContainer.Add(CreateToolbarDivider());
             tabContainer.Add(m_ClipTabButton);
-            tabContainer.Add(CreateToolbarDivider());
-            tabContainer.Add(m_ChannelsGroupButton);
             tabContainer.Add(CreateToolbarDivider());
             tabContainer.Add(m_ParametersGroupButton);
 
@@ -277,11 +295,15 @@ namespace XAnimationEditor
 
         private void SetDebugToolbarGroup(DebugToolbarGroup group)
         {
+            if (group == DebugToolbarGroup.Main)
+            {
+                EnsureStateTabChannelSelection();
+            }
+
             if (m_SelectedDebugToolbarGroup == group &&
                 m_SettingGroupContainer != null &&
                 m_MainGroupContainer != null &&
                 m_ClipTabContainer != null &&
-                m_ChannelsGroupContainer != null &&
                 m_ParametersGroupContainer != null)
             {
                 ApplyDebugToolbarGroup();
@@ -294,22 +316,110 @@ namespace XAnimationEditor
 
         private void ApplyDebugToolbarGroup()
         {
-            if (m_SettingGroupContainer == null || m_MainGroupContainer == null || m_ClipTabContainer == null || m_ChannelsGroupContainer == null || m_ParametersGroupContainer == null)
+            if (m_SettingGroupContainer == null || m_MainGroupContainer == null || m_ClipTabContainer == null || m_ParametersGroupContainer == null)
             {
                 return;
+            }
+
+            if (m_SelectedDebugToolbarGroup != DebugToolbarGroup.Setting &&
+                m_SelectedDebugToolbarGroup != DebugToolbarGroup.Main &&
+                m_SelectedDebugToolbarGroup != DebugToolbarGroup.Clip &&
+                m_SelectedDebugToolbarGroup != DebugToolbarGroup.Parameters)
+            {
+                m_SelectedDebugToolbarGroup = DebugToolbarGroup.Setting;
             }
 
             m_SettingGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Setting ? DisplayStyle.Flex : DisplayStyle.None;
             m_MainGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main ? DisplayStyle.Flex : DisplayStyle.None;
             m_ClipTabContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip ? DisplayStyle.Flex : DisplayStyle.None;
-            m_ChannelsGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Channels ? DisplayStyle.Flex : DisplayStyle.None;
             m_ParametersGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters ? DisplayStyle.Flex : DisplayStyle.None;
 
             ApplyToolbarTabVisual(m_SettingGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Setting);
             ApplyToolbarTabVisual(m_MainGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main);
+            m_MainChannelArrow.style.visibility = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main
+                ? Visibility.Visible
+                : Visibility.Hidden;
             ApplyToolbarTabVisual(m_ClipTabButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip);
-            ApplyToolbarTabVisual(m_ChannelsGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Channels);
             ApplyToolbarTabVisual(m_ParametersGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters);
+        }
+
+        private void HandleStateTabClicked()
+        {
+            if (m_SelectedDebugToolbarGroup != DebugToolbarGroup.Main)
+            {
+                SetDebugToolbarGroup(DebugToolbarGroup.Main);
+                return;
+            }
+
+            ShowStateTabChannelMenu();
+        }
+
+        private bool EnsureStateTabChannelSelection()
+        {
+            if (m_Session == null || !m_Session.IsLoaded || m_Session.CompiledAsset.Channels.Count == 0)
+            {
+                m_StateTabChannelName = string.Empty;
+                UpdateStateTabChannelButton();
+                return false;
+            }
+
+            if (!HasChannel(m_StateTabChannelName))
+            {
+                m_StateTabChannelName = m_Session.CompiledAsset.Channels[0].Name;
+            }
+
+            UpdateStateTabChannelButton();
+            return true;
+        }
+
+        private void UpdateStateTabChannelButton()
+        {
+            if (m_MainGroupButton == null)
+            {
+                return;
+            }
+
+            m_MainGroupButton.tooltip = string.IsNullOrWhiteSpace(m_StateTabChannelName)
+                ? "点击切换到 Channel。当前没有可选择的 Channel。"
+                : $"当前 Channel：{m_StateTabChannelName}。选中后点击可切换 Channel。";
+        }
+
+        private void ShowStateTabChannelMenu()
+        {
+            if (!EnsureStateTabChannelSelection())
+            {
+                return;
+            }
+
+            GenericMenu menu = new();
+            IReadOnlyList<XAnimationCompiledChannel> channels = m_Session.CompiledAsset.Channels;
+            for (int i = 0; i < channels.Count; i++)
+            {
+                string channelName = channels[i].Name;
+                menu.AddItem(
+                    new GUIContent(channelName),
+                    string.Equals(channelName, m_StateTabChannelName, StringComparison.Ordinal),
+                    () => SetStateTabChannel(channelName));
+            }
+            menu.DropDown(m_MainGroupButton.worldBound);
+        }
+
+        private void SetStateTabChannel(string channelName, bool rebuild = true)
+        {
+            m_StateTabChannelName = channelName;
+            UpdateStateTabChannelButton();
+            if (rebuild)
+            {
+                RebuildStateList();
+            }
+        }
+
+        private void ShowStateTabAddNodeMenu()
+        {
+            if (EnsureStateTabChannelSelection())
+            {
+                ShowAddStateNodeMenu(m_AddStateNodeButton, m_StateTabChannelName, string.Empty);
+            }
         }
 
         private void RefreshSearchIndex()
@@ -332,14 +442,15 @@ namespace XAnimationEditor
                 }
 
                 string stateKey = state.Key;
+                string channelName = state.ChannelName;
                 string parentPath = GetStatePathParent(stateKey);
                 string pathSearchText = string.IsNullOrWhiteSpace(parentPath) ? string.Empty : $" path={parentPath}";
                 AddSearchEntry(
                     SearchEntryType.State,
                     stateKey,
-                    $"{state.StateType} | channel={state.Config.channelName}{pathSearchText}",
-                    $"{stateKey} {state.Config.channelName} {parentPath} {state.Config.clipKey} {state.Config.parameterName}",
-                    () => FocusStateInInspector(stateKey));
+                    $"{state.StateType} | channel={state.ChannelName}{pathSearchText}",
+                    $"{stateKey} {state.ChannelName} {parentPath} {state.Config.clipKey} {state.Config.parameterName}",
+                    () => FocusStateInInspector(channelName, stateKey));
             }
 
             IReadOnlyList<XAnimationCompiledClip> clips = m_Session.CompiledAsset.Clips;

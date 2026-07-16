@@ -58,6 +58,8 @@ namespace XAnimationEngine
             PlaybackId = playbackId;
             ChannelName = channelName;
             StateKey = stateKey;
+            RequestedStateKey = stateKey;
+            ActiveStateNodeKeys = string.IsNullOrWhiteSpace(stateKey) ? Array.Empty<string>() : new[] { stateKey };
             StateType = stateType;
             IsTemporaryState = isTemporaryState;
             TargetWeight = Mathf.Max(0f, options.Weight);
@@ -110,6 +112,8 @@ namespace XAnimationEngine
         public int PlaybackId { get; }
         public string ChannelName { get; }
         public string StateKey { get; }
+        public string RequestedStateKey { get; private set; }
+        public string[] ActiveStateNodeKeys { get; private set; }
         public XAnimationStateType StateType { get; }
         public bool IsTemporaryState { get; }
         public abstract string PrimaryClipKey { get; }
@@ -125,6 +129,23 @@ namespace XAnimationEngine
         public bool SuppressCues { get; set; }
         public bool HasExitEventBeenRaised => m_HasExitEventBeenRaised;
         public bool HasCompletedExitOrTransition { get; private set; }
+
+        internal void SetStateNodeContext(string requestedStateKey, IReadOnlyList<string> activeStateNodeKeys)
+        {
+            RequestedStateKey = requestedStateKey ?? string.Empty;
+            if (activeStateNodeKeys == null || activeStateNodeKeys.Count == 0)
+            {
+                ActiveStateNodeKeys = Array.Empty<string>();
+                return;
+            }
+
+            string[] keys = new string[activeStateNodeKeys.Count];
+            for (int i = 0; i < keys.Length; i++)
+            {
+                keys[i] = activeStateNodeKeys[i];
+            }
+            ActiveStateNodeKeys = keys;
+        }
 
         private float FadeFrom { get; set; }
         private float FadeTo { get; set; }
@@ -265,6 +286,8 @@ namespace XAnimationEngine
                 animator,
                 ChannelName,
                 StateKey,
+                RequestedStateKey,
+                ActiveStateNodeKeys,
                 PrimaryClipKey,
                 PlaybackId,
                 GetNormalizedTime(),
@@ -2520,6 +2543,8 @@ namespace XAnimationEngine
             XAnimationChannelState state = m_Current?.BuildState(m_ChannelWeight, effectiveGlobalSpeed);
             if (state != null && !string.IsNullOrWhiteSpace(state.stateKey))
             {
+                state.requestedStateKey = m_Current.RequestedStateKey;
+                state.activeStateNodeKeys = m_Current.ActiveStateNodeKeys;
                 state.nextStateKey = string.Empty;
                 state.isTransitioning = m_Previous != null;
                 state.previousStateKey = m_Previous?.StateKey ?? string.Empty;

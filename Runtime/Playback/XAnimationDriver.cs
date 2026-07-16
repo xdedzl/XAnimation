@@ -114,6 +114,7 @@ namespace XAnimationEngine
         {
             EnsureInitialized();
             m_Runtime.Context.SetInt(key, value);
+            m_Runtime.ProcessSelectorParameterChange(key);
         }
 
         public void SetTrigger(string key)
@@ -367,17 +368,42 @@ namespace XAnimationEngine
 
         public bool HasState(string stateKey)
         {
-            return m_Runtime.IsInitialized &&
-                   !string.IsNullOrWhiteSpace(stateKey) &&
-                   m_Runtime.CompiledAsset.TryGetStateIndex(stateKey, out _);
+            if (!m_Runtime.IsInitialized ||
+                string.IsNullOrWhiteSpace(stateKey) ||
+                !m_Runtime.CompiledAsset.TryGetStateNodeIndex(stateKey, out int stateNodeIndex))
+            {
+                return false;
+            }
+
+            return m_Runtime.CompiledAsset.StateNodes[stateNodeIndex].IsPlayable;
         }
 
         public bool HasState(string channelName, string stateKey)
         {
+            if (!m_Runtime.IsInitialized ||
+                string.IsNullOrWhiteSpace(channelName) ||
+                string.IsNullOrWhiteSpace(stateKey) ||
+                !m_Runtime.CompiledAsset.TryGetStateNodeIndex(channelName, stateKey, out int stateNodeIndex))
+            {
+                return false;
+            }
+
+            return m_Runtime.CompiledAsset.StateNodes[stateNodeIndex].IsPlayable;
+        }
+
+        public bool HasStateNode(string stateNodeKey)
+        {
+            return m_Runtime.IsInitialized &&
+                   !string.IsNullOrWhiteSpace(stateNodeKey) &&
+                   m_Runtime.CompiledAsset.TryGetStateNodeIndex(stateNodeKey, out _);
+        }
+
+        public bool HasStateNode(string channelName, string stateNodeKey)
+        {
             return m_Runtime.IsInitialized &&
                    !string.IsNullOrWhiteSpace(channelName) &&
-                   !string.IsNullOrWhiteSpace(stateKey) &&
-                   m_Runtime.CompiledAsset.TryGetStateIndex(channelName, stateKey, out _);
+                   !string.IsNullOrWhiteSpace(stateNodeKey) &&
+                   m_Runtime.CompiledAsset.TryGetStateNodeIndex(channelName, stateNodeKey, out _);
         }
 
         public float GetStateDuration(string stateKey)
