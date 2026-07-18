@@ -136,6 +136,11 @@ namespace XAnimationEditor
             m_EditorActor.StopAllAndResume();
         }
 
+        public void Stop(string channelName)
+        {
+            m_EditorActor.Stop(channelName);
+        }
+
         public void Pause()
         {
             m_EditorActor.Pause();
@@ -156,6 +161,31 @@ namespace XAnimationEditor
             m_EditorActor.SetGlobalSpeed(speed);
         }
 
+        public void SetChannelWeight(string channelName, float weight)
+        {
+            m_EditorActor.SetChannelWeight(channelName, weight);
+        }
+
+        public float GetChannelWeight(string channelName)
+        {
+            return m_EditorActor.GetChannelWeight(channelName);
+        }
+
+        public void PauseChannel(string channelName)
+        {
+            m_EditorActor.PauseChannel(channelName);
+        }
+
+        public void ResumeChannel(string channelName)
+        {
+            m_EditorActor.ResumeChannel(channelName);
+        }
+
+        public bool IsChannelPaused(string channelName)
+        {
+            return m_EditorActor.IsChannelPaused(channelName);
+        }
+
         public void SetRootMotionEnabled(bool enabled)
         {
             m_EditorActor.SetRootMotionEnabled(enabled);
@@ -171,6 +201,11 @@ namespace XAnimationEditor
             m_EditorActor.StepPaused(deltaTime);
         }
 
+        public void SyncFrame()
+        {
+            m_EditorActor.SyncFrame();
+        }
+
         public bool SeekChannel(string channelName, float normalizedTime)
         {
             return m_EditorActor.SeekChannelAndSync(channelName, normalizedTime);
@@ -181,12 +216,22 @@ namespace XAnimationEditor
             return m_EditorActor.GetChannelState(channelName);
         }
 
+        public XAnimationDebugGraphSnapshot GetDebugGraphSnapshot()
+        {
+            return m_EditorActor.GetDebugGraphSnapshot();
+        }
+
         public void SetParameter(string key, float value)
         {
             m_EditorActor.SetParameter(key, value);
         }
 
         public void SetParameter(string key, int value)
+        {
+            m_EditorActor.SetParameter(key, value);
+        }
+
+        public void SetParameter(string key, string value)
         {
             m_EditorActor.SetParameter(key, value);
         }
@@ -212,6 +257,11 @@ namespace XAnimationEditor
         }
 
         public bool TryGetParameter(string key, out int value)
+        {
+            return m_EditorActor.TryGetParameter(key, out value);
+        }
+
+        public bool TryGetParameter(string key, out string value)
         {
             return m_EditorActor.TryGetParameter(key, out value);
         }

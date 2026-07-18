@@ -117,6 +117,13 @@ namespace XAnimationEngine
             m_Runtime.ProcessSelectorParameterChange(key);
         }
 
+        public void SetParameter(string key, string value)
+        {
+            EnsureInitialized();
+            m_Runtime.Context.SetString(key, value);
+            m_Runtime.ProcessSelectorParameterChange(key);
+        }
+
         public void SetTrigger(string key)
         {
             EnsureInitialized();
@@ -145,6 +152,12 @@ namespace XAnimationEngine
         {
             EnsureInitialized();
             return m_Runtime.Context.TryGetInt(key, out value);
+        }
+
+        public bool TryGetParameter(string key, out string value)
+        {
+            EnsureInitialized();
+            return m_Runtime.Context.TryGetString(key, out value);
         }
 
         public bool TryGetTrigger(string key, out bool value)

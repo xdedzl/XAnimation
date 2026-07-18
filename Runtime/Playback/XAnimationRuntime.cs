@@ -217,6 +217,7 @@ namespace XAnimationEngine
         internal void Stop(string channelName, float fadeOut = 0)
         {
             ThrowIfDisposed();
+            m_PlaybackController.ClearSelectorState(channelName);
             XAnimationChannel channel = GetChannel(channelName);
             m_CueRuntime.StopChannel(channel, fadeOut > 0f ? fadeOut : channel.CompiledChannel.Config.defaultFadeOut);
         }
@@ -224,6 +225,7 @@ namespace XAnimationEngine
         internal void StopAll(float fadeOut = 0)
         {
             ThrowIfDisposed();
+            m_PlaybackController.ClearAllSelectorStates();
             foreach (XAnimationChannel channel in m_Channels)
             {
                 float actualFadeOut = fadeOut > 0f ? fadeOut : channel.CompiledChannel.Config.defaultFadeOut;

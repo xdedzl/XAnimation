@@ -71,6 +71,11 @@ namespace XAnimationEditor
                 return value is bool b && b;
             }
         }
+        public static string ConvertParameterDefaultToString(object value)
+        {
+            return value?.ToString() ?? string.Empty;
+        }
+
 
         public static void RemoveStaleValues<T>(Dictionary<string, T> cache, HashSet<string> validKeys)
         {

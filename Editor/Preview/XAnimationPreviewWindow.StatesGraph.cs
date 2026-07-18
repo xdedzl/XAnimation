@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -11,6 +12,8 @@ namespace XAnimationEditor
 {
     public sealed partial class XAnimationPreviewWindow
     {
+        private bool m_StatesGraphEditingStateTransitions;
+
         private VisualElement BuildStatesGraphTab()
         {
             VisualElement root = new();
@@ -54,7 +57,7 @@ namespace XAnimationEditor
             body.Add(detailsScrollView);
             body.RegisterCallback<GeometryChangedEvent>(_ => m_StatesGraphView?.RefreshViewportAfterLayout());
 
-            Label status = new("滚轮缩放，拖动空白处平移；右键新增；双击 Node 进入对应视图。");
+            Label status = new("滚轮缩放，拖动空白处平移；右键新增；双击 Node 进入对应视图。Blend State 内再次双击左侧 State 编辑 Transition。");
             status.style.height = 23;
             status.style.flexShrink = 0;
             status.style.paddingLeft = 8;
@@ -101,12 +104,14 @@ namespace XAnimationEditor
 
             m_StatesGraphView.ContainerDoubleClicked += SetStatesGraphPath;
             m_StatesGraphView.NodeSelected += SelectStatesGraphNode;
-            m_StatesGraphView.NodeTreeFocusRequested += FocusStatesGraphNodeInNodeTree;
+            m_StatesGraphView.ChannelTreeFocusRequested += FocusStatesGraphNodeInChannelTree;
             m_StatesGraphView.NodePositionChanged += SetStatesGraphNodePosition;
             m_StatesGraphView.PanOffsetChanged += SetStatesGraphPanOffset;
             m_StatesGraphView.AddNodeRequested += AddStatesGraphNode;
             m_StatesGraphView.DeleteNodeRequested += DeleteStatesGraphNode;
+            m_StatesGraphView.NodeRenameRequested += RenameStatesGraphNode;
             m_StatesGraphView.SelectorParameterChanged += SetStatesGraphSelectorParameter;
+            m_StatesGraphView.SelectorBranchValueChanged += SetStatesGraphSelectorBranchValue;
             m_StatesGraphView.TransitionSelected += SelectDefaultTransitionTabPair;
             m_StatesGraphView.TransitionDeleteRequested += DeleteDefaultTransitionTabPair;
             m_StatesGraphView.TransitionStateEntered += SetStatesGraphTransitionState;
@@ -147,6 +152,7 @@ namespace XAnimationEditor
             if (!string.IsNullOrWhiteSpace(m_StatesGraphCurrentPath) && currentNode == null)
             {
                 m_StatesGraphCurrentPath = string.Empty;
+                m_StatesGraphEditingStateTransitions = false;
             }
 
             if (!TryGetCompiledStateNodeByUiKey(m_StatesGraphSelectedStateUiKey, out XAnimationCompiledStateNode selectedNode) ||
@@ -159,6 +165,25 @@ namespace XAnimationEditor
             string currentPath = currentNode?.Key ?? string.Empty;
             if (currentNode is XAnimationCompiledState currentState)
             {
+                m_StatesGraphSelectedStateUiKey = BuildStateUiKey(currentState);
+                if (currentState.StateType != XAnimationStateType.Single && !m_StatesGraphEditingStateTransitions)
+                {
+                    m_Session.TryGetStatesGraphViewPanOffset(m_StatesGraphChannelName, currentPath, out Vector2 blendPanOffset);
+                    m_StatesGraphView.SetData(
+                        m_StatesGraphChannelName,
+                        currentPath,
+                        BuildStatesGraphBreadcrumbs(m_StatesGraphChannelName, currentPath),
+                        BuildBlendStateGraphNodes(currentState),
+                        XAnimationStatesGraphElement.DisplayMode.Blend,
+                        Array.Empty<string>(),
+                        Array.Empty<string>(),
+                        m_StatesGraphSelectedStateUiKey,
+                        blendPanOffset);
+                    m_StatesGraphView.SetEditEnabled(!m_Session.IsOverrideAsset);
+                    BuildStatesGraphDetails(currentState);
+                    return;
+                }
+
                 m_DefaultTransitionEditingStateUiKey = BuildStateUiKey(currentState);
                 m_StatesGraphSelectedStateUiKey = m_DefaultTransitionEditingStateUiKey;
                 List<DefaultTransitionPairEntry> inEntries = CollectDefaultTransitionPairEntries(currentState.ChannelName, currentState.Key, true);
@@ -178,11 +203,11 @@ namespace XAnimationEditor
                 return;
             }
 
-            bool selectorGraph = currentNode is XAnimationCompiledSelectorStateNode;
+            bool selectorGraph = currentNode != null && IsSelectorKind(currentNode.Kind);
             IReadOnlyList<XAnimationCompiledStateNode> children = currentNode?.Children ??
                 m_Session.CompiledAsset.GetChannel(m_StatesGraphChannelName).RootStateNodes;
             List<XAnimationStatesGraphElement.NodeViewData> nodes = selectorGraph
-                ? BuildSelectorStatesGraphNodes((XAnimationCompiledSelectorStateNode)currentNode)
+                ? BuildSelectorStatesGraphNodes(currentNode)
                 : BuildStatesGraphNodes(children);
             m_Session.TryGetStatesGraphViewPanOffset(m_StatesGraphChannelName, currentPath, out Vector2 panOffset);
             m_StatesGraphView.SetData(
@@ -193,14 +218,15 @@ namespace XAnimationEditor
                 selectorGraph
                     ? XAnimationStatesGraphElement.DisplayMode.Selector
                     : XAnimationStatesGraphElement.DisplayMode.Normal,
-                BuildStatesGraphIntParameters(),
+                BuildStatesGraphParameters(XAnimationParameterType.Int),
+                BuildStatesGraphParameters(XAnimationParameterType.String),
                 m_StatesGraphSelectedStateUiKey,
                 panOffset);
             m_StatesGraphView.SetEditEnabled(!m_Session.IsOverrideAsset);
             BuildStatesGraphDetails(selectedNode);
         }
 
-        private void FocusStatesGraphNodeInNodeTree(string nodePath, XAnimationStateNodeKind nodeKind)
+        private void FocusStatesGraphNodeInChannelTree(string nodePath, XAnimationStateNodeKind nodeKind)
         {
             if (string.IsNullOrWhiteSpace(m_StatesGraphChannelName) || string.IsNullOrWhiteSpace(nodePath))
             {
@@ -254,6 +280,7 @@ namespace XAnimationEditor
                 m_StatesGraphChannelName = string.Empty;
                 m_StatesGraphCurrentPath = string.Empty;
                 m_StatesGraphSelectedStateUiKey = string.Empty;
+                m_StatesGraphEditingStateTransitions = false;
                 return;
             }
 
@@ -265,6 +292,7 @@ namespace XAnimationEditor
             m_StatesGraphChannelName = m_Session.CompiledAsset.Channels[0].Name;
             m_StatesGraphCurrentPath = string.Empty;
             m_StatesGraphSelectedStateUiKey = string.Empty;
+            m_StatesGraphEditingStateTransitions = false;
         }
 
         private bool HasStatesGraphChannel(string channelName)
@@ -339,6 +367,7 @@ namespace XAnimationEditor
             m_StatesGraphChannelName = channelName;
             m_StatesGraphCurrentPath = string.Empty;
             m_StatesGraphSelectedStateUiKey = string.Empty;
+            m_StatesGraphEditingStateTransitions = false;
             RebuildStatesGraphTab();
         }
 
@@ -347,10 +376,18 @@ namespace XAnimationEditor
             string normalizedPath = NormalizeStatePath(path);
             if (string.Equals(m_StatesGraphCurrentPath, normalizedPath, StringComparison.Ordinal))
             {
+                if (m_StatesGraphEditingStateTransitions &&
+                    ResolveStatesGraphCurrentNode() is XAnimationCompiledState state &&
+                    state.StateType != XAnimationStateType.Single)
+                {
+                    m_StatesGraphEditingStateTransitions = false;
+                    RebuildStatesGraphTab();
+                }
                 return;
             }
 
             m_StatesGraphCurrentPath = normalizedPath;
+            m_StatesGraphEditingStateTransitions = false;
             RebuildStatesGraphTab();
         }
 
@@ -425,7 +462,9 @@ namespace XAnimationEditor
                     out Vector2 position);
                 string detail = child switch
                 {
-                    XAnimationCompiledSelectorStateNode selector => $"Selector · {selector.Config.parameterName} · {selector.Children.Count} 分支",
+                    XAnimationCompiledSelectorStateNode selector => $"Index Selector · {selector.Config.parameterName} · {selector.Children.Count} 分支",
+                    XAnimationCompiledIntSelectorStateNode selector => $"Int Selector · {selector.Config.parameterName} · {selector.Children.Count} 分支",
+                    XAnimationCompiledStringSelectorStateNode selector => $"String Selector · {selector.Config.parameterName} · {selector.Children.Count} 分支",
                     XAnimationCompiledState state => $"{state.Config.stateType} · loop {state.Config.loop} · speed {state.Config.speed:0.###}",
                     _ => $"Normal · {child.Children.Count} 子节点",
                 };
@@ -442,27 +481,120 @@ namespace XAnimationEditor
             return nodes;
         }
 
-        private List<XAnimationStatesGraphElement.NodeViewData> BuildSelectorStatesGraphNodes(
-            XAnimationCompiledSelectorStateNode rootSelector)
+        private List<XAnimationStatesGraphElement.NodeViewData> BuildBlendStateGraphNodes(XAnimationCompiledState state)
         {
             List<XAnimationStatesGraphElement.NodeViewData> nodes = new();
-            AddSelectorStatesGraphNode(nodes, rootSelector, 0, string.Empty, -1, true);
+            string stateDetail = state switch
+            {
+                XAnimationCompiledBlend1DState blend1D =>
+                    $"Blend1D · {blend1D.Config.parameterName} · {blend1D.Samples.Count} motions",
+                XAnimationCompiledBlend2DSimpleDirectionalState blend2D =>
+                    $"Blend2D Simple Directional · {blend2D.Config.parameterXName}, {blend2D.Config.parameterYName} · {blend2D.Samples.Count} motions",
+                XAnimationCompiledBlend2DFreeformDirectionalState blend2D =>
+                    $"Blend2D Freeform Directional · {blend2D.Config.parameterXName}, {blend2D.Config.parameterYName} · {blend2D.Samples.Count} motions",
+                _ => state.StateType.ToString(),
+            };
+            nodes.Add(new XAnimationStatesGraphElement.NodeViewData(
+                XAnimationStateNodeKind.State,
+                state.Name,
+                state.Key,
+                BuildStateUiKey(state),
+                stateDetail,
+                false,
+                default,
+                isBlendRoot: true));
+
+            switch (state)
+            {
+                case XAnimationCompiledBlend1DState blend1D:
+                    for (int i = 0; i < blend1D.Samples.Count; i++)
+                    {
+                        XAnimationCompiledBlend1DSample sample = blend1D.Samples[i];
+                        AddBlendMotionNode(nodes, state.Key, i, sample.Config.clipKey, $"Motion {i + 1} · threshold {sample.Threshold:0.###}");
+                    }
+                    break;
+                case XAnimationCompiledBlend2DSimpleDirectionalState blend2D:
+                    AddDirectionalBlendMotionNodes(nodes, state.Key, blend2D.Samples);
+                    break;
+                case XAnimationCompiledBlend2DFreeformDirectionalState blend2D:
+                    AddDirectionalBlendMotionNodes(nodes, state.Key, blend2D.Samples);
+                    break;
+            }
+
+            return nodes;
+        }
+
+        private static void AddDirectionalBlendMotionNodes(
+            List<XAnimationStatesGraphElement.NodeViewData> nodes,
+            string stateKey,
+            IReadOnlyList<XAnimationCompiledBlend2DSimpleDirectionalSample> samples)
+        {
+            for (int i = 0; i < samples.Count; i++)
+            {
+                XAnimationCompiledBlend2DSimpleDirectionalSample sample = samples[i];
+                AddBlendMotionNode(
+                    nodes,
+                    stateKey,
+                    i,
+                    sample.Config.clipKey,
+                    $"Motion {i + 1} · position ({sample.Position.x:0.###}, {sample.Position.y:0.###})");
+            }
+        }
+
+        private static void AddBlendMotionNode(
+            List<XAnimationStatesGraphElement.NodeViewData> nodes,
+            string stateKey,
+            int sampleIndex,
+            string clipKey,
+            string detail)
+        {
+            nodes.Add(new XAnimationStatesGraphElement.NodeViewData(
+                XAnimationStateNodeKind.Normal,
+                clipKey,
+                $"{stateKey}::blend-motion::{sampleIndex}",
+                string.Empty,
+                detail,
+                false,
+                default,
+                isBlendMotion: true));
+        }
+
+        private List<XAnimationStatesGraphElement.NodeViewData> BuildSelectorStatesGraphNodes(
+            XAnimationCompiledStateNode rootSelector)
+        {
+            List<XAnimationStatesGraphElement.NodeViewData> nodes = new();
+            AddSelectorStatesGraphNode(
+                nodes,
+                rootSelector,
+                0,
+                string.Empty,
+                XAnimationStateNodeKind.Normal,
+                null,
+                true);
             AddSelectorStatesGraphChildren(nodes, rootSelector, 1);
             return nodes;
         }
 
         private void AddSelectorStatesGraphChildren(
             List<XAnimationStatesGraphElement.NodeViewData> nodes,
-            XAnimationCompiledSelectorStateNode parentSelector,
+            XAnimationCompiledStateNode parentSelector,
             int depth)
         {
             for (int i = 0; i < parentSelector.Children.Count; i++)
             {
                 XAnimationCompiledStateNode child = parentSelector.Children[i];
-                AddSelectorStatesGraphNode(nodes, child, depth, parentSelector.Key, i, false);
-                if (child is XAnimationCompiledSelectorStateNode childSelector)
+                string selectorValue = GetSelectorBranchValue(parentSelector, child.Name, i);
+                AddSelectorStatesGraphNode(
+                    nodes,
+                    child,
+                    depth,
+                    parentSelector.Key,
+                    parentSelector.Kind,
+                    selectorValue,
+                    false);
+                if (IsSelectorKind(child.Kind))
                 {
-                    AddSelectorStatesGraphChildren(nodes, childSelector, depth + 1);
+                    AddSelectorStatesGraphChildren(nodes, child, depth + 1);
                 }
             }
         }
@@ -472,20 +604,21 @@ namespace XAnimationEditor
             XAnimationCompiledStateNode node,
             int depth,
             string parentSelectorPath,
-            int selectorValue,
+            XAnimationStateNodeKind parentSelectorKind,
+            string selectorValue,
             bool isSelectorRoot)
         {
             Vector2 position = default;
-            string valuePrefix = selectorValue >= 0 ? $"Value {selectorValue} · " : string.Empty;
+            string valuePrefix = selectorValue != null &&
+                                 parentSelectorKind == XAnimationStateNodeKind.Selector
+                ? $"Value {FormatSelectorBranchValue(parentSelectorKind, selectorValue)} · "
+                : string.Empty;
             string detail = node switch
             {
-                XAnimationCompiledSelectorStateNode selector => $"{valuePrefix}Selector · {selector.Children.Count} 分支",
                 XAnimationCompiledState state => $"{valuePrefix}{state.Config.stateType} · loop {state.Config.loop}",
+                _ when IsSelectorKind(node.Kind) => $"{valuePrefix}{GetSelectorKindLabel(node.Kind)} · {node.Children.Count} 分支",
                 _ => valuePrefix + node.Kind,
             };
-            string parameterName = node is XAnimationCompiledSelectorStateNode selectorNode
-                ? selectorNode.Config.parameterName
-                : string.Empty;
             nodes.Add(new XAnimationStatesGraphElement.NodeViewData(
                 node.Kind,
                 node.Name,
@@ -496,18 +629,50 @@ namespace XAnimationEditor
                 position,
                 depth,
                 parentSelectorPath,
+                parentSelectorKind,
                 selectorValue,
-                parameterName,
+                GetSelectorParameterName(node),
                 isSelectorRoot));
         }
 
-        private List<string> BuildStatesGraphIntParameters()
+        private static string GetSelectorBranchValue(
+            XAnimationCompiledStateNode selector,
+            string childName,
+            int childIndex)
+        {
+            switch (selector)
+            {
+                case XAnimationCompiledSelectorStateNode:
+                    return childIndex.ToString(CultureInfo.InvariantCulture);
+                case XAnimationCompiledIntSelectorStateNode intSelector:
+                    return Array.Find(
+                            intSelector.Config.branches,
+                            branch => string.Equals(branch.childName, childName, StringComparison.Ordinal))
+                        .value.ToString(CultureInfo.InvariantCulture);
+                case XAnimationCompiledStringSelectorStateNode stringSelector:
+                    return Array.Find(
+                            stringSelector.Config.branches,
+                            branch => string.Equals(branch.childName, childName, StringComparison.Ordinal))
+                        .value;
+                default:
+                    throw new XAnimationException($"State node '{selector.Key}' is not a Selector.");
+            }
+        }
+
+        private static string FormatSelectorBranchValue(XAnimationStateNodeKind selectorKind, string value)
+        {
+            return selectorKind == XAnimationStateNodeKind.StringSelector
+                ? $"\"{value}\""
+                : value;
+        }
+
+        private List<string> BuildStatesGraphParameters(XAnimationParameterType parameterType)
         {
             List<string> parameters = new();
             IReadOnlyList<XAnimationCompiledParameter> compiledParameters = m_Session.CompiledAsset.Parameters;
             for (int i = 0; i < compiledParameters.Count; i++)
             {
-                if (compiledParameters[i].Type == XAnimationParameterType.Int)
+                if (compiledParameters[i].Type == parameterType)
                 {
                     parameters.Add(compiledParameters[i].Name);
                 }
@@ -560,12 +725,14 @@ namespace XAnimationEditor
             try
             {
                 bool automaticSelectorLayout = !string.IsNullOrWhiteSpace(parentPath) &&
-                                               m_Session.CompiledAsset.GetStateNode(m_StatesGraphChannelName, parentPath).Kind == XAnimationStateNodeKind.Selector;
+                                               IsSelectorKind(m_Session.CompiledAsset.GetStateNode(m_StatesGraphChannelName, parentPath).Kind);
                 string nodeKey = nodeKind switch
                 {
                     XAnimationStateNodeKind.State => m_Session.AddState(m_StatesGraphChannelName, parentPath),
                     XAnimationStateNodeKind.Normal => m_Session.AddNormalStateNode(m_StatesGraphChannelName, parentPath),
                     XAnimationStateNodeKind.Selector => m_Session.AddSelectorStateNode(m_StatesGraphChannelName, parentPath),
+                    XAnimationStateNodeKind.IntSelector => m_Session.AddIntSelectorStateNode(m_StatesGraphChannelName, parentPath),
+                    XAnimationStateNodeKind.StringSelector => m_Session.AddStringSelectorStateNode(m_StatesGraphChannelName, parentPath),
                     _ => throw new XAnimationException($"Cannot add State Node with kind '{nodeKind}'."),
                 };
                 if (!automaticSelectorLayout)
@@ -611,9 +778,45 @@ namespace XAnimationEditor
             if (deletingCurrentPath)
             {
                 m_StatesGraphCurrentPath = parentPath;
+                m_StatesGraphEditingStateTransitions = false;
             }
             m_StatesGraphSelectedStateUiKey = string.Empty;
             RebuildStatesGraphTab();
+        }
+
+        private void RenameStatesGraphNode(string oldPath, string newLeafName)
+        {
+            string newPath = BuildRenamedStateNodePath(oldPath, newLeafName);
+            try
+            {
+                m_Session.RenameStatePath(m_StatesGraphChannelName, oldPath, newPath);
+
+                if (string.Equals(m_StatesGraphCurrentPath, oldPath, StringComparison.Ordinal))
+                {
+                    m_StatesGraphCurrentPath = newPath;
+                }
+
+                string oldUiKey = BuildStateUiKey(m_StatesGraphChannelName, oldPath);
+                string newUiKey = BuildStateUiKey(m_StatesGraphChannelName, newPath);
+                if (string.Equals(m_StatesGraphSelectedStateUiKey, oldUiKey, StringComparison.Ordinal))
+                {
+                    m_StatesGraphSelectedStateUiKey = newUiKey;
+                }
+                if (string.Equals(m_DefaultTransitionEditingStateUiKey, oldUiKey, StringComparison.Ordinal))
+                {
+                    m_DefaultTransitionEditingStateUiKey = newUiKey;
+                }
+
+                SetStatus($"State Node {oldPath} 已重命名为 {newPath}。");
+                RebuildStatePresentation(includeChannelPresentation: true);
+                RebuildStatesGraphTab();
+            }
+            catch (Exception ex)
+            {
+                RebuildStatesGraphTab();
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
         }
 
         private void SetStatesGraphTransitionState(string stateUiKey)
@@ -626,6 +829,7 @@ namespace XAnimationEditor
             m_StatesGraphChannelName = state.ChannelName;
             m_StatesGraphCurrentPath = state.Key;
             m_StatesGraphSelectedStateUiKey = stateUiKey;
+            m_StatesGraphEditingStateTransitions = true;
             m_DefaultTransitionEditingStateUiKey = stateUiKey;
             m_DefaultTransitionTabTransitionIndex = -1;
             m_DefaultTransitionTabPairIndex = -1;
@@ -646,6 +850,45 @@ namespace XAnimationEditor
             }
             catch (Exception ex)
             {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+            }
+        }
+
+        private void SetStatesGraphSelectorBranchValue(
+            string selectorKey,
+            string childName,
+            string value)
+        {
+            try
+            {
+                XAnimationCompiledStateNode selector =
+                    m_Session.CompiledAsset.GetStateNode(m_StatesGraphChannelName, selectorKey);
+                if (selector.Kind == XAnimationStateNodeKind.IntSelector)
+                {
+                    m_Session.SetIntSelectorBranchValue(
+                        m_StatesGraphChannelName,
+                        selectorKey,
+                        childName,
+                        int.Parse(value, CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    m_Session.SetStringSelectorBranchValue(
+                        m_StatesGraphChannelName,
+                        selectorKey,
+                        childName,
+                        value);
+                }
+
+                string childKey = BuildStatePathKey(selectorKey, childName);
+                m_StatesGraphSelectedStateUiKey = BuildStateUiKey(m_StatesGraphChannelName, childKey);
+                RebuildStatePresentation(includeChannelPresentation: true);
+                RebuildStatesGraphTab();
+            }
+            catch (Exception ex)
+            {
+                RebuildStatesGraphTab();
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }
@@ -675,10 +918,18 @@ namespace XAnimationEditor
 
             TextField kindField = new("Kind")
             {
-                value = selectedNode.Kind.ToString(),
+                value = IsSelectorKind(selectedNode.Kind)
+                    ? GetSelectorKindLabel(selectedNode.Kind)
+                    : selectedNode.Kind.ToString(),
                 isReadOnly = true,
             };
             m_StatesGraphDetailsView.Add(kindField);
+
+            if (IsSelectorKind(selectedNode.Kind))
+            {
+                BuildSelectorStatesGraphDetails(selectedNode);
+                return;
+            }
 
             if (selectedNode is not XAnimationCompiledState selectedState)
             {
@@ -711,12 +962,88 @@ namespace XAnimationEditor
             m_StatesGraphDetailsView.Add(editor);
         }
 
+        private void BuildSelectorStatesGraphDetails(XAnimationCompiledStateNode selector)
+        {
+            XAnimationParameterType parameterType =
+                selector.Kind == XAnimationStateNodeKind.StringSelector
+                    ? XAnimationParameterType.String
+                    : XAnimationParameterType.Int;
+            List<string> parameters = BuildStatesGraphParameters(parameterType);
+            string parameterName = GetSelectorParameterName(selector);
+            DropdownField parameterField = new(
+                "Parameter",
+                parameters,
+                Mathf.Max(0, parameters.IndexOf(parameterName)));
+            parameterField.style.marginTop = 8;
+            ApplyDropdownFieldStyle(parameterField);
+            parameterField.SetEnabled(!m_Session.IsOverrideAsset);
+            parameterField.RegisterValueChangedCallback(evt =>
+                SetStatesGraphSelectorParameter(selector.Key, evt.newValue));
+            m_StatesGraphDetailsView.Add(parameterField);
+
+            Label branchesTitle = CreateBoldLabel("Branches");
+            branchesTitle.style.marginTop = 10;
+            m_StatesGraphDetailsView.Add(branchesTitle);
+
+            for (int i = 0; i < selector.Children.Count; i++)
+            {
+                XAnimationCompiledStateNode child = selector.Children[i];
+                string childName = child.Name;
+                VisualElement row = Row();
+                row.style.marginTop = 3;
+
+                Label childLabel = new(childName);
+                childLabel.style.width = 110;
+                childLabel.style.flexShrink = 0;
+                childLabel.style.color = TextMuted;
+                row.Add(childLabel);
+
+                string value = GetSelectorBranchValue(selector, childName, i);
+                if (selector.Kind == XAnimationStateNodeKind.Selector)
+                {
+                    Label indexLabel = new(value);
+                    indexLabel.style.flexGrow = 1;
+                    row.Add(indexLabel);
+                }
+                else if (selector.Kind == XAnimationStateNodeKind.IntSelector)
+                {
+                    IntegerField valueField = new()
+                    {
+                        value = int.Parse(value, CultureInfo.InvariantCulture)
+                    };
+                    valueField.style.flexGrow = 1;
+                    valueField.SetEnabled(!m_Session.IsOverrideAsset);
+                    valueField.RegisterValueChangedCallback(evt =>
+                        SetStatesGraphSelectorBranchValue(
+                            selector.Key,
+                            childName,
+                            evt.newValue.ToString(CultureInfo.InvariantCulture)));
+                    row.Add(valueField);
+                }
+                else
+                {
+                    TextField valueField = new()
+                    {
+                        value = value
+                    };
+                    valueField.style.flexGrow = 1;
+                    valueField.SetEnabled(!m_Session.IsOverrideAsset);
+                    valueField.RegisterValueChangedCallback(evt =>
+                        SetStatesGraphSelectorBranchValue(selector.Key, childName, evt.newValue));
+                    row.Add(valueField);
+                }
+
+                m_StatesGraphDetailsView.Add(row);
+            }
+        }
+
         private sealed class XAnimationStatesGraphElement : VisualElement
         {
             public enum DisplayMode
             {
                 Normal,
                 Selector,
+                Blend,
                 State,
             }
 
@@ -817,9 +1144,12 @@ namespace XAnimationEditor
                     Vector2 position,
                     int depth = 0,
                     string parentSelectorPath = null,
-                    int selectorValue = -1,
+                    XAnimationStateNodeKind parentSelectorKind = XAnimationStateNodeKind.Normal,
+                    string selectorValue = null,
                     string parameterName = null,
-                    bool isSelectorRoot = false)
+                    bool isSelectorRoot = false,
+                    bool isBlendRoot = false,
+                    bool isBlendMotion = false)
                 {
                     Kind = kind;
                     Title = title ?? string.Empty;
@@ -831,8 +1161,11 @@ namespace XAnimationEditor
                     Depth = depth;
                     ParentSelectorPath = parentSelectorPath ?? string.Empty;
                     SelectorValue = selectorValue;
+                    ParentSelectorKind = parentSelectorKind;
                     ParameterName = parameterName ?? string.Empty;
                     IsSelectorRoot = isSelectorRoot;
+                    IsBlendRoot = isBlendRoot;
+                    IsBlendMotion = isBlendMotion;
                 }
 
                 public XAnimationStateNodeKind Kind { get; }
@@ -844,9 +1177,12 @@ namespace XAnimationEditor
                 public Vector2 Position { get; }
                 public int Depth { get; }
                 public string ParentSelectorPath { get; }
-                public int SelectorValue { get; }
+                public XAnimationStateNodeKind ParentSelectorKind { get; }
+                public string SelectorValue { get; }
                 public string ParameterName { get; }
                 public bool IsSelectorRoot { get; }
+                public bool IsBlendRoot { get; }
+                public bool IsBlendMotion { get; }
 
                 public NodeViewData WithPosition(Vector2 position)
                 {
@@ -860,9 +1196,12 @@ namespace XAnimationEditor
                         position,
                         Depth,
                         ParentSelectorPath,
+                        ParentSelectorKind,
                         SelectorValue,
                         ParameterName,
-                        IsSelectorRoot);
+                        IsSelectorRoot,
+                        IsBlendRoot,
+                        IsBlendMotion);
                 }
             }
 
@@ -870,7 +1209,9 @@ namespace XAnimationEditor
             {
                 public abstract float NodeHeight { get; }
                 public virtual bool CanAddNormal => true;
+                public virtual bool CanAddNodes => true;
                 public virtual bool UsesStateTransitionGraph => false;
+                public virtual bool EntersStateTransitions => false;
 
                 public virtual float GetNodeWidth(NodeViewData nodeData)
                 {
@@ -899,6 +1240,16 @@ namespace XAnimationEditor
                 }
 
                 public virtual bool CanDeleteNode(NodeViewData nodeData)
+                {
+                    return true;
+                }
+
+                public virtual bool CanFocusNode(NodeViewData nodeData)
+                {
+                    return true;
+                }
+
+                public virtual bool CanRenameNode(NodeViewData nodeData)
                 {
                     return true;
                 }
@@ -971,7 +1322,7 @@ namespace XAnimationEditor
 
                 public override float GetNodeWidth(NodeViewData nodeData)
                 {
-                    return nodeData.Kind == XAnimationStateNodeKind.Selector
+                    return IsSelectorKind(nodeData.Kind)
                         ? SelectorNodeWidth
                         : NodeWidth;
                 }
@@ -1057,9 +1408,14 @@ namespace XAnimationEditor
                     VisualElement node,
                     NodeViewData nodeData)
                 {
-                    if (nodeData.Kind == XAnimationStateNodeKind.Selector)
+                    if (IsSelectorKind(nodeData.Kind))
                     {
                         graph.AddSelectorParameterField(node, nodeData);
+                    }
+                    if (nodeData.ParentSelectorKind == XAnimationStateNodeKind.IntSelector ||
+                        nodeData.ParentSelectorKind == XAnimationStateNodeKind.StringSelector)
+                    {
+                        graph.AddSelectorBranchValueField(node, nodeData);
                     }
                 }
 
@@ -1097,6 +1453,75 @@ namespace XAnimationEditor
                 }
             }
 
+            private sealed class BlendGraphMode : GraphMode
+            {
+                public static readonly BlendGraphMode Instance = new();
+
+                public override float NodeHeight => XAnimationStatesGraphElement.NodeHeight;
+                public override bool CanAddNormal => false;
+                public override bool CanAddNodes => false;
+                public override bool EntersStateTransitions => true;
+
+                public override float GetNodeWidth(NodeViewData nodeData)
+                {
+                    return nodeData.IsBlendRoot ? BlendStateNodeWidth : BlendMotionNodeWidth;
+                }
+
+                public override void BuildLayout(
+                    XAnimationStatesGraphElement graph,
+                    List<Vector2> positions)
+                {
+                    int motionCount = Mathf.Max(0, graph.m_Nodes.Count - 1);
+                    float motionColumnHeight = motionCount * NodeHeight + Mathf.Max(0, motionCount - 1) * NodeGapY;
+                    float layoutHeight = Mathf.Max(NodeHeight, motionColumnHeight);
+                    float layoutWidth = BlendStateNodeWidth + BlendColumnGap + BlendMotionNodeWidth;
+                    Vector2 origin = graph.GetAutomaticLayoutOrigin(layoutWidth, layoutHeight);
+
+                    positions.Add(new Vector2(origin.x, origin.y + (layoutHeight - NodeHeight) * 0.5f));
+                    for (int i = 0; i < motionCount; i++)
+                    {
+                        positions.Add(new Vector2(
+                            origin.x + BlendStateNodeWidth + BlendColumnGap,
+                            origin.y + i * (NodeHeight + NodeGapY)));
+                    }
+
+                    for (int i = 0; i < graph.m_Nodes.Count; i++)
+                    {
+                        graph.m_NodePositionByPath[graph.m_Nodes[i].Path] = positions[i];
+                    }
+                }
+
+                public override bool CanDragNode(NodeViewData nodeData)
+                {
+                    return false;
+                }
+
+                public override bool CanEnterNode(NodeViewData nodeData)
+                {
+                    return nodeData.IsBlendRoot;
+                }
+
+                public override bool CanDeleteNode(NodeViewData nodeData)
+                {
+                    return nodeData.IsBlendRoot;
+                }
+
+                public override bool CanFocusNode(NodeViewData nodeData)
+                {
+                    return nodeData.IsBlendRoot;
+                }
+
+                public override bool CanRenameNode(NodeViewData nodeData)
+                {
+                    return nodeData.IsBlendRoot;
+                }
+
+                public override void DrawOverlay(XAnimationStatesGraphElement graph, Painter2D painter)
+                {
+                    graph.DrawBlendEdges(painter);
+                }
+            }
+
             private sealed class StateGraphMode : GraphMode
             {
                 public static readonly StateGraphMode Instance = new();
@@ -1120,8 +1545,11 @@ namespace XAnimationEditor
             private const float CanvasPadding = 42f;
             private const float NodeWidth = 168f;
             private const float SelectorNodeWidth = 240f;
+            private const float BlendStateNodeWidth = 190f;
+            private const float BlendMotionNodeWidth = 220f;
+            private const float BlendColumnGap = 150f;
             private const float NodeHeight = 64f;
-            private const float SelectorNodeHeight = 88f;
+            private const float SelectorNodeHeight = 112f;
             private const float NodeGapX = 34f;
             private const float NodeGapY = 28f;
             private const double DoubleClickInterval = 0.5;
@@ -1133,14 +1561,17 @@ namespace XAnimationEditor
             private static readonly Color NormalNodeBg = new(0.20f, 0.18f, 0.25f, 0.98f);
             private static readonly Color SelectorBg = new(0.20f, 0.25f, 0.18f, 0.98f);
             private static readonly Color StateBg = new(0.18f, 0.19f, 0.21f, 0.98f);
+            private static readonly Color BlendMotionBg = new(0.15f, 0.22f, 0.24f, 0.98f);
             private static readonly Color SelectedBg = new(0.16f, 0.24f, 0.34f, 0.98f);
             private static readonly Color NodeBorder = new(0.34f, 0.35f, 0.38f, 1f);
             private static readonly Color SelectedBorder = new(0.48f, 0.74f, 1f, 1f);
             private static readonly Color SelectorEdge = new(0.56f, 0.76f, 0.42f, 0.82f);
+            private static readonly Color BlendEdge = new(0.35f, 0.76f, 0.82f, 0.82f);
 
             private readonly List<NodeViewData> m_Nodes = new();
             private readonly Dictionary<string, Vector2> m_NodePositionByPath = new(StringComparer.Ordinal);
             private readonly List<string> m_IntParameters = new();
+            private readonly List<string> m_StringParameters = new();
             private GraphMode m_Mode = NormalGraphMode.Instance;
             private ScrollView m_ScrollView;
             private VisualElement m_BreadcrumbRow;
@@ -1188,12 +1619,14 @@ namespace XAnimationEditor
 
             public event Action<string> ContainerDoubleClicked;
             public event Action<string> NodeSelected;
-            public event Action<string, XAnimationStateNodeKind> NodeTreeFocusRequested;
+            public event Action<string, XAnimationStateNodeKind> ChannelTreeFocusRequested;
             public event Action<string, XAnimationStateNodeKind, Vector2> NodePositionChanged;
             public event Action<Vector2> PanOffsetChanged;
             public event Action<XAnimationStateNodeKind, string, Vector2> AddNodeRequested;
             public event Action<string> DeleteNodeRequested;
+            public event Action<string, string> NodeRenameRequested;
             public event Action<string, string> SelectorParameterChanged;
+            public event Action<string, string, string> SelectorBranchValueChanged;
             public event Action<int, int, bool> TransitionSelected;
             public event Action<int, int, bool> TransitionDeleteRequested;
             public event Action<string> TransitionStateEntered;
@@ -1210,6 +1643,7 @@ namespace XAnimationEditor
                 IReadOnlyList<NodeViewData> nodes,
                 DisplayMode displayMode,
                 IReadOnlyList<string> intParameters,
+                IReadOnlyList<string> stringParameters,
                 string selectedStateUiKey,
                 Vector2 panOffset)
             {
@@ -1224,6 +1658,14 @@ namespace XAnimationEditor
                     for (int i = 0; i < intParameters.Count; i++)
                     {
                         m_IntParameters.Add(intParameters[i]);
+                    }
+                }
+                m_StringParameters.Clear();
+                if (stringParameters != null)
+                {
+                    for (int i = 0; i < stringParameters.Count; i++)
+                    {
+                        m_StringParameters.Add(stringParameters[i]);
                     }
                 }
                 m_Nodes.Clear();
@@ -1255,6 +1697,7 @@ namespace XAnimationEditor
                 m_EmptyMessage = string.Empty;
                 m_IntParameters.Clear();
                 m_Nodes.Clear();
+                m_StringParameters.Clear();
                 RebuildBreadcrumbs(breadcrumbs);
                 ApplyModeDisplay();
                 m_StateTransitionGraphView.SetCanAddPair(canAddPair);
@@ -1269,6 +1712,7 @@ namespace XAnimationEditor
                 m_Mode = NormalGraphMode.Instance;
                 m_IntParameters.Clear();
                 m_Nodes.Clear();
+                m_StringParameters.Clear();
                 RebuildBreadcrumbs(Array.Empty<BreadcrumbViewData>());
                 ApplyModeDisplay();
                 RebuildGraph(message: message);
@@ -1391,6 +1835,7 @@ namespace XAnimationEditor
                 return displayMode switch
                 {
                     DisplayMode.Selector => SelectorGraphMode.Instance,
+                    DisplayMode.Blend => BlendGraphMode.Instance,
                     DisplayMode.State => StateGraphMode.Instance,
                     _ => NormalGraphMode.Instance,
                 };
@@ -1478,7 +1923,9 @@ namespace XAnimationEditor
                 node.style.paddingBottom = 6;
                 node.style.backgroundColor = selected
                     ? SelectedBg
-                    : nodeData.Kind == XAnimationStateNodeKind.Selector
+                    : nodeData.IsBlendMotion
+                        ? BlendMotionBg
+                    : IsSelectorKind(nodeData.Kind)
                         ? SelectorBg
                         : nodeData.Kind == XAnimationStateNodeKind.Normal ? NormalNodeBg : StateBg;
                 node.style.borderTopWidth = selected ? 2 : 1;
@@ -1495,12 +1942,35 @@ namespace XAnimationEditor
                 node.style.borderBottomLeftRadius = 6;
                 node.style.borderBottomRightRadius = 6;
 
-                Label title = new(nodeData.Title);
-                title.style.color = TextNormal;
-                title.style.fontSize = 12f;
-                title.style.unityFontStyleAndWeight = FontStyle.Bold;
+                EditableLabel title = new(nodeData.Title);
+                title.style.height = 18;
+                title.style.minHeight = 18;
+                title.style.maxHeight = 18;
+                title.style.minWidth = 0;
+                title.style.flexShrink = 0;
                 title.style.overflow = Overflow.Hidden;
-                title.style.textOverflow = TextOverflow.Ellipsis;
+                title.SetEditable(true, EditableLabelEditTrigger.None);
+                title.EditStarted += () =>
+                {
+                    TextField titleField = title.Q<TextField>();
+                    titleField.style.height = 18;
+                    titleField.style.marginTop = 0;
+                    titleField.style.marginBottom = 0;
+                    VisualElement titleInput = titleField.Q("unity-text-input");
+                    titleInput.style.fontSize = 12f;
+                };
+                title.ValueCommitted += (_, newValue) =>
+                    NodeRenameRequested?.Invoke(nodeData.Path, newValue);
+                title.RegisterCallback<PointerDownEvent>(evt => { if (title.IsEditing) evt.StopPropagation(); });
+                title.RegisterCallback<PointerMoveEvent>(evt => { if (title.IsEditing) evt.StopPropagation(); });
+                title.RegisterCallback<PointerUpEvent>(evt => { if (title.IsEditing) evt.StopPropagation(); });
+
+                TextElement titleText = title.Q<TextElement>();
+                titleText.style.color = TextNormal;
+                titleText.style.fontSize = 12f;
+                titleText.style.unityFontStyleAndWeight = FontStyle.Bold;
+                titleText.style.overflow = Overflow.Hidden;
+                titleText.style.textOverflow = TextOverflow.Ellipsis;
                 node.Add(title);
 
                 Label detailLabel = new(nodeData.Detail);
@@ -1519,10 +1989,20 @@ namespace XAnimationEditor
                 node.RegisterCallback<PointerCancelEvent>(OnNodePointerCancel);
                 node.AddManipulator(new ContextualMenuManipulator(evt =>
                 {
-                    evt.menu.AppendAction(
-                        "在 NodeTree 中定位",
-                        _ => NodeTreeFocusRequested?.Invoke(nodeData.Path, nodeData.Kind));
-                    if (nodeData.Kind == XAnimationStateNodeKind.Selector)
+                    if (m_Mode.CanFocusNode(nodeData))
+                    {
+                        evt.menu.AppendAction(
+                            "在 ChannelTree 中定位",
+                            _ => ChannelTreeFocusRequested?.Invoke(nodeData.Path, nodeData.Kind));
+                    }
+                    if (m_Mode.CanRenameNode(nodeData))
+                    {
+                        evt.menu.AppendAction(
+                            "重命名 Node",
+                            _ => title.BeginEdit(),
+                            _ => m_CanEdit && !title.IsEditing ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                    }
+                    if (IsSelectorKind(nodeData.Kind))
                     {
                         int directChildCount = 0;
                         for (int i = 0; i < m_Nodes.Count; i++)
@@ -1540,8 +2020,16 @@ namespace XAnimationEditor
                             _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.State, nodeData.Path, addPosition),
                             _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
                         evt.menu.AppendAction(
-                            "新增子 Node/Selector",
+                            "新增子 Node/Index Selector",
                             _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.Selector, nodeData.Path, addPosition),
+                            _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                        evt.menu.AppendAction(
+                            "新增子 Node/Int Selector",
+                            _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.IntSelector, nodeData.Path, addPosition),
+                            _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                        evt.menu.AppendAction(
+                            "新增子 Node/String Selector",
+                            _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.StringSelector, nodeData.Path, addPosition),
                             _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
                     }
                     if (m_Mode.CanDeleteNode(nodeData))
@@ -1559,11 +2047,13 @@ namespace XAnimationEditor
 
             private void AddSelectorParameterField(VisualElement node, NodeViewData nodeData)
             {
+                List<string> parameters = nodeData.Kind == XAnimationStateNodeKind.StringSelector
+                    ? m_StringParameters : m_IntParameters;
                 DropdownField parameterField = new(
                     "Parameter",
-                    m_IntParameters,
-                    m_IntParameters.IndexOf(nodeData.ParameterName));
-                parameterField.tooltip = "用于按子节点顺序选择状态的 Int Parameter。";
+                    parameters,
+                    parameters.IndexOf(nodeData.ParameterName));
+                parameterField.tooltip = $"{GetSelectorKindLabel(nodeData.Kind)} 使用的参数。";
                 parameterField.style.marginTop = 3;
                 parameterField.style.height = 20;
                 parameterField.style.minWidth = 0;
@@ -1581,6 +2071,65 @@ namespace XAnimationEditor
                 parameterField.RegisterValueChangedCallback(evt =>
                     SelectorParameterChanged?.Invoke(nodeData.Path, evt.newValue));
                 node.Add(parameterField);
+            }
+
+            private void AddSelectorBranchValueField(VisualElement node, NodeViewData nodeData)
+            {
+                VisualElement valueRow = new();
+                valueRow.style.flexDirection = FlexDirection.Row;
+                valueRow.style.alignItems = Align.Center;
+                valueRow.style.marginTop = 3;
+                valueRow.style.height = 20;
+                valueRow.style.minHeight = 20;
+                valueRow.style.maxHeight = 20;
+                valueRow.style.flexShrink = 0;
+
+                Label valueLabel = new("Value");
+                valueLabel.style.width = 38;
+                valueLabel.style.minWidth = 38;
+                valueLabel.style.maxWidth = 38;
+                valueLabel.style.flexShrink = 0;
+                valueRow.Add(valueLabel);
+
+                if (nodeData.ParentSelectorKind == XAnimationStateNodeKind.IntSelector)
+                {
+                    IntegerField field = new()
+                    {
+                        value = int.Parse(nodeData.SelectorValue, CultureInfo.InvariantCulture)
+                    };
+                    field.tooltip = "父 Int Selector 匹配这个子节点的参数值。";
+                    field.style.height = 20;
+                    field.style.minWidth = 0;
+                    field.style.flexGrow = 1;
+                    field.style.flexShrink = 1;
+                    field.RegisterCallback<PointerDownEvent>(evt => evt.StopPropagation());
+                    field.RegisterValueChangedCallback(evt =>
+                        SelectorBranchValueChanged?.Invoke(
+                            nodeData.ParentSelectorPath,
+                            nodeData.Title,
+                            evt.newValue.ToString(CultureInfo.InvariantCulture)));
+                    valueRow.Add(field);
+                    node.Add(valueRow);
+                    return;
+                }
+
+                TextField textField = new()
+                {
+                    value = nodeData.SelectorValue
+                };
+                textField.tooltip = "父 String Selector 精确匹配这个子节点的参数值。";
+                textField.style.height = 20;
+                textField.style.minWidth = 0;
+                textField.style.flexGrow = 1;
+                textField.style.flexShrink = 1;
+                textField.RegisterCallback<PointerDownEvent>(evt => evt.StopPropagation());
+                textField.RegisterValueChangedCallback(evt =>
+                    SelectorBranchValueChanged?.Invoke(
+                        nodeData.ParentSelectorPath,
+                        nodeData.Title,
+                        evt.newValue));
+                valueRow.Add(textField);
+                node.Add(valueRow);
             }
 
             private void ApplyCanvasSize(float width, float height)
@@ -1698,6 +2247,50 @@ namespace XAnimationEditor
                 }
             }
 
+            private void DrawBlendEdges(Painter2D painter)
+            {
+                if (m_Nodes.Count < 2 ||
+                    !m_NodePositionByPath.TryGetValue(m_Nodes[0].Path, out Vector2 statePosition))
+                {
+                    return;
+                }
+
+                Rect stateRect = ScaleRect(new Rect(
+                    statePosition.x,
+                    statePosition.y,
+                    BlendStateNodeWidth,
+                    GetNodeHeight()));
+                Vector2 from = new(stateRect.xMax, stateRect.center.y);
+                for (int i = 1; i < m_Nodes.Count; i++)
+                {
+                    NodeViewData motion = m_Nodes[i];
+                    if (!m_NodePositionByPath.TryGetValue(motion.Path, out Vector2 motionPosition))
+                    {
+                        continue;
+                    }
+
+                    Rect motionRect = ScaleRect(new Rect(
+                        motionPosition.x,
+                        motionPosition.y,
+                        BlendMotionNodeWidth,
+                        GetNodeHeight()));
+                    Vector2 to = new(motionRect.xMin, motionRect.center.y);
+                    float tangent = Mathf.Clamp(Mathf.Abs(to.x - from.x) * 0.42f, 40f * m_Zoom, 120f * m_Zoom);
+                    Vector2 c1 = from + new Vector2(tangent, 0f);
+                    Vector2 c2 = to - new Vector2(tangent, 0f);
+
+                    painter.lineWidth = 2f * Mathf.Clamp(m_Zoom, 0.9f, 1.25f);
+                    painter.strokeColor = BlendEdge;
+                    painter.BeginPath();
+                    painter.MoveTo(from);
+                    for (int sample = 1; sample <= 18; sample++)
+                    {
+                        painter.LineTo(EvaluateCubic(from, c1, c2, to, sample / 18f));
+                    }
+                    painter.Stroke();
+                }
+            }
+
             private static Vector2 EvaluateCubic(Vector2 p0, Vector2 p1, Vector2 p2, Vector2 p3, float t)
             {
                 float inverse = 1f - t;
@@ -1711,6 +2304,12 @@ namespace XAnimationEditor
             {
                 if (IsStatesGraphNode(evt.target as VisualElement))
                 {
+                    return;
+                }
+
+                if (!m_Mode.CanAddNodes)
+                {
+                    evt.StopPropagation();
                     return;
                 }
 
@@ -1728,8 +2327,16 @@ namespace XAnimationEditor
                         _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
                 }
                 evt.menu.AppendAction(
-                    "新建 Node/Selector",
+                    "新建 Node/Index Selector",
                     _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.Selector, m_CurrentPath, graphPoint),
+                    _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction(
+                    "新建 Node/Int Selector",
+                    _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.IntSelector, m_CurrentPath, graphPoint),
+                    _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+                evt.menu.AppendAction(
+                    "新建 Node/String Selector",
+                    _ => AddNodeRequested?.Invoke(XAnimationStateNodeKind.StringSelector, m_CurrentPath, graphPoint),
                     _ => m_CanEdit ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
                 evt.StopPropagation();
             }
@@ -1859,7 +2466,7 @@ namespace XAnimationEditor
                 if (doubleClick && m_Mode.CanEnterNode(nodeData))
                 {
                     m_LastPointerDownNodePath = string.Empty;
-                    ContainerDoubleClicked?.Invoke(nodeData.Path);
+                    EnterNode(nodeData);
                     evt.StopPropagation();
                     return;
                 }
@@ -1980,8 +2587,19 @@ namespace XAnimationEditor
                 NodeSelected?.Invoke(nodeData.NodeUiKey);
                 if (clickCount >= 2 && m_Mode.CanEnterNode(nodeData))
                 {
-                    ContainerDoubleClicked?.Invoke(nodeData.Path);
+                    EnterNode(nodeData);
                 }
+            }
+
+            private void EnterNode(NodeViewData nodeData)
+            {
+                if (m_Mode.EntersStateTransitions)
+                {
+                    TransitionStateEntered?.Invoke(nodeData.NodeUiKey);
+                    return;
+                }
+
+                ContainerDoubleClicked?.Invoke(nodeData.Path);
             }
 
             private void ApplyNodePosition(VisualElement node, Vector2 graphPosition)

@@ -16,9 +16,10 @@ namespace XAnimationEditor
         private readonly Dictionary<string, Slider> m_FloatSliders = new(StringComparer.Ordinal);
         private readonly Dictionary<string, IntegerField> m_IntFields = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Toggle> m_BoolFields = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, TextField> m_StringFields = new(StringComparer.Ordinal);
         private XAnimationAsset m_Asset;
         private int m_ParameterCount = -1;
-        private bool m_Expanded = true;
+        private bool m_Expanded;
         private VisualElement m_List;
 
         public XAnimationActorPreviewParametersHudView(XAnimationEditorActorPlaybackController controller)
@@ -59,6 +60,7 @@ namespace XAnimationEditor
             m_FloatFields.Clear();
             m_FloatSliders.Clear();
             m_IntFields.Clear();
+            m_StringFields.Clear();
             m_BoolFields.Clear();
 
             XAnimationParameterConfig[] parameters = asset?.parameters ?? Array.Empty<XAnimationParameterConfig>();
@@ -97,6 +99,7 @@ namespace XAnimationEditor
                 XAnimationParameterType.Float => CreateFloatRow(parameter),
                 XAnimationParameterType.Bool => CreateBoolRow(parameter),
                 XAnimationParameterType.Int => CreateIntRow(parameter),
+                XAnimationParameterType.String => CreateStringRow(parameter),
                 _ => null,
             };
         }
@@ -201,6 +204,22 @@ namespace XAnimationEditor
             return row;
         }
 
+        private VisualElement CreateStringRow(XAnimationParameterConfig parameter)
+        {
+            string parameterName = parameter.name;
+            VisualElement row = CreateParameterRowRoot(parameterName);
+            TextField field = new("value")
+            {
+                value = GetStringValue(parameter)
+            };
+            field.tooltip = "预览参数值，只影响当前 Actor 预览，不保存到资源。";
+            field.style.flexGrow = 1;
+            field.RegisterValueChangedCallback(evt => m_Controller.TrySetParameter(parameterName, evt.newValue));
+            row.Add(field);
+            m_StringFields[parameterName] = field;
+            return row;
+        }
+
         private VisualElement CreateParameterRowRoot(string parameterName)
         {
             VisualElement row = Row();
@@ -272,6 +291,12 @@ namespace XAnimationEditor
                             intField.SetValueWithoutNotify(GetIntValue(parameter));
                         }
                         break;
+                    case XAnimationParameterType.String:
+                        if (m_StringFields.TryGetValue(parameterName, out TextField stringField))
+                        {
+                            stringField.SetValueWithoutNotify(GetStringValue(parameter));
+                        }
+                        break;
                 }
             }
         }
@@ -295,6 +320,13 @@ namespace XAnimationEditor
             return parameter != null && m_Controller.TryGetParameter(parameter.name, out int value)
                 ? value
                 : ConvertParameterDefaultToInt(parameter?.defaultValue);
+        }
+
+        private string GetStringValue(XAnimationParameterConfig parameter)
+        {
+            return parameter != null && m_Controller.TryGetParameter(parameter.name, out string value)
+                ? value
+                : ConvertParameterDefaultToString(parameter?.defaultValue);
         }
 
         private bool TryGetBlend1DPreviewRange(string parameterName, out float min, out float max)

@@ -6,6 +6,7 @@ namespace XAnimationEditor
     internal sealed class XAnimationPlaybackSettings
     {
         public bool PlaybackSectionExpanded = true;
+        public bool PlayingAnimationsSectionExpanded;
         public bool TransitionSectionExpanded;
         public bool ActionDebugSectionExpanded;
         public string ChannelName = string.Empty;
@@ -27,6 +28,7 @@ namespace XAnimationEditor
             return new XAnimationPlaybackSettings
             {
                 PlaybackSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.PlaybackSectionExpanded), true),
+                PlayingAnimationsSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.PlayingAnimationsSectionExpanded), false),
                 TransitionSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.TransitionSectionExpanded), false),
                 ActionDebugSectionExpanded = EditorPrefs.GetBool(Prefix + nameof(XAnimationPlaybackSettings.ActionDebugSectionExpanded), false),
                 ChannelName = EditorPrefs.GetString(Prefix + nameof(XAnimationPlaybackSettings.ChannelName), string.Empty),
@@ -48,6 +50,7 @@ namespace XAnimationEditor
             }
 
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.PlaybackSectionExpanded), settings.PlaybackSectionExpanded);
+            EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.PlayingAnimationsSectionExpanded), settings.PlayingAnimationsSectionExpanded);
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.TransitionSectionExpanded), settings.TransitionSectionExpanded);
             EditorPrefs.SetBool(Prefix + nameof(XAnimationPlaybackSettings.ActionDebugSectionExpanded), settings.ActionDebugSectionExpanded);
             EditorPrefs.SetString(Prefix + nameof(XAnimationPlaybackSettings.ChannelName), settings.ChannelName ?? string.Empty);

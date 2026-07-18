@@ -306,6 +306,7 @@ namespace XAnimationEngine
         Bool = 1,
         Trigger = 2,
         Int = 3,
+        String = 4,
     }
 
     public enum XAnimationStateType
@@ -322,6 +323,8 @@ namespace XAnimationEngine
         Normal = 0,
         Selector = 1,
         State = 2,
+        IntSelector = 3,
+        StringSelector = 4,
     }
 
     [Serializable]
@@ -389,6 +392,8 @@ namespace XAnimationEngine
         public XAnimationStateNodeKind kind;
         public XAnimationStateConfig state;
         public XAnimationSelectorStateNodeConfig selector;
+        public XAnimationIntSelectorStateNodeConfig intSelector;
+        public XAnimationStringSelectorStateNodeConfig stringSelector;
         public XAnimationStateNodeConfig[] children = Array.Empty<XAnimationStateNodeConfig>();
     }
 
@@ -396,6 +401,34 @@ namespace XAnimationEngine
     public class XAnimationSelectorStateNodeConfig
     {
         public string parameterName;
+    }
+
+    [Serializable]
+    public class XAnimationIntSelectorStateNodeConfig
+    {
+        public string parameterName;
+        public XAnimationIntSelectorBranchConfig[] branches = Array.Empty<XAnimationIntSelectorBranchConfig>();
+    }
+
+    [Serializable]
+    public class XAnimationStringSelectorStateNodeConfig
+    {
+        public string parameterName;
+        public XAnimationStringSelectorBranchConfig[] branches = Array.Empty<XAnimationStringSelectorBranchConfig>();
+    }
+
+    [Serializable]
+    public class XAnimationIntSelectorBranchConfig
+    {
+        public string childName;
+        public int value;
+    }
+
+    [Serializable]
+    public class XAnimationStringSelectorBranchConfig
+    {
+        public string childName;
+        public string value;
     }
 
     public sealed class XAnimationStateNodeLocation
@@ -993,6 +1026,62 @@ namespace XAnimationEngine
         }
     }
 
+    public sealed class XAnimationCompiledIntSelectorStateNode : XAnimationCompiledStateNode
+    {
+        private readonly IReadOnlyDictionary<int, XAnimationCompiledStateNode> m_ChildrenByValue;
+
+        public XAnimationCompiledIntSelectorStateNode(
+            XAnimationStateNodeConfig config,
+            string key,
+            string channelName,
+            int defaultChannelIndex,
+            string parentKey,
+            int parameterIndex,
+            IReadOnlyDictionary<int, XAnimationCompiledStateNode> childrenByValue)
+            : base(config, key, channelName, defaultChannelIndex, parentKey)
+        {
+            ParameterIndex = parameterIndex;
+            m_ChildrenByValue = childrenByValue;
+        }
+
+        public XAnimationIntSelectorStateNodeConfig Config => NodeConfig.intSelector;
+        public int ParameterIndex { get; }
+        public override bool IsPlayable => true;
+
+        public bool TryResolveChild(int value, out XAnimationCompiledStateNode child)
+        {
+            return m_ChildrenByValue.TryGetValue(value, out child);
+        }
+    }
+
+    public sealed class XAnimationCompiledStringSelectorStateNode : XAnimationCompiledStateNode
+    {
+        private readonly IReadOnlyDictionary<string, XAnimationCompiledStateNode> m_ChildrenByValue;
+
+        public XAnimationCompiledStringSelectorStateNode(
+            XAnimationStateNodeConfig config,
+            string key,
+            string channelName,
+            int defaultChannelIndex,
+            string parentKey,
+            int parameterIndex,
+            IReadOnlyDictionary<string, XAnimationCompiledStateNode> childrenByValue)
+            : base(config, key, channelName, defaultChannelIndex, parentKey)
+        {
+            ParameterIndex = parameterIndex;
+            m_ChildrenByValue = childrenByValue;
+        }
+
+        public XAnimationStringSelectorStateNodeConfig Config => NodeConfig.stringSelector;
+        public int ParameterIndex { get; }
+        public override bool IsPlayable => true;
+
+        public bool TryResolveChild(string value, out XAnimationCompiledStateNode child)
+        {
+            return m_ChildrenByValue.TryGetValue(value, out child);
+        }
+    }
+
     public abstract class XAnimationCompiledState : XAnimationCompiledStateNode
     {
         protected XAnimationCompiledState(
@@ -1516,10 +1605,9 @@ namespace XAnimationEngine
                 return;
             }
 
-            XAnimationCompiledSelectorStateNode selector = (XAnimationCompiledSelectorStateNode)stateNode;
-            for (int i = 0; i < selector.Children.Count; i++)
+            for (int i = 0; i < stateNode.Children.Count; i++)
             {
-                PreloadStateNode(selector.Children[i], visitedStates);
+                PreloadStateNode(stateNode.Children[i], visitedStates);
             }
         }
 

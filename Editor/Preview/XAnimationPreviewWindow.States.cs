@@ -565,7 +565,7 @@ namespace XAnimationEditor
 
             label.AddManipulator(new ContextualMenuManipulator(evt =>
             {
-                bool selectorParent = m_Session.CompiledAsset.GetStateNode(channelName, groupName).Kind == XAnimationStateNodeKind.Selector;
+                bool selectorParent = IsSelectorKind(m_Session.CompiledAsset.GetStateNode(channelName, groupName).Kind);
                 evt.menu.AppendAction(
                     "Rename",
                     _ => label.BeginEdit(),
@@ -593,11 +593,25 @@ namespace XAnimationEditor
                 }
 
                 evt.menu.AppendAction(
-                    "Add Node/Selector",
+                    "Add Node/Index Selector",
                     _ => AddStateNode(channelName, groupName, XAnimationStateNodeKind.Selector),
                     _ => m_Session == null || m_Session.IsOverrideAsset
                         ? DropdownMenuAction.Status.Disabled
                         : DropdownMenuAction.Status.Normal);
+                evt.menu.AppendAction(
+                    "Add Node/Int Selector",
+                    _ => AddStateNode(channelName, groupName, XAnimationStateNodeKind.IntSelector),
+                    _ => m_Session == null || m_Session.IsOverrideAsset
+                        ? DropdownMenuAction.Status.Disabled
+                        : DropdownMenuAction.Status.Normal);
+
+                evt.menu.AppendAction(
+                    "Add Node/String Selector",
+                    _ => AddStateNode(channelName, groupName, XAnimationStateNodeKind.StringSelector),
+                    _ => m_Session == null || m_Session.IsOverrideAsset
+                        ? DropdownMenuAction.Status.Disabled
+                        : DropdownMenuAction.Status.Normal);
+
 
                 evt.menu.AppendSeparator();
 
@@ -791,6 +805,8 @@ namespace XAnimationEditor
                     return CreateBoolPreviewParameterRow(parameter.Name, GetPreviewBoolParameterValue(parameter));
                 case XAnimationParameterType.Int:
                     return CreateIntPreviewParameterRow(parameter.Name, GetPreviewIntParameterValue(parameter));
+                case XAnimationParameterType.String:
+                    return CreateStringPreviewParameterRow(parameter.Name, GetPreviewStringParameterValue(parameter));
                 default:
                     return null;
             }
@@ -1115,6 +1131,27 @@ namespace XAnimationEditor
             }
         }
 
+        private bool TrySetPreviewParameter(string parameterName, string value)
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                return false;
+            }
+
+            try
+            {
+                m_Session.SetPreviewParameter(parameterName, value);
+                SetStatus($"Preview parameter {parameterName} = {value}。");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, true);
+                Debug.LogException(ex);
+                return false;
+            }
+        }
+
         private void RefreshPreviewAfterParameterChanged(bool rebuildParameterList = false)
         {
             if (rebuildParameterList)
@@ -1222,6 +1259,45 @@ namespace XAnimationEditor
             }
         }
 
+        private VisualElement CreateStringPreviewParameterRow(string parameterName, string value)
+        {
+            VisualElement row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            row.style.marginBottom = 2;
+
+            Label label = new(parameterName);
+            label.style.width = 82;
+            label.style.flexShrink = 0;
+            label.style.color = TextMuted;
+            label.style.fontSize = BodyFontSize;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            row.Add(label);
+
+            TextField valueField = new("value")
+            {
+                value = value
+            };
+            valueField.tooltip = "预览参数值，只影响当前 Preview Session，不保存到资源。";
+            valueField.style.flexGrow = 1;
+            valueField.RegisterValueChangedCallback(evt => SetPreviewStringParameter(parameterName, evt.newValue));
+            row.Add(valueField);
+            return row;
+        }
+
+        private void SetPreviewStringParameter(string parameterName, string value)
+        {
+            if (m_Session == null || !m_Session.IsLoaded)
+            {
+                return;
+            }
+
+            if (TrySetPreviewParameter(parameterName, value))
+            {
+                RefreshPreviewAfterParameterChanged();
+            }
+        }
+
         private float GetPreviewFloatParameterValue(XAnimationCompiledParameter parameter)
         {
             if (parameter == null)
@@ -1265,6 +1341,21 @@ namespace XAnimationEditor
             }
 
             return ConvertParameterDefaultToInt(parameter.Config.defaultValue);
+        }
+
+        private string GetPreviewStringParameterValue(XAnimationCompiledParameter parameter)
+        {
+            if (parameter == null)
+            {
+                return string.Empty;
+            }
+
+            if (m_Session != null && m_Session.TryGetPreviewParameter(parameter.Name, out string value))
+            {
+                return value;
+            }
+
+            return ConvertParameterDefaultToString(parameter.Config.defaultValue);
         }
 
         private VisualElement CreateBlendSampleRow(string channelName, string stateKey, int sampleIndex, XAnimationBlend1DSampleConfig sample, bool editable)
@@ -2079,7 +2170,7 @@ namespace XAnimationEditor
 
         private bool IsClipPathCollapsed(string groupKey)
         {
-            return !string.IsNullOrWhiteSpace(groupKey) && m_CollapsedClipPathKeys.Contains(groupKey);
+            return !string.IsNullOrWhiteSpace(groupKey) && !m_ExpandedClipPathKeys.Contains(groupKey);
         }
 
         private void SetClipPathCollapsed(string groupKey, bool collapsed)
@@ -2091,11 +2182,11 @@ namespace XAnimationEditor
 
             if (collapsed)
             {
-                m_CollapsedClipPathKeys.Add(groupKey);
+                m_ExpandedClipPathKeys.Remove(groupKey);
             }
             else
             {
-                m_CollapsedClipPathKeys.Remove(groupKey);
+                m_ExpandedClipPathKeys.Add(groupKey);
             }
         }
 

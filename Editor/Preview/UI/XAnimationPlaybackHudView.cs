@@ -12,6 +12,7 @@ namespace XAnimationEditor
     {
         XAnimationPlaybackSettings Settings { get; }
         bool PlaybackExpanded { get; set; }
+        bool PlayingAnimationsExpanded { get; set; }
         bool TransitionExpanded { get; set; }
         bool ShowRootMotion { get; }
         bool RootMotionEnabled { get; set; }
@@ -25,6 +26,7 @@ namespace XAnimationEditor
         bool CanSeek { get; }
         float NormalizedTime { get; }
         IReadOnlyList<string> ChannelChoices { get; }
+        XAnimationDebugGraphSnapshot DebugGraphSnapshot { get; }
 
         void SaveSettings();
         void SetSpeed(float speed);
@@ -77,6 +79,37 @@ namespace XAnimationEditor
 
     internal sealed class XAnimationPlaybackHudView
     {
+        private readonly struct PlayingAnimationViewData
+        {
+            public PlayingAnimationViewData(
+                string clipKey,
+                string channelName,
+                string role,
+                float normalizedTime,
+                float weight)
+            {
+                ClipKey = clipKey;
+                ChannelName = channelName;
+                Role = role;
+                NormalizedTime = normalizedTime;
+                Weight = weight;
+            }
+
+            public string ClipKey { get; }
+            public string ChannelName { get; }
+            public string Role { get; }
+            public float NormalizedTime { get; }
+            public float Weight { get; }
+        }
+
+        private sealed class PlayingAnimationRow
+        {
+            public VisualElement Root;
+            public VisualElement WeightFill;
+            public Label ClipLabel;
+            public Label DetailLabel;
+        }
+
         public const float SpeedMin = 0.1f;
         public const float SpeedMax = 2f;
         public const float ScrubberWidth = 132f;
@@ -91,7 +124,10 @@ namespace XAnimationEditor
         private readonly IXAnimationActionDebugHudHost m_ActionHost;
         private readonly IXAnimationChannelPlaybackHudHost m_ChannelHost;
         private readonly bool m_IncludeStatus;
+        private readonly List<PlayingAnimationViewData> m_PlayingAnimations = new();
+        private readonly List<PlayingAnimationRow> m_PlayingAnimationRows = new();
         private bool m_IsScrubbing;
+        private int m_LastPlayingAnimationCount = -1;
 
         private Label m_StatusLabel;
         private VisualElement m_Scrubber;
@@ -103,8 +139,7 @@ namespace XAnimationEditor
         private Button m_StopButton;
         private DropdownField m_ChannelField;
         private FloatField m_ChannelWeightField;
-        private Button m_ChannelPlayButton;
-        private Button m_ChannelPauseButton;
+        private Button m_ChannelPlayPauseButton;
         private Button m_ChannelStopButton;
         private Toggle m_RootMotionToggle;
         private Toggle m_ApplyTransitionToggle;
@@ -113,7 +148,9 @@ namespace XAnimationEditor
         private FloatField m_EnterTimeField;
         private IntegerField m_PriorityField;
         private FoldoutCard m_PlaybackCard;
+        private FoldoutCard m_PlayingAnimationsCard;
         private FoldoutCard m_TransitionCard;
+        private VisualElement m_PlayingAnimationsList;
         private DropdownField m_ActionStateField;
         private DropdownField m_ActionReturnModeField;
         private DropdownField m_ActionReturnStateField;
@@ -158,8 +195,15 @@ namespace XAnimationEditor
             {
                 m_ChannelWeightField?.SetValueWithoutNotify(Mathf.Max(0f, m_ChannelHost.SelectedChannelWeight));
                 m_ChannelWeightField?.SetEnabled(m_ChannelHost.CanControlSelectedChannel);
-                SetButtonEnabled(m_ChannelPlayButton, m_ChannelHost.CanPlaySelectedChannel);
-                SetButtonEnabled(m_ChannelPauseButton, m_ChannelHost.CanPauseSelectedChannel);
+                bool canPauseSelectedChannel = m_ChannelHost.CanPauseSelectedChannel;
+                SetButtonEnabled(m_ChannelPlayPauseButton, canPauseSelectedChannel || m_ChannelHost.CanPlaySelectedChannel);
+                if (m_ChannelPlayPauseButton != null)
+                {
+                    m_ChannelPlayPauseButton.text = canPauseSelectedChannel ? "Ⅱ" : "▶";
+                    m_ChannelPlayPauseButton.tooltip = canPauseSelectedChannel
+                        ? "暂停下拉框当前选择的 Channel，其他 Channel 继续播放。"
+                        : "播放所选 Channel 的第一个 State，或继续已暂停的播放。";
+                }
                 SetButtonEnabled(m_ChannelStopButton, m_ChannelHost.CanStopSelectedChannel);
             }
             m_RootMotionToggle?.SetValueWithoutNotify(m_Host.RootMotionEnabled);
@@ -185,6 +229,7 @@ namespace XAnimationEditor
             SetButtonEnabled(m_StepButton, m_Host.CanStep);
             SetButtonEnabled(m_StopButton, m_Host.CanStop);
             UpdateScrubber(m_Host.NormalizedTime, m_Host.CanSeek);
+            RefreshPlayingAnimations();
             m_TransitionCard?.RefreshState?.Invoke();
             RefreshActionDebug();
         }
@@ -307,6 +352,7 @@ namespace XAnimationEditor
             }
 
             m_PlaybackCard.Content.Add(mainFields);
+            m_PlaybackCard.Content.Add(CreatePlayingAnimationsSection().Root);
 
             m_ApplyTransitionToggle = CreateHeaderApplyToggle(m_Host.Settings.ApplyTransition, "是否应用 Transition 覆盖。关闭时本分区会自动收起。");
             m_TransitionCard = CreateSectionFoldoutCard("Transition", m_Host.TransitionExpanded, value =>
@@ -375,18 +421,172 @@ namespace XAnimationEditor
             rootMotionToggle.style.flexShrink = 0;
             controls.Add(rootMotionToggle);
 
-            m_ChannelPlayButton = CreateHudButton("▶", m_ChannelHost.PlaySelectedChannel, AccentColor, 19f);
-            m_ChannelPlayButton.tooltip = "播放所选 Channel 的第一个 State，或继续已暂停的播放。";
-            controls.Add(m_ChannelPlayButton);
-
-            m_ChannelPauseButton = CreateHudButton("Ⅱ", m_ChannelHost.PauseSelectedChannel, AccentColor, 2f);
-            m_ChannelPauseButton.tooltip = "暂停下拉框当前选择的 Channel，其他 Channel 继续播放。";
-            controls.Add(m_ChannelPauseButton);
+            m_ChannelPlayPauseButton = CreateHudButton("▶", ToggleSelectedChannelPlayback, AccentColor, 19f);
+            controls.Add(m_ChannelPlayPauseButton);
 
             m_ChannelStopButton = CreateHudButton("■", m_ChannelHost.StopSelectedChannel, DangerColor, 2f);
             m_ChannelStopButton.tooltip = "停止下拉框当前选择的 Channel。";
             controls.Add(m_ChannelStopButton);
             return controls;
+        }
+
+        private void ToggleSelectedChannelPlayback()
+        {
+            if (m_ChannelHost.CanPauseSelectedChannel)
+            {
+                m_ChannelHost.PauseSelectedChannel();
+            }
+            else
+            {
+                m_ChannelHost.PlaySelectedChannel();
+            }
+
+            Refresh();
+        }
+
+        private FoldoutCard CreatePlayingAnimationsSection()
+        {
+            m_PlayingAnimationsCard = CreateSectionFoldoutCard(
+                "Playing Animations",
+                m_Host.PlayingAnimationsExpanded,
+                value =>
+                {
+                    m_Host.PlayingAnimationsExpanded = value;
+                    m_Host.SaveSettings();
+                    if (value)
+                    {
+                        RefreshPlayingAnimations();
+                    }
+                });
+            m_PlayingAnimationsCard.Root.style.marginTop = 4;
+            m_PlayingAnimationsList = new VisualElement();
+            m_PlayingAnimationsCard.Content.Add(m_PlayingAnimationsList);
+            return m_PlayingAnimationsCard;
+        }
+
+        private void RefreshPlayingAnimations()
+        {
+            if (m_PlayingAnimationsList == null || !m_Host.PlayingAnimationsExpanded)
+            {
+                return;
+            }
+
+            m_PlayingAnimations.Clear();
+            XAnimationDebugGraphSnapshot snapshot = m_Host.DebugGraphSnapshot;
+            XAnimationDebugNodeSnapshot[] roots = snapshot?.rootNodes ?? Array.Empty<XAnimationDebugNodeSnapshot>();
+            for (int i = 0; i < roots.Length; i++)
+            {
+                CollectPlayingAnimations(roots[i], string.Empty, m_PlayingAnimations);
+            }
+
+            if (m_LastPlayingAnimationCount != m_PlayingAnimations.Count)
+            {
+                RebuildPlayingAnimationRows();
+            }
+
+            for (int i = 0; i < m_PlayingAnimations.Count; i++)
+            {
+                PlayingAnimationViewData animation = m_PlayingAnimations[i];
+                PlayingAnimationRow row = m_PlayingAnimationRows[i];
+                row.ClipLabel.text = animation.ClipKey;
+                row.DetailLabel.text = $"{animation.ChannelName} · {animation.Role} · t {animation.NormalizedTime:0.000}";
+                row.Root.tooltip = $"{animation.ClipKey}\nChannel: {animation.ChannelName}\nRole: {animation.Role}";
+
+                float weight = Mathf.Clamp01(animation.Weight);
+                row.WeightFill.style.width = Length.Percent(weight * 100f);
+                row.WeightFill.style.visibility = weight > 0f ? Visibility.Visible : Visibility.Hidden;
+            }
+        }
+
+        private void RebuildPlayingAnimationRows()
+        {
+            m_LastPlayingAnimationCount = m_PlayingAnimations.Count;
+            m_PlayingAnimationsList.Clear();
+            m_PlayingAnimationRows.Clear();
+            if (m_PlayingAnimations.Count == 0)
+            {
+                AddEmptyLabel(m_PlayingAnimationsList, "No active animations");
+                return;
+            }
+
+            for (int i = 0; i < m_PlayingAnimations.Count; i++)
+            {
+                VisualElement root = CreateRowContainer(i);
+                root.style.minHeight = 38;
+
+                VisualElement weightFill = CreateProgressFill(BlendWeightFillBg);
+                root.Add(weightFill);
+
+                VisualElement content = new();
+                content.style.position = Position.Relative;
+                content.style.flexDirection = FlexDirection.Column;
+                content.style.minWidth = 0;
+                SetPadding(content, 3, 4);
+
+                Label clipLabel = new();
+                clipLabel.style.color = TextNormal;
+                clipLabel.style.fontSize = BodyFontSize;
+                clipLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+                clipLabel.style.whiteSpace = WhiteSpace.NoWrap;
+                clipLabel.style.overflow = Overflow.Hidden;
+                content.Add(clipLabel);
+
+                Label detailLabel = new();
+                detailLabel.style.color = TextMuted;
+                detailLabel.style.fontSize = 10;
+                detailLabel.style.whiteSpace = WhiteSpace.NoWrap;
+                detailLabel.style.overflow = Overflow.Hidden;
+                content.Add(detailLabel);
+
+                root.Add(content);
+                m_PlayingAnimationsList.Add(root);
+                m_PlayingAnimationRows.Add(new PlayingAnimationRow
+                {
+                    Root = root,
+                    WeightFill = weightFill,
+                    ClipLabel = clipLabel,
+                    DetailLabel = detailLabel,
+                });
+            }
+        }
+
+        private static void CollectPlayingAnimations(
+            XAnimationDebugNodeSnapshot node,
+            string role,
+            List<PlayingAnimationViewData> output)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            if (node.displayName.StartsWith("Current:", StringComparison.Ordinal))
+            {
+                role = "Current";
+            }
+            else if (node.displayName.StartsWith("Previous:", StringComparison.Ordinal))
+            {
+                role = "Previous";
+            }
+
+            if (node.playableType == "AnimationClipPlayable" &&
+                node.isConnected &&
+                node.isActive &&
+                !string.IsNullOrWhiteSpace(node.clipKey))
+            {
+                output.Add(new PlayingAnimationViewData(
+                    node.clipKey,
+                    node.channelName,
+                    role,
+                    node.normalizedTime,
+                    node.effectiveWeight));
+            }
+
+            XAnimationDebugNodeSnapshot[] children = node.children ?? Array.Empty<XAnimationDebugNodeSnapshot>();
+            for (int i = 0; i < children.Length; i++)
+            {
+                CollectPlayingAnimations(children[i], role, output);
+            }
         }
 
         private FoldoutCard CreateActionDebugSection()

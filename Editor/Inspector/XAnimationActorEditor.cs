@@ -726,15 +726,15 @@ namespace XAnimationEditor
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            string nodeTitle = node.Kind == XAnimationStateNodeKind.Selector ? $"◆ {node.Name}" : node.Name;
+            string nodeTitle = IsSelectorStateNodeKind(node.Kind) ? $"◆ {node.Name}" : node.Name;
             Label title = CreateBoldLabel(nodeTitle);
             title.style.flexGrow = 1;
             title.style.minWidth = 0;
             title.tooltip = FormatStateDisplayPath(node.FullPath);
             header.Add(title);
 
-            string nodeInfo = node.Kind == XAnimationStateNodeKind.Selector
-                ? $"Selector | {CountStatePathNodeStates(node)} states"
+            string nodeInfo = IsSelectorStateNodeKind(node.Kind)
+                ? $"{GetSelectorStateNodeKindLabel(node.Kind)} | {CountStatePathNodeStates(node)} states"
                 : $"{CountStatePathNodeStates(node)} states";
             Label info = CreateSmallInfoLabel(nodeInfo);
             header.Add(info);
@@ -2253,6 +2253,24 @@ namespace XAnimationEditor
             return slashIndex >= 0 && slashIndex + 1 < normalizedPath.Length
                 ? normalizedPath[(slashIndex + 1)..]
                 : normalizedPath;
+        }
+
+        private static bool IsSelectorStateNodeKind(XAnimationStateNodeKind kind)
+        {
+            return kind == XAnimationStateNodeKind.Selector ||
+                   kind == XAnimationStateNodeKind.IntSelector ||
+                   kind == XAnimationStateNodeKind.StringSelector;
+        }
+
+        private static string GetSelectorStateNodeKindLabel(XAnimationStateNodeKind kind)
+        {
+            return kind switch
+            {
+                XAnimationStateNodeKind.Selector => "Index Selector",
+                XAnimationStateNodeKind.IntSelector => "Int Selector",
+                XAnimationStateNodeKind.StringSelector => "String Selector",
+                _ => kind.ToString(),
+            };
         }
 
         private static int CountStatePathNodeStates(StatePathNode node)

@@ -12,6 +12,7 @@ namespace XAnimationEngine
         private readonly float[] m_FloatValues;
         private readonly int[] m_IntValues;
         private readonly bool[] m_BoolValues;
+        private readonly string[] m_StringValues;
         private readonly bool[] m_TriggerValues;
 
         public XAnimationContext(IReadOnlyList<XAnimationCompiledParameter> parameters)
@@ -21,6 +22,7 @@ namespace XAnimationEngine
             m_FloatValues = new float[parameterCount];
             m_IntValues = new int[parameterCount];
             m_BoolValues = new bool[parameterCount];
+            m_StringValues = new string[parameterCount];
             m_TriggerValues = new bool[parameterCount];
 
             if (parameterCount == 0)
@@ -45,6 +47,9 @@ namespace XAnimationEngine
                         break;
                     case XAnimationParameterType.Bool:
                         m_BoolValues[parameterIndex] = ConvertToBool(parameter.Config.defaultValue);
+                        break;
+                    case XAnimationParameterType.String:
+                        m_StringValues[parameterIndex] = ConvertToString(parameter.Config.defaultValue);
                         break;
                     case XAnimationParameterType.Trigger:
                         m_TriggerValues[parameterIndex] = false;
@@ -71,6 +76,12 @@ namespace XAnimationEngine
         {
             int index = EnsureType(key, XAnimationParameterType.Int);
             m_IntValues[index] = value;
+        }
+
+        public void SetString(string key, string value)
+        {
+            int index = EnsureType(key, XAnimationParameterType.String);
+            m_StringValues[index] = value ?? string.Empty;
         }
 
         public void SetTrigger(string key)
@@ -101,6 +112,12 @@ namespace XAnimationEngine
         {
             value = 0;
             return m_ParameterIndices.TryGetValue(key, out int index) && TryGetInt(index, out value);
+        }
+
+        public bool TryGetString(string key, out string value)
+        {
+            value = null;
+            return m_ParameterIndices.TryGetValue(key, out int index) && TryGetString(index, out value);
         }
 
         public bool TryGetTrigger(string key, out bool value)
@@ -142,6 +159,18 @@ namespace XAnimationEngine
             }
 
             value = m_IntValues[index];
+            return true;
+        }
+
+        public bool TryGetString(int index, out string value)
+        {
+            value = null;
+            if (!IsValidIndex(index) || m_Types[index] != XAnimationParameterType.String)
+            {
+                return false;
+            }
+
+            value = m_StringValues[index];
             return true;
         }
 
@@ -213,6 +242,11 @@ namespace XAnimationEngine
             }
 
             return Convert.ToBoolean(value, CultureInfo.InvariantCulture);
+        }
+
+        private static string ConvertToString(object value)
+        {
+            return value?.ToString() ?? string.Empty;
         }
     }
 }

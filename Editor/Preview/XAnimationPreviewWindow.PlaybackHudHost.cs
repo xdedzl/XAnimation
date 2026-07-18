@@ -24,6 +24,7 @@ namespace XAnimationEditor
                 get
                 {
                     m_Settings.PlaybackSectionExpanded = m_Window.m_PlaybackSectionExpanded;
+                    m_Settings.PlayingAnimationsSectionExpanded = m_Window.m_PlayingAnimationsSectionExpanded;
                     m_Settings.TransitionSectionExpanded = m_Window.m_PlayTransitionSectionExpanded;
                     m_Settings.ActionDebugSectionExpanded = m_Window.m_ActionDebugSectionExpanded;
                     m_Settings.ChannelName = m_Window.m_PlayTargetChannelName;
@@ -48,6 +49,12 @@ namespace XAnimationEditor
             {
                 get => m_Window.m_PlayTransitionSectionExpanded;
                 set => m_Window.m_PlayTransitionSectionExpanded = value;
+            }
+
+            public bool PlayingAnimationsExpanded
+            {
+                get => m_Window.m_PlayingAnimationsSectionExpanded;
+                set => m_Window.m_PlayingAnimationsSectionExpanded = value;
             }
 
             public bool ActionDebugExpanded
@@ -103,6 +110,9 @@ namespace XAnimationEditor
                     return m_ChannelChoices;
                 }
             }
+            public XAnimationDebugGraphSnapshot DebugGraphSnapshot => m_Window.m_Session != null
+                ? m_Window.m_Session.GetDebugGraphSnapshot()
+                : XAnimationDebugGraphSnapshot.Invalid("XAnimation Preview 尚未加载。");
 
             public IReadOnlyList<string> ActionStateChoices => GetActionStateChoices();
             public string ActionStateKey

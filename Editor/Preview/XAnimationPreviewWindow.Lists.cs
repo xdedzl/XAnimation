@@ -696,6 +696,16 @@ namespace XAnimationEditor
                     field.RegisterValueChangedCallback(evt => ChangeParameterDefaultValue(parameterName, evt.newValue));
                     return field;
                 }
+                case XAnimationParameterType.String:
+                {
+                    TextField field = new("default")
+                    {
+                        value = ConvertParameterDefaultToString(config.defaultValue)
+                    };
+                    field.tooltip = "String 参数默认值，会保存到资源。";
+                    field.RegisterValueChangedCallback(evt => ChangeParameterDefaultValue(parameterName, evt.newValue));
+                    return field;
+                }
                 case XAnimationParameterType.Trigger:
                 default:
                 {
@@ -748,7 +758,7 @@ namespace XAnimationEditor
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
-            if (node.Kind == XAnimationStateNodeKind.Selector)
+            if (IsSelectorKind(node.Kind))
             {
                 Label selectorMarker = CreateSmallInfoLabel("◆");
                 selectorMarker.tooltip = "Selector State Node";
@@ -771,8 +781,8 @@ namespace XAnimationEditor
             spacer.style.flexGrow = 1;
             header.Add(spacer);
 
-            string infoText = node.Kind == XAnimationStateNodeKind.Selector
-                ? $"Selector · {node.Selector?.parameterName} · {node.Children.Count + node.States.Count} 分支"
+            string infoText = IsSelectorKind(node.Kind)
+                ? $"{GetSelectorKindLabel(node.Kind)} · {node.SelectorParameterName} · {node.Children.Count + node.States.Count} 分支"
                 : $"Normal · {CountStatePathNodeStates(node)} states";
             Label info = CreateSmallInfoLabel(infoText);
             header.Add(info);
@@ -841,11 +851,40 @@ namespace XAnimationEditor
                     continue;
                 }
 
-                XAnimationSelectorStateNodeConfig selector = (node as XAnimationCompiledSelectorStateNode)?.Config;
-                StatePathNode child = new(node.Name, node.Key, node.Kind, selector);
+                string selectorParameterName = GetSelectorParameterName(node);
+                StatePathNode child = new(node.Name, node.Key, node.Kind, selectorParameterName);
                 parent.Children.Add(child);
                 AppendCompiledStateNodes(child, node.Children);
             }
+        }
+
+        private static bool IsSelectorKind(XAnimationStateNodeKind kind)
+        {
+            return kind == XAnimationStateNodeKind.Selector ||
+                   kind == XAnimationStateNodeKind.IntSelector ||
+                   kind == XAnimationStateNodeKind.StringSelector;
+        }
+
+        private static string GetSelectorKindLabel(XAnimationStateNodeKind kind)
+        {
+            return kind switch
+            {
+                XAnimationStateNodeKind.Selector => "Index Selector",
+                XAnimationStateNodeKind.IntSelector => "Int Selector",
+                XAnimationStateNodeKind.StringSelector => "String Selector",
+                _ => kind.ToString(),
+            };
+        }
+
+        private static string GetSelectorParameterName(XAnimationCompiledStateNode node)
+        {
+            return node switch
+            {
+                XAnimationCompiledSelectorStateNode selector => selector.Config.parameterName,
+                XAnimationCompiledIntSelectorStateNode selector => selector.Config.parameterName,
+                XAnimationCompiledStringSelectorStateNode selector => selector.Config.parameterName,
+                _ => string.Empty,
+            };
         }
 
         private static int CountStatePathNodeStates(StatePathNode node)
@@ -1179,7 +1218,7 @@ namespace XAnimationEditor
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
+            PlayPreviewState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
             RefreshPlaybackViews();
             SetStatus($"正在播放 state {state.Key}。");
         }
@@ -1251,9 +1290,8 @@ namespace XAnimationEditor
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
+            PlayPreviewState(state.ChannelName, state.Key, BuildPreviewTransitionOptions());
 
-            RebuildParameterList();
             RefreshPlaybackViews();
             SetStatus(statusMessage);
         }
@@ -2652,7 +2690,7 @@ namespace XAnimationEditor
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
 
-            m_Session.PlayState(channelName, preStateKey);
+            PlayPreviewState(channelName, preStateKey);
 
             RefreshPlaybackViews();
             SetStatus($"正在播放 {preStateKey}，点击 ⏭ 切换到 {nextStateKey}。");
@@ -2668,7 +2706,7 @@ namespace XAnimationEditor
                 return;
             }
 
-            m_Session.PlayState(channelName, nextStateKey);
+            PlayPreviewState(channelName, nextStateKey);
             RefreshPlaybackViews();
             SetStatus($"Default Transition 切换: {preStateKey} -> {nextStateKey}。");
         }
@@ -3416,7 +3454,7 @@ namespace XAnimationEditor
         {
             GenericMenu menu = new();
             bool selectorParent = !string.IsNullOrWhiteSpace(parentPath) &&
-                                  m_Session.CompiledAsset.GetStateNode(channelName, parentPath).Kind == XAnimationStateNodeKind.Selector;
+                                  IsSelectorKind(m_Session.CompiledAsset.GetStateNode(channelName, parentPath).Kind);
             menu.AddItem(
                 new GUIContent("State"),
                 false,
@@ -3429,9 +3467,17 @@ namespace XAnimationEditor
                     () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.Normal));
             }
             menu.AddItem(
-                new GUIContent("Selector"),
+                new GUIContent("Index Selector"),
                 false,
                 () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.Selector));
+            menu.AddItem(
+                new GUIContent("Int Selector"),
+                false,
+                () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.IntSelector));
+            menu.AddItem(
+                new GUIContent("String Selector"),
+                false,
+                () => AddStateNode(channelName, parentPath, XAnimationStateNodeKind.StringSelector));
             menu.DropDown(activator.worldBound);
         }
 
@@ -3444,6 +3490,8 @@ namespace XAnimationEditor
                 {
                     XAnimationStateNodeKind.Normal => m_Session.AddNormalStateNode(channelName, parentPath),
                     XAnimationStateNodeKind.Selector => m_Session.AddSelectorStateNode(channelName, parentPath),
+                    XAnimationStateNodeKind.IntSelector => m_Session.AddIntSelectorStateNode(channelName, parentPath),
+                    XAnimationStateNodeKind.StringSelector => m_Session.AddStringSelectorStateNode(channelName, parentPath),
                     _ => throw new XAnimationException($"Cannot add container State Node with kind '{nodeKind}'."),
                 };
                 SetStateGroupCollapsed(BuildStateGroupKey(channelName, nodeKey), false);

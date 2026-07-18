@@ -991,7 +991,8 @@ namespace XAnimationEditor
                 currentNextStateKey,
                 preStateKey,
                 includeNone: true,
-                channelFilterName: channelName);
+                channelFilterName: channelName,
+                includeSelectors: true);
             nextStateField.style.width = 180f;
             nextStateField.style.minWidth = 120f;
             nextStateField.style.flexGrow = 1;

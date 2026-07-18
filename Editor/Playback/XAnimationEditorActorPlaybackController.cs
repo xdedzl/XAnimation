@@ -7,7 +7,7 @@ using XAnimationEngine;
 
 namespace XAnimationEditor
 {
-    internal sealed class XAnimationEditorActorPlaybackController : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost, IDisposable
+    internal sealed class XAnimationEditorActorPlaybackController : IXAnimationPlaybackHudHost, IXAnimationActionDebugHudHost, IXAnimationChannelPlaybackHudHost, IDisposable
     {
         private const float StepDeltaTime = 1f / 60f;
 
@@ -50,6 +50,12 @@ namespace XAnimationEditor
             set => m_Settings.TransitionSectionExpanded = value;
         }
 
+        public bool PlayingAnimationsExpanded
+        {
+            get => m_Settings.PlayingAnimationsSectionExpanded;
+            set => m_Settings.PlayingAnimationsSectionExpanded = value;
+        }
+
         public bool ActionDebugExpanded
         {
             get => m_Settings.ActionDebugSectionExpanded;
@@ -75,7 +81,39 @@ namespace XAnimationEditor
         public bool CanStop => TryGetDominantPlaybackState(out _) || (!Application.isPlaying && m_EditModeSession.IsLoaded);
         public bool CanSeek => TryGetDominantPlaybackState(out _);
         public float NormalizedTime => TryGetDominantPlaybackState(out XAnimationChannelState state) ? Mathf.Clamp01(state.normalizedTime) : 0f;
+        public bool CanControlSelectedChannel => HasSelectedChannel;
+        public bool CanPlaySelectedChannel => HasSelectedChannelPlayback
+            ? IsPaused || IsSelectedChannelPaused
+            : HasSelectedChannel && FindFirstSelectedChannelState() != null;
+        public bool CanPauseSelectedChannel => HasSelectedChannelPlayback && !IsPaused && !IsSelectedChannelPaused;
+        public bool CanStopSelectedChannel => HasSelectedChannelPlayback;
+        public float SelectedChannelWeight
+        {
+            get
+            {
+                if (!HasSelectedChannel)
+                {
+                    return 0f;
+                }
+
+                if (Application.isPlaying)
+                {
+                    return m_Actor.GetChannelWeight(m_Settings.ChannelName);
+                }
+
+                return m_EditModeSession.IsLoaded && m_EditModeSession.Matches(m_Actor)
+                    ? m_EditModeSession.GetChannelWeight(m_Settings.ChannelName)
+                    : FindSelectedChannelConfig().defaultWeight;
+            }
+        }
         public IReadOnlyList<string> ChannelChoices => m_ChannelChoices;
+        public XAnimationDebugGraphSnapshot DebugGraphSnapshot => Application.isPlaying
+            ? m_Actor != null
+                ? m_Actor.GetDebugGraphSnapshot()
+                : XAnimationDebugGraphSnapshot.Invalid("当前没有选中的 XAnimationActor。")
+            : m_EditModeSession.IsLoaded && m_EditModeSession.Matches(m_Actor)
+                ? m_EditModeSession.GetDebugGraphSnapshot()
+                : XAnimationDebugGraphSnapshot.Invalid("当前 Actor 尚未开始编辑态预览。");
         public IReadOnlyList<string> ActionStateChoices => GetActionStateChoices(m_ActionStateChoices);
         public string ActionStateKey
         {
@@ -160,6 +198,98 @@ namespace XAnimationEditor
         {
             m_Settings.ChannelName = NormalizeChannelName(channelName);
             SaveSettings();
+        }
+
+        public void SetSelectedChannelWeight(float weight)
+        {
+            RefreshSelection();
+            float channelWeight = Mathf.Max(0f, weight);
+            if (Application.isPlaying)
+            {
+                m_Actor.SetChannelWeight(m_Settings.ChannelName, channelWeight);
+                if (m_Actor.UpdateMode == XAnimationUpdateMode.Manual)
+                {
+                    m_Actor.SyncFrame();
+                }
+            }
+            else
+            {
+                EnsureEditModeSessionLoaded();
+                m_EditModeSession.SetChannelWeight(m_Settings.ChannelName, channelWeight);
+                m_EditModeSession.SyncFrame();
+            }
+
+            SetStatus($"{m_Settings.ChannelName} weight = {channelWeight:0.###}。");
+            XAnimationSceneOverlaySelection.RequestRepaint();
+        }
+
+        public void PlaySelectedChannel()
+        {
+            RefreshSelection();
+            string channelName = m_Settings.ChannelName;
+            XAnimationStateNodeLocation firstState = FindFirstSelectedChannelState();
+            if (Application.isPlaying)
+            {
+                m_Actor.Resume();
+                m_Actor.ResumeChannel(channelName);
+                if (GetChannelState(channelName) == null)
+                {
+                    m_Actor.GlobalSpeed = m_Settings.Speed;
+                    m_Actor.PlayState(channelName, firstState.Key, BuildTransitionOptions());
+                }
+            }
+            else
+            {
+                EnsureEditModeSessionLoaded();
+                m_EditModeSession.Resume();
+                m_EditModeSession.ResumeChannel(channelName);
+                if (m_EditModeSession.GetChannelState(channelName) == null)
+                {
+                    m_EditModeSession.SetGlobalSpeed(m_Settings.Speed);
+                    m_EditModeSession.PlayState(m_Actor, channelName, firstState.Key, BuildTransitionOptions());
+                }
+            }
+
+            SetStatus($"正在播放 {channelName} Channel。");
+            XAnimationSceneOverlaySelection.RequestRepaint();
+        }
+
+        public void PauseSelectedChannel()
+        {
+            RefreshSelection();
+            string channelName = m_Settings.ChannelName;
+            if (Application.isPlaying)
+            {
+                m_Actor.PauseChannel(channelName);
+            }
+            else
+            {
+                m_EditModeSession.PauseChannel(channelName);
+            }
+
+            SetStatus($"已暂停 {channelName} Channel。");
+            XAnimationSceneOverlaySelection.RequestRepaint();
+        }
+
+        public void StopSelectedChannel()
+        {
+            RefreshSelection();
+            string channelName = m_Settings.ChannelName;
+            if (Application.isPlaying)
+            {
+                m_Actor.Resume();
+                m_Actor.ResumeChannel(channelName);
+                m_Actor.Stop(channelName);
+            }
+            else
+            {
+                m_EditModeSession.Resume();
+                m_EditModeSession.ResumeChannel(channelName);
+                m_EditModeSession.Stop(channelName);
+            }
+
+            SetStatus($"已停止 {channelName} Channel。");
+            XAnimationSceneOverlaySelection.RequestRepaint();
         }
 
         public void SetRootMotionEnabled(bool enabled)
@@ -491,6 +621,36 @@ namespace XAnimationEditor
             }
         }
 
+        public bool TrySetParameter(string key, string value)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (Application.isPlaying)
+                {
+                    m_Actor?.SetParameter(key, value);
+                }
+                else
+                {
+                    m_EditModeSession.SetParameter(key, value);
+                }
+
+                SetStatus($"{key} = {value}");
+                XAnimationSceneOverlaySelection.RequestRepaint();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, m_Actor);
+                SetStatus(ex.Message, true);
+                return false;
+            }
+        }
+
         public bool TrySetParameter(string key, bool value)
         {
             if (string.IsNullOrWhiteSpace(key))
@@ -569,6 +729,22 @@ namespace XAnimationEditor
         public bool TryGetParameter(string key, out int value)
         {
             value = 0;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return false;
+            }
+
+            if (Application.isPlaying)
+            {
+                return m_Actor != null && m_Actor.TryGetParameter(key, out value);
+            }
+
+            return m_EditModeSession.TryGetParameter(key, out value);
+        }
+
+        public bool TryGetParameter(string key, out string value)
+        {
+            value = null;
             if (string.IsNullOrWhiteSpace(key))
             {
                 return false;
@@ -990,6 +1166,50 @@ namespace XAnimationEditor
             }
 
             return null;
+        }
+
+        private bool HasSelectedChannel => m_Actor != null && FindSelectedChannelConfig() != null;
+        private bool HasSelectedChannelPlayback => HasSelectedChannel && GetChannelState(m_Settings.ChannelName) != null;
+        private bool IsSelectedChannelPaused => Application.isPlaying
+            ? m_Actor.IsChannelPaused(m_Settings.ChannelName)
+            : m_EditModeSession.IsLoaded &&
+              m_EditModeSession.Matches(m_Actor) &&
+              m_EditModeSession.IsChannelPaused(m_Settings.ChannelName);
+
+        private XAnimationChannelConfig FindSelectedChannelConfig()
+        {
+            XAnimationChannelConfig[] channels = m_Asset?.channels ?? Array.Empty<XAnimationChannelConfig>();
+            for (int i = 0; i < channels.Length; i++)
+            {
+                if (string.Equals(channels[i].name, m_Settings.ChannelName, StringComparison.Ordinal))
+                {
+                    return channels[i];
+                }
+            }
+
+            return null;
+        }
+
+        private XAnimationStateNodeLocation FindFirstSelectedChannelState()
+        {
+            IReadOnlyList<XAnimationStateNodeLocation> nodes = XAnimationStateNodeUtility.GetLocations(m_Asset);
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                XAnimationStateNodeLocation node = nodes[i];
+                if (node.Node.kind == XAnimationStateNodeKind.State &&
+                    string.Equals(node.Channel.name, m_Settings.ChannelName, StringComparison.Ordinal))
+                {
+                    return node;
+                }
+            }
+
+            return null;
+        }
+
+        private void EnsureEditModeSessionLoaded()
+        {
+            m_EditModeSession.EnsureLoaded(m_Actor);
+            m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
         }
 
         public XAnimationChannelState GetChannelState(string channelName)

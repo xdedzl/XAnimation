@@ -81,12 +81,12 @@ namespace XAnimationEditor
                 string name,
                 string fullPath,
                 XAnimationStateNodeKind kind = XAnimationStateNodeKind.Normal,
-                XAnimationSelectorStateNodeConfig selector = null)
+                string selectorParameterName = null)
             {
                 Name = name ?? string.Empty;
                 FullPath = fullPath ?? string.Empty;
                 Kind = kind;
-                Selector = selector;
+                SelectorParameterName = selectorParameterName ?? string.Empty;
                 Children = new List<StatePathNode>();
                 States = new List<XAnimationCompiledState>();
             }
@@ -94,7 +94,7 @@ namespace XAnimationEditor
             public string Name { get; }
             public string FullPath { get; }
             public XAnimationStateNodeKind Kind { get; }
-            public XAnimationSelectorStateNodeConfig Selector { get; }
+            public string SelectorParameterName { get; }
             public List<StatePathNode> Children { get; }
             public List<XAnimationCompiledState> States { get; }
         }
@@ -301,10 +301,11 @@ namespace XAnimationEditor
         [SerializeField] private bool m_ShouldAutoReloadPreview;
         [SerializeField] private bool m_AssetsSectionExpanded = true;
         [SerializeField] private bool m_PlaybackSectionExpanded = true;
+        [SerializeField] private bool m_PlayingAnimationsSectionExpanded;
         [SerializeField] private bool m_PlayTransitionSectionExpanded;
 
         [SerializeField] private bool m_ActionDebugSectionExpanded;
-        [SerializeField] private bool m_PreviewParametersSectionExpanded = true;
+        [SerializeField] private bool m_PreviewParametersSectionExpanded;
         [SerializeField] private bool m_ParametersSectionExpanded = true;
         [SerializeField] private bool m_StatesSectionExpanded = true;
         [SerializeField] private bool m_AutoTransitionSectionExpanded = true;
@@ -392,7 +393,7 @@ namespace XAnimationEditor
         private readonly Dictionary<string, EditableLabel> m_ParameterLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ParameterRowMap = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedClipKeys = new(StringComparer.Ordinal);
-        private readonly HashSet<string> m_CollapsedClipPathKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_ExpandedClipPathKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_ClipLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipPathRowMap = new(StringComparer.Ordinal);

@@ -53,6 +53,7 @@ namespace XAnimationEditor
         public static readonly Color ListHeaderBg = new(0.20f, 0.20f, 0.20f, 1f);
         public static readonly Color PlayingBg = new(0.20f, 0.35f, 0.55f, 0.65f);
         public static readonly Color ProgressFillBg = new(0.20f, 0.55f, 0.95f, 0.55f);
+        public static readonly Color BlendWeightFillBg = new(0.25f, 0.72f, 0.34f, 0.55f);
 
         public static VisualElement CreateCard(string titleText, VisualElement titleAction = null)
         {

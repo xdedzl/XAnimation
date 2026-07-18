@@ -66,6 +66,7 @@ namespace XAnimationEditor
         {
             XAnimationPlaybackSettings settings = XAnimationPlaybackSettingsPrefs.Load();
             m_PlaybackSectionExpanded = settings.PlaybackSectionExpanded;
+            m_PlayingAnimationsSectionExpanded = settings.PlayingAnimationsSectionExpanded;
             m_PlayTransitionSectionExpanded = settings.TransitionSectionExpanded;
             m_PlayTargetChannelName = settings.ChannelName;
             m_PlaySpeed = Mathf.Approximately(settings.Speed, 0f) ? 1f : settings.Speed;
@@ -118,6 +119,7 @@ namespace XAnimationEditor
             XAnimationPlaybackSettingsPrefs.Save(new XAnimationPlaybackSettings
             {
                 PlaybackSectionExpanded = m_PlaybackSectionExpanded,
+                PlayingAnimationsSectionExpanded = m_PlayingAnimationsSectionExpanded,
                 TransitionSectionExpanded = m_PlayTransitionSectionExpanded,
                 ChannelName = m_PlayTargetChannelName,
                 Speed = m_PlaySpeed,
@@ -748,7 +750,7 @@ namespace XAnimationEditor
             m_AddStateNodeButton.tooltip = "在当前 Channel 根层级选择新增的 State Node 类型。";
             m_AddStateNodeButton.SetEnabled(false);
 
-            m_StatesCard = CreateFoldoutCard("Node Tree", m_StatesSectionExpanded, value => m_StatesSectionExpanded = value, m_AddStateNodeButton);
+            m_StatesCard = CreateFoldoutCard("ChannelTree", m_StatesSectionExpanded, value => m_StatesSectionExpanded = value, m_AddStateNodeButton);
             m_StateListView = new VisualElement();
             m_StatesCard.Content.Add(m_StateListView);
             return m_StatesCard;

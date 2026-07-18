@@ -112,11 +112,11 @@ namespace XAnimationEditor
                     XAnimationTransitionOptions transition = hasExplicitTransition ? CloneTransitionOptions(request.Transition) : null;
                     if (string.IsNullOrWhiteSpace(request.ChannelName))
                     {
-                        m_Session.PlayState(request.StateKey, transition);
+                        PlayPreviewState(request.StateKey, transition);
                     }
                     else
                     {
-                        m_Session.PlayState(request.ChannelName, request.StateKey, transition);
+                        PlayPreviewState(request.ChannelName, request.StateKey, transition);
                     }
 
                     RefreshPlaybackViews();
@@ -250,7 +250,7 @@ namespace XAnimationEditor
             if (m_Session.GetChannelState(m_PlayTargetChannelName) == null)
             {
                 XAnimationCompiledState state = FindFirstSelectedChannelState();
-                m_Session.PlayState(m_PlayTargetChannelName, state.Key, BuildPreviewTransitionOptions());
+                PlayPreviewState(m_PlayTargetChannelName, state.Key, BuildPreviewTransitionOptions());
             }
 
             RefreshPlaybackPauseState();
@@ -457,7 +457,7 @@ namespace XAnimationEditor
             }
 
             ResumePlaybackChannel(playingChannelName);
-            m_Session.PlayState(playingChannelName, stateKey, BuildPreviewTransitionOptions());
+            PlayPreviewState(playingChannelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             return true;
         }
@@ -719,7 +719,7 @@ namespace XAnimationEditor
             SetPauseButtonState(true, false);
             SetStepForwardButtonEnabled(true);
             m_Session.SetGlobalSpeed(GetPlaybackSpeed());
-            m_Session.PlayState(firstState.ChannelName, firstState.Key, BuildPreviewTransitionOptions());
+            PlayPreviewState(firstState.ChannelName, firstState.Key, BuildPreviewTransitionOptions());
 
             RefreshPlaybackViews();
             FocusStateInInspector(firstState.ChannelName, firstState.Key);
@@ -1747,7 +1747,7 @@ namespace XAnimationEditor
             }
 
             ResumePlaybackChannel(state.ChannelName);
-            m_Session.PlayState(state.ChannelName, stateKey, BuildPreviewTransitionOptions());
+            PlayPreviewState(state.ChannelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();
             Repaint();
@@ -1772,7 +1772,7 @@ namespace XAnimationEditor
             }
 
             ResumePlaybackChannel(state.ChannelName);
-            m_Session.PlayState(state.ChannelName, stateKey, BuildPreviewTransitionOptions());
+            PlayPreviewState(state.ChannelName, stateKey, BuildPreviewTransitionOptions());
             RefreshStatePlaybackViews();
             RenderPreview();
             Repaint();
@@ -1899,6 +1899,23 @@ namespace XAnimationEditor
         private static string BuildBlendSampleRuntimeKey(string channelName, string stateKey, int sampleIndex)
         {
             return $"blend-sample:{BuildStateUiKey(channelName, stateKey)}:{sampleIndex}";
+        }
+
+        private void PlayPreviewState(
+            string stateKey,
+            XAnimationTransitionOptions transition = default)
+        {
+            m_Session.PlayState(stateKey, transition);
+            RebuildParameterList();
+        }
+
+        private void PlayPreviewState(
+            string channelName,
+            string stateKey,
+            XAnimationTransitionOptions transition = default)
+        {
+            m_Session.PlayState(channelName, stateKey, transition);
+            RebuildParameterList();
         }
 
         private void RefreshStatePlaybackViews()

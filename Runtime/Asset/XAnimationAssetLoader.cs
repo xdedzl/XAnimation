@@ -351,6 +351,28 @@ namespace XAnimationEngine
                         parentKey,
                         parameterIndexByName[selector.parameterName]);
                     break;
+                case XAnimationStateNodeKind.IntSelector:
+                    XAnimationIntSelectorStateNodeConfig intSelector = nodeConfig.intSelector;
+                    compiledNode = new XAnimationCompiledIntSelectorStateNode(
+                        nodeConfig,
+                        key,
+                        channelName,
+                        channelIndex,
+                        parentKey,
+                        parameterIndexByName[intSelector.parameterName],
+                        BuildIntSelectorBranches(intSelector.branches, children));
+                    break;
+                case XAnimationStateNodeKind.StringSelector:
+                    XAnimationStringSelectorStateNodeConfig stringSelector = nodeConfig.stringSelector;
+                    compiledNode = new XAnimationCompiledStringSelectorStateNode(
+                        nodeConfig,
+                        key,
+                        channelName,
+                        channelIndex,
+                        parentKey,
+                        parameterIndexByName[stringSelector.parameterName],
+                        BuildStringSelectorBranches(stringSelector.branches, children));
+                    break;
                 case XAnimationStateNodeKind.State:
                     compiledNode = CompileState(
                         nodeConfig,
@@ -370,6 +392,48 @@ namespace XAnimationEngine
             compiledStateNodes.Insert(nodeInsertIndex, compiledNode);
             stateNodeByScopeKey.Add(XAnimationCompiledAsset.BuildStateScopeKey(channelName, key), compiledNode);
             return compiledNode;
+        }
+
+        private static IReadOnlyDictionary<int, XAnimationCompiledStateNode> BuildIntSelectorBranches(
+            IReadOnlyList<XAnimationIntSelectorBranchConfig> branches,
+            IReadOnlyList<XAnimationCompiledStateNode> children)
+        {
+            Dictionary<string, XAnimationCompiledStateNode> childrenByName = BuildSelectorChildrenByName(children);
+            Dictionary<int, XAnimationCompiledStateNode> result = new();
+            for (int i = 0; i < branches.Count; i++)
+            {
+                XAnimationIntSelectorBranchConfig branch = branches[i];
+                result.Add(branch.value, childrenByName[branch.childName]);
+            }
+
+            return result;
+        }
+
+        private static IReadOnlyDictionary<string, XAnimationCompiledStateNode> BuildStringSelectorBranches(
+            IReadOnlyList<XAnimationStringSelectorBranchConfig> branches,
+            IReadOnlyList<XAnimationCompiledStateNode> children)
+        {
+            Dictionary<string, XAnimationCompiledStateNode> childrenByName = BuildSelectorChildrenByName(children);
+            Dictionary<string, XAnimationCompiledStateNode> result = new(StringComparer.Ordinal);
+            for (int i = 0; i < branches.Count; i++)
+            {
+                XAnimationStringSelectorBranchConfig branch = branches[i];
+                result.Add(branch.value, childrenByName[branch.childName]);
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, XAnimationCompiledStateNode> BuildSelectorChildrenByName(
+            IReadOnlyList<XAnimationCompiledStateNode> children)
+        {
+            Dictionary<string, XAnimationCompiledStateNode> result = new(StringComparer.Ordinal);
+            for (int i = 0; i < children.Count; i++)
+            {
+                result.Add(children[i].Name, children[i]);
+            }
+
+            return result;
         }
 
         private static XAnimationCompiledState CompileState(
@@ -641,6 +705,32 @@ namespace XAnimationEngine
                 if (node.selector != null)
                 {
                     node.selector.parameterName = node.selector.parameterName?.Trim();
+                }
+                if (node.intSelector != null)
+                {
+                    node.intSelector.parameterName = node.intSelector.parameterName?.Trim();
+                    node.intSelector.branches ??= Array.Empty<XAnimationIntSelectorBranchConfig>();
+                    for (int branchIndex = 0; branchIndex < node.intSelector.branches.Length; branchIndex++)
+                    {
+                        XAnimationIntSelectorBranchConfig branch = node.intSelector.branches[branchIndex];
+                        if (branch != null)
+                        {
+                            branch.childName = branch.childName?.Trim();
+                        }
+                    }
+                }
+                if (node.stringSelector != null)
+                {
+                    node.stringSelector.parameterName = node.stringSelector.parameterName?.Trim();
+                    node.stringSelector.branches ??= Array.Empty<XAnimationStringSelectorBranchConfig>();
+                    for (int branchIndex = 0; branchIndex < node.stringSelector.branches.Length; branchIndex++)
+                    {
+                        XAnimationStringSelectorBranchConfig branch = node.stringSelector.branches[branchIndex];
+                        if (branch != null)
+                        {
+                            branch.childName = branch.childName?.Trim();
+                        }
+                    }
                 }
                 NormalizeStateNodes(node.children);
             }

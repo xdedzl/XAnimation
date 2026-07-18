@@ -13,6 +13,7 @@ namespace XAnimationEngine
 
         private readonly XAnimationRuntime m_Runtime;
         private readonly Dictionary<string, string> m_PendingSelectorStateKeyByChannel = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> m_UnresolvedSelectorStateKeyByChannel = new(StringComparer.Ordinal);
         private int m_NextTemporaryStateId = 1;
 
         private sealed class StateNodeResolution
@@ -54,6 +55,38 @@ namespace XAnimationEngine
         {
             m_NextTemporaryStateId = 1;
             m_PendingSelectorStateKeyByChannel.Clear();
+            m_UnresolvedSelectorStateKeyByChannel.Clear();
+        }
+
+        internal void ClearSelectorState(string channelName)
+        {
+            m_PendingSelectorStateKeyByChannel.Remove(channelName);
+            m_UnresolvedSelectorStateKeyByChannel.Remove(channelName);
+            XAnimationChannel channel = m_Runtime.GetChannel(channelName);
+            if (channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) && playback != null)
+            {
+                playback.SetStateNodeContext(
+                    playback.RequestedStateKey,
+                    playback.ActiveStateNodeKeys,
+                    string.Empty);
+            }
+        }
+
+        internal void ClearAllSelectorStates()
+        {
+            m_PendingSelectorStateKeyByChannel.Clear();
+            m_UnresolvedSelectorStateKeyByChannel.Clear();
+            IReadOnlyList<XAnimationChannel> channels = m_Runtime.Channels;
+            for (int i = 0; i < channels.Count; i++)
+            {
+                if (channels[i].TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) && playback != null)
+                {
+                    playback.SetStateNodeContext(
+                        playback.RequestedStateKey,
+                        playback.ActiveStateNodeKeys,
+                        string.Empty);
+                }
+            }
         }
 
         internal XAnimationPlaybackStartInfo StartClipPlayback(string clipKey, string channelName, XAnimationTransitionOptions transition = default)
@@ -117,6 +150,7 @@ namespace XAnimationEngine
         {
             if (!TryResolveStateNode(requestedNode, out StateNodeResolution resolution))
             {
+                SetUnresolvedSelector(requestedNode);
                 return XAnimationPlaybackStartInfo.CreateFailed(
                     requestedNode.ChannelName,
                     requestedNode.Key,
@@ -151,11 +185,14 @@ namespace XAnimationEngine
 
         internal void ProcessSelectorParameterChange(string parameterName)
         {
+            ProcessUnresolvedSelectorParameterChange(parameterName);
+
             IReadOnlyList<XAnimationChannel> channels = m_Runtime.Channels;
             for (int i = 0; i < channels.Count; i++)
             {
                 XAnimationChannel channel = channels[i];
-                if (!channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
+                if (m_UnresolvedSelectorStateKeyByChannel.ContainsKey(channel.Name) ||
+                    !channel.TryGetCurrentPlayback(out XAnimationStatePlaybackInstance playback) ||
                     playback == null ||
                     playback.IsTemporaryState ||
                     string.IsNullOrWhiteSpace(playback.SelectorControlStateKey) ||
@@ -209,6 +246,7 @@ namespace XAnimationEngine
                 XAnimationCompiledStateNode nextNode = CompiledAsset.GetStateNode(channel.Name, autoTransition.NextStateKey);
                 if (!TryResolveStateNode(nextNode, out StateNodeResolution nextResolution))
                 {
+                    SetUnresolvedSelector(nextNode);
                     continue;
                 }
 
@@ -259,6 +297,7 @@ namespace XAnimationEngine
             }
 
             m_PendingSelectorStateKeyByChannel.Remove(channel.Name);
+            m_UnresolvedSelectorStateKeyByChannel.Remove(channel.Name);
             return XAnimationPlaybackStartInfo.CreateStarted(playback);
         }
 
@@ -367,17 +406,12 @@ namespace XAnimationEngine
                 throw new XAnimationException($"XAnimation Normal state node '{requestedNode.Key}' cannot be played.");
             }
 
-            XAnimationCompiledSelectorStateNode selectorControl = FindOutermostSelectorAncestor(requestedNode);
+            XAnimationCompiledStateNode selectorControl = FindOutermostSelectorAncestor(requestedNode);
             XAnimationCompiledStateNode resolutionEntry = selectorControl ?? requestedNode;
             XAnimationCompiledStateNode current = resolutionEntry;
-            while (current is XAnimationCompiledSelectorStateNode selector)
+            while (IsSelectorNode(current))
             {
-                if (!m_Runtime.Context.TryGetInt(selector.ParameterIndex, out int value))
-                {
-                    throw new XAnimationException($"XAnimation Selector state node '{selector.Key}' parameter '{selector.Config.parameterName}' is unavailable.");
-                }
-
-                if (!selector.TryResolveChild(value, out current))
+                if (!TryResolveSelectorChild(current, out current))
                 {
                     resolution = null;
                     return false;
@@ -397,14 +431,46 @@ namespace XAnimationEngine
             return new StateNodeResolution(state, string.Empty, state, BuildActiveNodePath(state));
         }
 
-        private XAnimationCompiledSelectorStateNode FindOutermostSelectorAncestor(XAnimationCompiledStateNode node)
+        private bool TryResolveSelectorChild(
+            XAnimationCompiledStateNode selector,
+            out XAnimationCompiledStateNode child)
         {
-            XAnimationCompiledSelectorStateNode outermostSelector = null;
+            switch (selector)
+            {
+                case XAnimationCompiledSelectorStateNode indexSelector:
+                    if (!m_Runtime.Context.TryGetInt(indexSelector.ParameterIndex, out int indexValue))
+                    {
+                        throw new XAnimationException($"XAnimation Index Selector state node '{indexSelector.Key}' parameter '{indexSelector.Config.parameterName}' is unavailable.");
+                    }
+                    return indexSelector.TryResolveChild(indexValue, out child);
+
+                case XAnimationCompiledIntSelectorStateNode intSelector:
+                    if (!m_Runtime.Context.TryGetInt(intSelector.ParameterIndex, out int intValue))
+                    {
+                        throw new XAnimationException($"XAnimation Int Selector state node '{intSelector.Key}' parameter '{intSelector.Config.parameterName}' is unavailable.");
+                    }
+                    return intSelector.TryResolveChild(intValue, out child);
+
+                case XAnimationCompiledStringSelectorStateNode stringSelector:
+                    if (!m_Runtime.Context.TryGetString(stringSelector.ParameterIndex, out string stringValue))
+                    {
+                        throw new XAnimationException($"XAnimation String Selector state node '{stringSelector.Key}' parameter '{stringSelector.Config.parameterName}' is unavailable.");
+                    }
+                    return stringSelector.TryResolveChild(stringValue, out child);
+
+                default:
+                    throw new XAnimationException($"XAnimation state node '{selector.Key}' is not a Selector.");
+            }
+        }
+
+        private XAnimationCompiledStateNode FindOutermostSelectorAncestor(XAnimationCompiledStateNode node)
+        {
+            XAnimationCompiledStateNode outermostSelector = null;
             for (XAnimationCompiledStateNode current = node; current != null && !string.IsNullOrWhiteSpace(current.Key);)
             {
-                if (current is XAnimationCompiledSelectorStateNode selector)
+                if (IsSelectorNode(current))
                 {
-                    outermostSelector = selector;
+                    outermostSelector = current;
                 }
 
                 if (string.IsNullOrWhiteSpace(current.ParentKey))
@@ -466,8 +532,77 @@ namespace XAnimationEngine
             for (int i = 0; i < activeNodeKeys.Count; i++)
             {
                 XAnimationCompiledStateNode node = CompiledAsset.GetStateNode(channelName, activeNodeKeys[i]);
-                if (node is XAnimationCompiledSelectorStateNode selector &&
-                    string.Equals(selector.Config.parameterName, parameterName, StringComparison.Ordinal))
+                if (IsSelectorNode(node) &&
+                    string.Equals(GetSelectorParameterName(node), parameterName, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsSelectorNode(XAnimationCompiledStateNode node)
+        {
+            return node is XAnimationCompiledSelectorStateNode or
+                XAnimationCompiledIntSelectorStateNode or
+                XAnimationCompiledStringSelectorStateNode;
+        }
+
+        private static string GetSelectorParameterName(XAnimationCompiledStateNode node)
+        {
+            return node switch
+            {
+                XAnimationCompiledSelectorStateNode selector => selector.Config.parameterName,
+                XAnimationCompiledIntSelectorStateNode selector => selector.Config.parameterName,
+                XAnimationCompiledStringSelectorStateNode selector => selector.Config.parameterName,
+                _ => throw new XAnimationException($"XAnimation state node '{node.Key}' is not a Selector."),
+            };
+        }
+
+        private void SetUnresolvedSelector(XAnimationCompiledStateNode requestedNode)
+        {
+            XAnimationCompiledStateNode selector = FindOutermostSelectorAncestor(requestedNode);
+            XAnimationChannel channel = m_Runtime.GetChannel(selector.ChannelName);
+            m_PendingSelectorStateKeyByChannel.Remove(channel.Name);
+            m_UnresolvedSelectorStateKeyByChannel[channel.Name] = selector.Key;
+            m_Runtime.StopChannel(channel, channel.CompiledChannel.Config.defaultFadeOut);
+        }
+
+        private void ProcessUnresolvedSelectorParameterChange(string parameterName)
+        {
+            if (m_UnresolvedSelectorStateKeyByChannel.Count == 0)
+            {
+                return;
+            }
+
+            List<KeyValuePair<string, string>> unresolvedSelectors = new(m_UnresolvedSelectorStateKeyByChannel);
+            for (int i = 0; i < unresolvedSelectors.Count; i++)
+            {
+                KeyValuePair<string, string> unresolved = unresolvedSelectors[i];
+                XAnimationCompiledStateNode selector = CompiledAsset.GetStateNode(unresolved.Key, unresolved.Value);
+                if (!SelectorTreeUsesParameter(selector, parameterName) ||
+                    !TryResolveStateNode(selector, out StateNodeResolution resolution))
+                {
+                    continue;
+                }
+
+                StartStatePlayback(resolution, new XAnimationTransitionOptions(), false, selector.Key);
+            }
+        }
+
+        private static bool SelectorTreeUsesParameter(XAnimationCompiledStateNode node, string parameterName)
+        {
+            if (IsSelectorNode(node) &&
+                string.Equals(GetSelectorParameterName(node), parameterName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            IReadOnlyList<XAnimationCompiledStateNode> children = node.Children;
+            for (int i = 0; i < children.Count; i++)
+            {
+                if (IsSelectorNode(children[i]) && SelectorTreeUsesParameter(children[i], parameterName))
                 {
                     return true;
                 }
@@ -482,8 +617,7 @@ namespace XAnimationEngine
                     CompiledAsset.GetStateNode(channel.Name, playback.SelectorControlStateKey),
                     out StateNodeResolution resolution))
             {
-                m_PendingSelectorStateKeyByChannel.Remove(channel.Name);
-                m_Runtime.StopChannel(channel, channel.CompiledChannel.Config.defaultFadeOut);
+                SetUnresolvedSelector(CompiledAsset.GetStateNode(channel.Name, playback.SelectorControlStateKey));
                 return;
             }
             if (string.Equals(playback.StateKey, resolution.State.Key, StringComparison.Ordinal))

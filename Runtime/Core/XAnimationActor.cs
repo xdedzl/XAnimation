@@ -331,6 +331,11 @@ namespace XAnimationEngine
             m_Driver.SetParameter(key, value);
         }
 
+        public void SetParameter(string key, string value)
+        {
+            m_Driver.SetParameter(key, value);
+        }
+
         public void SetTrigger(string key)
         {
             m_Driver.SetTrigger(key);
@@ -352,6 +357,11 @@ namespace XAnimationEngine
         }
 
         public bool TryGetParameter(string key, out int value)
+        {
+            return m_Driver.TryGetParameter(key, out value);
+        }
+
+        public bool TryGetParameter(string key, out string value)
         {
             return m_Driver.TryGetParameter(key, out value);
         }

@@ -11,6 +11,7 @@ namespace XAnimationEditor
         private readonly Dictionary<string, float> m_FloatParameters = new(StringComparer.Ordinal);
         private readonly Dictionary<string, int> m_IntParameters = new(StringComparer.Ordinal);
         private readonly Dictionary<string, bool> m_BoolParameters = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> m_StringParameters = new(StringComparer.Ordinal);
 
         private XAnimationDriver m_Driver;
         private XAnimationCompiledAsset m_CompiledAsset;
@@ -314,6 +315,17 @@ namespace XAnimationEditor
             m_Driver?.SetParameter(key, value);
         }
 
+        public void SetParameter(string key, string value)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            m_StringParameters[key] = value ?? string.Empty;
+            m_Driver?.SetParameter(key, value);
+        }
+
         public void SetTrigger(string key)
         {
             m_Driver?.SetTrigger(key);
@@ -329,6 +341,7 @@ namespace XAnimationEditor
             m_FloatParameters.Clear();
             m_IntParameters.Clear();
             m_BoolParameters.Clear();
+            m_StringParameters.Clear();
         }
 
         public bool TryGetParameter(string key, out float value)
@@ -359,6 +372,16 @@ namespace XAnimationEditor
             }
 
             return m_BoolParameters.TryGetValue(key, out value);
+        }
+
+        public bool TryGetParameter(string key, out string value)
+        {
+            if (m_Driver != null && m_Driver.TryGetParameter(key, out value))
+            {
+                return true;
+            }
+
+            return m_StringParameters.TryGetValue(key, out value);
         }
 
         public bool TryGetTrigger(string key, out bool value)
@@ -420,6 +443,11 @@ namespace XAnimationEditor
             }
 
             foreach (KeyValuePair<string, bool> kvp in m_BoolParameters)
+            {
+                m_Driver.SetParameter(kvp.Key, kvp.Value);
+            }
+
+            foreach (KeyValuePair<string, string> kvp in m_StringParameters)
             {
                 m_Driver.SetParameter(kvp.Key, kvp.Value);
             }

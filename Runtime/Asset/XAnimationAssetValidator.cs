@@ -155,9 +155,17 @@ namespace XAnimationEngine
 
             foreach (NodeEntry node in result.NodeByScopeKey.Values)
             {
-                if (node.Config.kind == XAnimationStateNodeKind.Selector)
+                switch (node.Config.kind)
                 {
-                    ValidateSelector(node, parameterMap);
+                    case XAnimationStateNodeKind.Selector:
+                        ValidateSelector(node, node.Config.selector.parameterName, XAnimationParameterType.Int, parameterMap);
+                        break;
+                    case XAnimationStateNodeKind.IntSelector:
+                        ValidateIntSelector(node, parameterMap);
+                        break;
+                    case XAnimationStateNodeKind.StringSelector:
+                        ValidateStringSelector(node, parameterMap);
+                        break;
                 }
             }
 
@@ -202,19 +210,31 @@ namespace XAnimationEngine
                 switch (node.kind)
                 {
                     case XAnimationStateNodeKind.Normal:
-                        if (node.state != null || node.selector != null)
+                        if (node.state != null || node.selector != null || node.intSelector != null || node.stringSelector != null)
                         {
                             throw new XAnimationException($"XAnimation Normal state node '{key}' cannot contain state or selector payload.");
                         }
                         break;
                     case XAnimationStateNodeKind.Selector:
-                        if (node.state != null || node.selector == null)
+                        if (node.state != null || node.selector == null || node.intSelector != null || node.stringSelector != null)
                         {
                             throw new XAnimationException($"XAnimation Selector state node '{key}' must contain only selector payload.");
                         }
                         break;
+                    case XAnimationStateNodeKind.IntSelector:
+                        if (node.state != null || node.selector != null || node.intSelector == null || node.stringSelector != null)
+                        {
+                            throw new XAnimationException($"XAnimation Int Selector state node '{key}' must contain only intSelector payload.");
+                        }
+                        break;
+                    case XAnimationStateNodeKind.StringSelector:
+                        if (node.state != null || node.selector != null || node.intSelector != null || node.stringSelector == null)
+                        {
+                            throw new XAnimationException($"XAnimation String Selector state node '{key}' must contain only stringSelector payload.");
+                        }
+                        break;
                     case XAnimationStateNodeKind.State:
-                        if (node.state == null || node.selector != null)
+                        if (node.state == null || node.selector != null || node.intSelector != null || node.stringSelector != null)
                         {
                             throw new XAnimationException($"XAnimation State node '{key}' must contain only state payload.");
                         }
@@ -237,20 +257,23 @@ namespace XAnimationEngine
             }
         }
 
-        private static void ValidateSelector(NodeEntry node, IReadOnlyDictionary<string, XAnimationParameterConfig> parameterMap)
+        private static void ValidateSelector(
+            NodeEntry node,
+            string parameterName,
+            XAnimationParameterType parameterType,
+            IReadOnlyDictionary<string, XAnimationParameterConfig> parameterMap)
         {
-            XAnimationSelectorStateNodeConfig selector = node.Config.selector;
-            if (string.IsNullOrWhiteSpace(selector.parameterName))
+            if (string.IsNullOrWhiteSpace(parameterName))
             {
                 throw new XAnimationException($"XAnimation Selector state node '{node.Key}' has an empty parameterName.");
             }
-            if (!parameterMap.TryGetValue(selector.parameterName, out XAnimationParameterConfig parameter))
+            if (!parameterMap.TryGetValue(parameterName, out XAnimationParameterConfig parameter))
             {
-                throw new XAnimationException($"XAnimation Selector state node '{node.Key}' references unknown parameter '{selector.parameterName}'.");
+                throw new XAnimationException($"XAnimation Selector state node '{node.Key}' references unknown parameter '{parameterName}'.");
             }
-            if (parameter.type != XAnimationParameterType.Int)
+            if (parameter.type != parameterType)
             {
-                throw new XAnimationException($"XAnimation Selector state node '{node.Key}' parameter '{selector.parameterName}' must be Int.");
+                throw new XAnimationException($"XAnimation Selector state node '{node.Key}' parameter '{parameterName}' must be {parameterType}.");
             }
 
             for (int i = 0; i < node.Config.children.Length; i++)
@@ -258,7 +281,89 @@ namespace XAnimationEngine
                 XAnimationStateNodeConfig child = node.Config.children[i];
                 if (child.kind == XAnimationStateNodeKind.Normal)
                 {
-                    throw new XAnimationException($"XAnimation Selector state node '{node.Key}' child '{child.name}' must be State or Selector.");
+                    throw new XAnimationException($"XAnimation Selector state node '{node.Key}' child '{child.name}' must be State or a Selector.");
+                }
+            }
+        }
+
+        private static void ValidateIntSelector(
+            NodeEntry node,
+            IReadOnlyDictionary<string, XAnimationParameterConfig> parameterMap)
+        {
+            XAnimationIntSelectorStateNodeConfig selector = node.Config.intSelector;
+            ValidateSelector(node, selector.parameterName, XAnimationParameterType.Int, parameterMap);
+
+            XAnimationIntSelectorBranchConfig[] branches = selector.branches ?? Array.Empty<XAnimationIntSelectorBranchConfig>();
+            HashSet<string> childNames = new(StringComparer.Ordinal);
+            HashSet<int> values = new();
+            for (int i = 0; i < branches.Length; i++)
+            {
+                XAnimationIntSelectorBranchConfig branch = branches[i] ??
+                    throw new XAnimationException($"XAnimation Int Selector state node '{node.Key}' contains a null branch at index {i}.");
+                ValidateSelectorBranchChild(node, branch.childName, childNames);
+                if (!values.Add(branch.value))
+                {
+                    throw new XAnimationException($"XAnimation Int Selector state node '{node.Key}' value '{branch.value}' is duplicated.");
+                }
+            }
+
+            ValidateSelectorBranchCoverage(node, childNames);
+        }
+
+        private static void ValidateStringSelector(
+            NodeEntry node,
+            IReadOnlyDictionary<string, XAnimationParameterConfig> parameterMap)
+        {
+            XAnimationStringSelectorStateNodeConfig selector = node.Config.stringSelector;
+            ValidateSelector(node, selector.parameterName, XAnimationParameterType.String, parameterMap);
+
+            XAnimationStringSelectorBranchConfig[] branches = selector.branches ?? Array.Empty<XAnimationStringSelectorBranchConfig>();
+            HashSet<string> childNames = new(StringComparer.Ordinal);
+            HashSet<string> values = new(StringComparer.Ordinal);
+            for (int i = 0; i < branches.Length; i++)
+            {
+                XAnimationStringSelectorBranchConfig branch = branches[i] ??
+                    throw new XAnimationException($"XAnimation String Selector state node '{node.Key}' contains a null branch at index {i}.");
+                ValidateSelectorBranchChild(node, branch.childName, childNames);
+                if (branch.value == null)
+                {
+                    throw new XAnimationException($"XAnimation String Selector state node '{node.Key}' child '{branch.childName}' has a null value.");
+                }
+                if (!values.Add(branch.value))
+                {
+                    throw new XAnimationException($"XAnimation String Selector state node '{node.Key}' value '{branch.value}' is duplicated.");
+                }
+            }
+
+            ValidateSelectorBranchCoverage(node, childNames);
+        }
+
+        private static void ValidateSelectorBranchChild(NodeEntry node, string childName, HashSet<string> childNames)
+        {
+            if (!childNames.Add(childName))
+            {
+                throw new XAnimationException($"XAnimation Selector state node '{node.Key}' child mapping '{childName}' is duplicated.");
+            }
+
+            for (int i = 0; i < node.Config.children.Length; i++)
+            {
+                if (string.Equals(node.Config.children[i].name, childName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+            }
+
+            throw new XAnimationException($"XAnimation Selector state node '{node.Key}' maps unknown child '{childName}'.");
+        }
+
+        private static void ValidateSelectorBranchCoverage(NodeEntry node, HashSet<string> childNames)
+        {
+            for (int i = 0; i < node.Config.children.Length; i++)
+            {
+                string childName = node.Config.children[i].name;
+                if (!childNames.Contains(childName))
+                {
+                    throw new XAnimationException($"XAnimation Selector state node '{node.Key}' child '{childName}' has no value mapping.");
                 }
             }
         }
@@ -493,7 +598,7 @@ namespace XAnimationEngine
                 }
                 if (!string.IsNullOrWhiteSpace(transition.nextStateKey))
                 {
-                    ValidateStateTarget(channelName, transition.nextStateKey, result, $"auto transition '{transition.preStateKey}'");
+                    ValidatePlayableStateTarget(channelName, transition.nextStateKey, result, $"auto transition '{transition.preStateKey}'");
                 }
             }
         }
@@ -523,6 +628,21 @@ namespace XAnimationEngine
                 {
                     throw new XAnimationException($"XAnimation default transition pair '{channelName}: {transition.preStateKey}' -> '{transition.nextStateKey}' is duplicated.");
                 }
+            }
+        }
+
+        private static void ValidatePlayableStateTarget(
+            string channelName,
+            string targetKey,
+            StateValidationResult result,
+            string owner)
+        {
+            string targetScopeKey = XAnimationCompiledAsset.BuildStateScopeKey(channelName, targetKey);
+            if (!result.NodeByScopeKey.TryGetValue(targetScopeKey, out NodeEntry target) ||
+                target.Config.kind == XAnimationStateNodeKind.Normal)
+            {
+                throw new XAnimationException(
+                    $"XAnimation {owner} references unknown or non-playable nextStateKey '{targetKey}' in channel '{channelName}'.");
             }
         }
 
