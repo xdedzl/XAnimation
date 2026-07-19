@@ -17,11 +17,12 @@ namespace XAnimationEngine
         private static readonly ProfilerMarker s_FinalizeTickMarker = new("XAnimationRuntimePlayerLoopRunner.XAnimationFinalizeTick");
         private static bool s_Installed;
 
-        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void Initialize()
         {
-            EnsureInstalled();
+            s_Installed = false;
             s_Schedulers.Clear();
+            EnsureInstalled();
         }
 
         internal static void EnsureInstalled()

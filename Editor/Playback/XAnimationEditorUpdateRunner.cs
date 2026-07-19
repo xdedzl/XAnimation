@@ -17,6 +17,16 @@ namespace XAnimationEditor
             s_LastTime = EditorApplication.timeSinceStartup;
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+        }
+
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.EnteredEditMode) 
+            {
+                s_Schedulers.Clear();
+                s_LastTime = EditorApplication.timeSinceStartup;
+            }
         }
 
         internal static void Register(XAnimationDriverScheduler scheduler)

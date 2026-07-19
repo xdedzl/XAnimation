@@ -14,7 +14,17 @@ namespace XAnimationEditor
         {
             Selection.selectionChanged += RepaintSceneViews;
             EditorApplication.hierarchyChanged += RepaintSceneViews;
-            EditorApplication.playModeStateChanged += _ => RepaintSceneViews();
+            EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+        }
+
+        private static void OnPlayModeStateChanged(PlayModeStateChange state)
+        {
+            if (state == PlayModeStateChange.EnteredEditMode)
+            {
+                s_Controller = null;
+            }
+
+            RepaintSceneViews();
         }
 
         public static XAnimationEditorActorPlaybackController Controller
