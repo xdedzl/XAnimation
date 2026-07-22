@@ -24,7 +24,6 @@ namespace XAnimationEngine
         {
             internal readonly Dictionary<string, StateEntry> StateByScopeKey = new(StringComparer.Ordinal);
             internal readonly Dictionary<string, NodeEntry> NodeByScopeKey = new(StringComparer.Ordinal);
-            internal int StateCount;
         }
 
         public void Validate(XAnimationAsset asset)
@@ -81,11 +80,6 @@ namespace XAnimationEngine
 
         private static void ValidateClips(IReadOnlyList<XAnimationClipConfig> clips)
         {
-            if (clips == null || clips.Count == 0)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one clip.");
-            }
-
             HashSet<string> clipKeys = new(StringComparer.Ordinal);
             for (int i = 0; i < clips.Count; i++)
             {
@@ -146,11 +140,6 @@ namespace XAnimationEngine
                 XAnimationChannelConfig channel = channels[channelIndex];
                 XAnimationStateNodeConfig[] rootNodes = channel.stateNodes ?? Array.Empty<XAnimationStateNodeConfig>();
                 ValidateSiblingNodes(channel.name, string.Empty, rootNodes, clipMap, parameterMap, result);
-            }
-
-            if (result.StateCount == 0)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one State node.");
             }
 
             foreach (NodeEntry node in result.NodeByScopeKey.Values)
@@ -244,7 +233,6 @@ namespace XAnimationEngine
                         }
                         ValidateState(channelName, key, node.state, clipMap, parameterMap);
                         result.StateByScopeKey.Add(scopeKey, new StateEntry { ChannelName = channelName, Key = key, Config = node.state });
-                        result.StateCount++;
                         break;
                     default:
                         throw new XAnimationException($"XAnimation state node '{key}' has unsupported kind '{node.kind}'.");

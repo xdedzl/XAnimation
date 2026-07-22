@@ -25,11 +25,11 @@ namespace XAnimationEditor
                     return;
                 }
 
-                GameObject prefab = m_PrefabField.value as GameObject;
+                GameObject template = m_PrefabField.value as GameObject;
                 TextAsset assetText = m_AssetField.value as TextAsset;
-                if (prefab == null)
+                if (template == null)
                 {
-                    throw new XAnimationException("请选择一个 prefab 资源。");
+                    throw new XAnimationException("请选择一个 Template。");
                 }
 
                 if (assetText == null)
@@ -46,11 +46,11 @@ namespace XAnimationEditor
                 DisposeSession();
                 m_Session = new XAnimationEditorPreviewSession();
                 m_Session.AssetChanged += MarkAssetDirty;
-                m_Session.Load(prefab, assetPath);
-                m_SelectedPrefab = prefab;
+                m_Session.Load(template, assetPath);
+                m_SelectedPrefab = template;
                 m_SelectedAsset = assetText;
                 ClearAssetDirty();
-                SaveLastPreviewAssetPaths(assetText, prefab);
+                SaveLastPreviewAssetPaths(assetText, template);
                 m_ShouldAutoReloadPreview = true;
                 m_IsPaused = false;
                 double now = EditorApplication.timeSinceStartup;
@@ -637,25 +637,18 @@ namespace XAnimationEditor
                 : "新增一个 parameter。";
         }
 
-        private void SetAddClipButtonEnabled(bool enabled)
+        private void SetAddClipGroupButtonEnabled(bool enabled)
         {
-            if (m_AddClipButton != null)
+            if (m_AddClipGroupButton == null)
             {
-                m_AddClipButton.SetEnabled(enabled);
-                m_AddClipButton.style.opacity = enabled ? 1f : 0.45f;
-                m_AddClipButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
-                    ? "Override 资源不能新增 clip。"
-                    : "新增一个全局 clip 资源叶子。";
+                return;
             }
 
-            if (m_AddClipGroupButton != null)
-            {
-                m_AddClipGroupButton.SetEnabled(enabled);
-                m_AddClipGroupButton.style.opacity = enabled ? 1f : 0.45f;
-                m_AddClipGroupButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
-                    ? "Override 资源不能新增 clip folder。"
-                    : "在根层级新增一个 clip folder。";
-            }
+            m_AddClipGroupButton.SetEnabled(enabled);
+            m_AddClipGroupButton.style.opacity = enabled ? 1f : 0.45f;
+            m_AddClipGroupButton.tooltip = m_Session != null && m_Session.IsOverrideAsset
+                ? "Override 资源不能新增 Clip 或 Group。"
+                : "在根层级新增 Clip 或 Group。";
         }
 
         private void SetStepForwardButtonEnabled(bool enabled)
@@ -1214,18 +1207,45 @@ namespace XAnimationEditor
 
         private void ApplyStateRowVisualState(string stateUiKey)
         {
-            if (!m_StateRowMap.TryGetValue(stateUiKey, out VisualElement row) ||
+            if (string.IsNullOrWhiteSpace(stateUiKey) ||
+                !m_StateRowMap.TryGetValue(stateUiKey, out VisualElement row) ||
                 !m_StateVisualStateMap.TryGetValue(stateUiKey, out RowVisualState visualState))
             {
                 return;
             }
 
             ApplyRowVisualState(row, visualState);
+            bool selected = m_PreviewInspectorSelectionKind != PreviewInspectorSelectionKind.None &&
+                            string.Equals(m_PreviewInspectorSelectedNodeUiKey, stateUiKey, StringComparison.Ordinal);
+            row.style.borderLeftWidth = selected ? 2 : 0;
+            row.style.borderLeftColor = AccentColor;
+        }
+
+        private void ApplyStateGroupSelectionVisualState(string nodeUiKey)
+        {
+            if (string.IsNullOrWhiteSpace(nodeUiKey) ||
+                !m_StateGroupHeaderMap.TryGetValue(nodeUiKey, out VisualElement header))
+            {
+                return;
+            }
+
+            bool selected = m_PreviewInspectorSelectionKind != PreviewInspectorSelectionKind.None &&
+                            string.Equals(m_PreviewInspectorSelectedNodeUiKey, nodeUiKey, StringComparison.Ordinal);
+            header.style.borderLeftWidth = selected ? 2f : 0f;
+            header.style.borderLeftColor = AccentColor;
+        }
+
+        private void ApplyChannelTreeNodeSelectionVisualState(string nodeUiKey)
+        {
+            ApplyStateRowVisualState(nodeUiKey);
+            ApplyStateGroupSelectionVisualState(nodeUiKey);
         }
 
         private void RefreshBlendSampleRuntimeState()
         {
-            if (m_BlendSampleRowMap.Count == 0 && m_FreeformBlendGraphElement == null)
+            if (m_BlendSampleRowMap.Count == 0 &&
+                m_ChannelTreeBlendSampleRowMap.Count == 0 &&
+                m_FreeformBlendGraphElement == null)
             {
                 return;
             }
@@ -1286,7 +1306,17 @@ namespace XAnimationEditor
                 }
             }
 
-            foreach (KeyValuePair<string, RowVisualState> kvp in m_BlendSampleRowMap)
+            ApplyBlendSampleRuntimeState(m_BlendSampleRowMap, sampleWeightByRowKey);
+            ApplyBlendSampleRuntimeState(m_ChannelTreeBlendSampleRowMap, sampleWeightByRowKey);
+
+            RefreshGlobalBlendGraph(sampleWeightsByState);
+        }
+
+        private static void ApplyBlendSampleRuntimeState(
+            Dictionary<string, RowVisualState> sampleRowMap,
+            Dictionary<string, float> sampleWeightByRowKey)
+        {
+            foreach (KeyValuePair<string, RowVisualState> kvp in sampleRowMap)
             {
                 RowVisualState visualState = kvp.Value;
                 visualState.Playing = false;
@@ -1296,8 +1326,6 @@ namespace XAnimationEditor
                     : 0f;
                 ApplyRowProgressVisualState(visualState);
             }
-
-            RefreshGlobalBlendGraph(sampleWeightsByState);
         }
 
         private bool TryFindBlendSampleRowKey(
@@ -1567,14 +1595,11 @@ namespace XAnimationEditor
                 return true;
             }
 
-            foreach (string expandedStateUiKey in m_ExpandedStateKeys)
+            if (TryGetCompiledStateByUiKey(m_PreviewInspectorSelectedNodeUiKey, out XAnimationCompiledState selectedState) &&
+                IsBlendGraphCompatibleState(selectedState))
             {
-                if (TryGetCompiledStateByUiKey(expandedStateUiKey, out XAnimationCompiledState expandedState) &&
-                    IsBlendGraphCompatibleState(expandedState))
-                {
-                    state = expandedState;
-                    return true;
-                }
+                state = selectedState;
+                return true;
             }
 
             if (!string.IsNullOrWhiteSpace(m_LastInteractedFreeformStateKey) &&

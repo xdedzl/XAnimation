@@ -188,11 +188,11 @@ namespace XAnimationEditor
             m_EditorActor.OnStateExit += OnStateExit;
         }
 
-        public void Load(GameObject prefabAsset, string assetPath)
+        public void Load(GameObject template, string assetPath)
         {
-            if (prefabAsset == null)
+            if (template == null)
             {
-                throw new XAnimationException("XAnimation preview prefab cannot be null.");
+                throw new XAnimationException("XAnimation preview template cannot be null.");
             }
 
             if (string.IsNullOrWhiteSpace(assetPath))
@@ -219,7 +219,7 @@ namespace XAnimationEditor
 
             try
             {
-                m_Instance = UnityEngine.Object.Instantiate(prefabAsset, isolationRoot.transform, false);
+                m_Instance = UnityEngine.Object.Instantiate(template, isolationRoot.transform, false);
                 m_Instance.transform.position = Vector3.zero;
                 ApplyHideFlags(m_Instance);
 
@@ -779,28 +779,7 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             XAnimationChannelConfig[] channels = asset.channels ?? Array.Empty<XAnimationChannelConfig>();
-            if (channels.Length <= 1)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one channel.");
-            }
-
             XAnimationChannelConfig channel = m_CompiledAsset.GetChannel(channelName).Config;
-            bool hasOtherBaseChannel = false;
-            for (int i = 0; i < channels.Length; i++)
-            {
-                XAnimationChannelConfig item = channels[i];
-                if (!ReferenceEquals(item, channel) && item != null && item.layerType == XAnimationChannelLayerType.Base)
-                {
-                    hasOtherBaseChannel = true;
-                    break;
-                }
-            }
-
-            if (channel.layerType == XAnimationChannelLayerType.Base && !hasOtherBaseChannel)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one Base channel.");
-            }
-
             List<XAnimationChannelConfig> orderedChannels = new(channels.Length - 1);
             for (int i = 0; i < channels.Length; i++)
             {
@@ -816,26 +795,72 @@ namespace XAnimationEditor
             RebuildDriverAndSave();
         }
 
-        public string AddClip(string parentPath = null)
+        public bool CanDeleteChannel(string channelName, out string reason)
+        {
+            XAnimationChannelConfig[] channels = m_CompiledAsset.Asset.channels;
+            if (channels.Length <= 1)
+            {
+                reason = "XAnimation 至少需要保留一个 Channel。";
+                return false;
+            }
+
+            XAnimationChannelConfig channel = m_CompiledAsset.GetChannel(channelName).Config;
+            if (channel.layerType == XAnimationChannelLayerType.Base)
+            {
+                for (int i = 0; i < channels.Length; i++)
+                {
+                    if (!ReferenceEquals(channels[i], channel) && channels[i].layerType == XAnimationChannelLayerType.Base)
+                    {
+                        reason = null;
+                        return true;
+                    }
+                }
+
+                reason = "XAnimation 至少需要保留一个 Base Channel。";
+                return false;
+            }
+
+            reason = null;
+            return true;
+        }
+
+        public string AddClip(string parentPath, AnimationClip animationClip)
+        {
+            return AddClips(parentPath, new[] { animationClip })[0];
+        }
+
+        public IReadOnlyList<string> AddClips(string parentPath, IReadOnlyList<AnimationClip> animationClips)
         {
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             XAnimationClipConfig[] clips = asset.clips ?? Array.Empty<XAnimationClipConfig>();
-            string clipPath = FindTemplateClipPath(clips);
-            if (string.IsNullOrWhiteSpace(clipPath))
+            List<XAnimationClipConfig> updatedClips = new(clips);
+            HashSet<string> clipKeys = new(StringComparer.Ordinal);
+            for (int i = 0; i < clips.Length; i++)
             {
-                throw new XAnimationException("Cannot add clip because no template AnimationClip exists.");
+                clipKeys.Add(clips[i].key);
             }
 
-            string clipKey = CreateUniqueClipKey(BuildClipPathKey(parentPath, "NewClip"));
-            asset.clips = AppendItem(clips, new XAnimationClipConfig
+            List<string> addedClipKeys = new(animationClips.Count);
+            for (int i = 0; i < animationClips.Count; i++)
             {
-                key = clipKey,
-                clipPath = clipPath,
-            });
-            m_OriginalClipPathByKey[clipKey] = clipPath;
+                AnimationClip animationClip = animationClips[i];
+                string clipPath = XAnimationEditorAssetResolver.BuildClipPath(animationClip);
+                string clipKeyPrefix = BuildClipPathKey(parentPath, NormalizeClipPathKey(animationClip.name));
+                string clipKey = CreateUniqueName(clipKeyPrefix, clipKeys.Contains);
+                clipKeys.Add(clipKey);
+                updatedClips.Add(new XAnimationClipConfig
+                {
+                    key = clipKey,
+                    clipPath = clipPath,
+                });
+                addedClipKeys.Add(clipKey);
+                m_OriginalClipPathByKey[clipKey] = clipPath;
+            }
+
+            asset.clips = updatedClips.ToArray();
             RebuildDriverAndSave();
-            return clipKey;
+            return addedClipKeys;
         }
 
         public void RenameClipPath(string oldPath, string newPath)
@@ -982,11 +1007,6 @@ namespace XAnimationEditor
             EnsureBaseAssetEditable();
             XAnimationAsset asset = m_CompiledAsset.Asset;
             XAnimationClipConfig[] clips = asset.clips ?? Array.Empty<XAnimationClipConfig>();
-            if (clips.Length <= 1)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one clip.");
-            }
-
             m_CompiledAsset.GetClip(clipKey);
             List<XAnimationClipConfig> orderedClips = new(clips.Length - 1);
             for (int i = 0; i < clips.Length; i++)
@@ -1073,16 +1093,24 @@ namespace XAnimationEditor
             XAnimationCompiledChannel compiledChannel = m_CompiledAsset.GetChannel(channelName);
             XAnimationAsset asset = m_CompiledAsset.Asset;
             string clipKey = FindTemplateClipKey(asset.clips ?? Array.Empty<XAnimationClipConfig>());
-            if (string.IsNullOrWhiteSpace(clipKey))
-            {
-                throw new XAnimationException("Cannot add state because no template clip exists.");
-            }
-
             string stateKey = CreateUniqueStateKey(compiledChannel.Name, BuildStatePathKey(parentPath, "NewState"));
             XAnimationStateNodeConfig stateNode = CreateDefaultStateNode(GetStatePathLeafName(stateKey), clipKey);
             AppendStateNode(compiledChannel.Config, NormalizeStatePath(parentPath), stateNode);
             RebuildDriverAndSave();
             return stateKey;
+        }
+
+        public bool CanAddState(out string reason)
+        {
+            string clipKey = FindTemplateClipKey(m_CompiledAsset.Asset.clips);
+            if (string.IsNullOrWhiteSpace(clipKey))
+            {
+                reason = "请先添加至少一个 Clip，再创建 State。";
+                return false;
+            }
+
+            reason = null;
+            return true;
         }
 
         public string AddNormalStateNode(string channelName, string parentPath = null)
@@ -1290,7 +1318,6 @@ namespace XAnimationEditor
             }
 
             IReadOnlyList<XAnimationStateNodeLocation> locations = XAnimationStateNodeUtility.GetLocations(asset);
-            int removedStateCount = 0;
             for (int i = 0; i < locations.Count; i++)
             {
                 XAnimationStateNodeLocation child = locations[i];
@@ -1302,17 +1329,12 @@ namespace XAnimationEditor
 
                 if (child.Node.kind == XAnimationStateNodeKind.State)
                 {
-                    removedStateCount++;
                     EnsureStateNodeHasNoChannelReferences(asset, channelName, child.Key);
                 }
                 else if (IsSelectorKind(child.Node.kind))
                 {
                     EnsurePlayableStateNodeHasNoReferences(asset, channelName, child.Key);
                 }
-            }
-            if (m_CompiledAsset.States.Count - removedStateCount < 1)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one State node.");
             }
 
             RemoveStateNode(location);
@@ -1379,6 +1401,63 @@ namespace XAnimationEditor
             RebuildDriverAndSave();
         }
 
+        public void MoveStateNode(
+            string sourceChannelName,
+            string nodePath,
+            string targetChannelName,
+            string targetParentPath)
+        {
+            EnsureBaseAssetEditable();
+            sourceChannelName = NormalizeRequiredChannelName(sourceChannelName);
+            targetChannelName = NormalizeRequiredChannelName(targetChannelName);
+            nodePath = NormalizeRequiredStateKey(nodePath);
+            targetParentPath = NormalizeStatePath(targetParentPath);
+
+            string targetPath = BuildStatePathKey(targetParentPath, GetStatePathLeafName(nodePath));
+            if (string.Equals(sourceChannelName, targetChannelName, StringComparison.Ordinal))
+            {
+                RenameStatePath(sourceChannelName, nodePath, targetPath);
+                return;
+            }
+
+            XAnimationAsset asset = m_CompiledAsset.Asset;
+            if (!XAnimationStateNodeUtility.TryGetLocation(asset, sourceChannelName, nodePath, out XAnimationStateNodeLocation source))
+            {
+                throw new XAnimationException($"XAnimation state node '{nodePath}' does not exist in channel '{sourceChannelName}'.");
+            }
+
+            XAnimationCompiledChannel targetChannel = m_CompiledAsset.GetChannel(targetChannelName);
+            XAnimationStateNodeConfig targetParent = ResolveStateNodeParent(targetChannel.Config, targetParentPath);
+            EnsureParentAcceptsStateNodeKind(targetParent, source.Node.kind);
+            EnsureUniqueSiblingName(targetChannel.Config, targetParent, source.Node.name, source.Node);
+
+            IReadOnlyList<XAnimationStateNodeLocation> locations = XAnimationStateNodeUtility.GetLocations(asset);
+            for (int i = 0; i < locations.Count; i++)
+            {
+                XAnimationStateNodeLocation child = locations[i];
+                if (!string.Equals(child.Channel.name, sourceChannelName, StringComparison.Ordinal) ||
+                    !(string.Equals(child.Key, nodePath, StringComparison.Ordinal) ||
+                      child.Key.StartsWith(nodePath + "/", StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                if (child.Node.kind == XAnimationStateNodeKind.State)
+                {
+                    EnsureStateNodeHasNoChannelReferences(asset, sourceChannelName, child.Key);
+                }
+                else if (IsSelectorKind(child.Node.kind))
+                {
+                    EnsurePlayableStateNodeHasNoReferences(asset, sourceChannelName, child.Key);
+                }
+            }
+
+            RemoveStateNode(source);
+            AppendStateNode(targetChannel.Config, targetParent, source.Node);
+            MoveStatesGraphNodeEditData(asset, sourceChannelName, nodePath, targetChannelName, targetPath);
+            RebuildDriverAndSave();
+        }
+
         public void DeleteState(string stateKey)
         {
             XAnimationCompiledState state = ResolveUnambiguousState(stateKey);
@@ -1391,11 +1470,6 @@ namespace XAnimationEditor
             channelName = NormalizeRequiredChannelName(channelName);
             stateKey = NormalizeRequiredStateKey(stateKey);
             XAnimationAsset asset = m_CompiledAsset.Asset;
-            if (m_CompiledAsset.States.Count <= 1)
-            {
-                throw new XAnimationException("XAnimation asset must contain at least one state.");
-            }
-
             if (!XAnimationStateNodeUtility.TryGetLocation(asset, channelName, stateKey, out XAnimationStateNodeLocation location) ||
                 location.Node.kind != XAnimationStateNodeKind.State)
             {
@@ -2354,10 +2428,25 @@ namespace XAnimationEditor
             {
                 XAnimationStatesGraphNodePosition position = positions[i];
                 if (string.Equals(position.channelName, sourceChannelName, StringComparison.Ordinal) &&
-                    string.Equals(position.nodeKey, sourceNodeKey, StringComparison.Ordinal))
+                    (string.Equals(position.nodeKey, sourceNodeKey, StringComparison.Ordinal) ||
+                     position.nodeKey.StartsWith(sourceNodeKey + "/", StringComparison.Ordinal)))
                 {
                     position.channelName = targetChannelName;
-                    position.nodeKey = targetNodeKey;
+                    position.nodeKey = targetNodeKey + position.nodeKey[sourceNodeKey.Length..];
+                }
+            }
+
+            XAnimationStatesGraphViewState[] viewStates = asset.editData?.statesGraph?.viewStates ??
+                                                          Array.Empty<XAnimationStatesGraphViewState>();
+            for (int i = 0; i < viewStates.Length; i++)
+            {
+                XAnimationStatesGraphViewState viewState = viewStates[i];
+                if (string.Equals(viewState.channelName, sourceChannelName, StringComparison.Ordinal) &&
+                    (string.Equals(viewState.nodeKey, sourceNodeKey, StringComparison.Ordinal) ||
+                     viewState.nodeKey.StartsWith(sourceNodeKey + "/", StringComparison.Ordinal)))
+                {
+                    viewState.channelName = targetChannelName;
+                    viewState.nodeKey = targetNodeKey + viewState.nodeKey[sourceNodeKey.Length..];
                 }
             }
         }
@@ -3069,20 +3158,6 @@ namespace XAnimationEditor
             }
 
             throw new XAnimationException($"Unable to create unique name with prefix '{prefix}'.");
-        }
-
-        private static string FindTemplateClipPath(XAnimationClipConfig[] clips)
-        {
-            for (int i = 0; i < clips.Length; i++)
-            {
-                XAnimationClipConfig clip = clips[i];
-                if (clip != null && !string.IsNullOrWhiteSpace(clip.clipPath))
-                {
-                    return clip.clipPath;
-                }
-            }
-
-            return string.Empty;
         }
 
         private static Dictionary<string, string> BuildClipPathRenameMap(XAnimationClipConfig[] clips, string oldPath, string newPath)
@@ -4872,9 +4947,20 @@ namespace XAnimationEditor
             }
 
             MonoBehaviour[] monoBehaviours = m_Instance.GetComponentsInChildren<MonoBehaviour>(true);
+            List<MonoBehaviour> destructionOrder = new(monoBehaviours.Length);
+            HashSet<MonoBehaviour> collectedBehaviours = new();
             for (int i = 0; i < monoBehaviours.Length; i++)
             {
-                UnityEngine.Object.DestroyImmediate(monoBehaviours[i]);
+                CollectMonoBehaviourDestructionOrder(
+                    monoBehaviours[i],
+                    monoBehaviours,
+                    collectedBehaviours,
+                    destructionOrder);
+            }
+
+            for (int i = 0; i < destructionOrder.Count; i++)
+            {
+                UnityEngine.Object.DestroyImmediate(destructionOrder[i]);
             }
 
             Behaviour[] behaviours = m_Instance.GetComponentsInChildren<Behaviour>(true);
@@ -4910,6 +4996,60 @@ namespace XAnimationEditor
                 particleSystem.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
                 particleSystem.gameObject.SetActive(false);
             }
+        }
+
+        private static void CollectMonoBehaviourDestructionOrder(
+            MonoBehaviour monoBehaviour,
+            MonoBehaviour[] monoBehaviours,
+            HashSet<MonoBehaviour> collectedBehaviours,
+            List<MonoBehaviour> destructionOrder)
+        {
+            if (!collectedBehaviours.Add(monoBehaviour))
+            {
+                return;
+            }
+
+            for (int i = 0; i < monoBehaviours.Length; i++)
+            {
+                MonoBehaviour dependent = monoBehaviours[i];
+                if (dependent == monoBehaviour || dependent.gameObject != monoBehaviour.gameObject)
+                {
+                    continue;
+                }
+
+                if (RequiresComponent(dependent.GetType(), monoBehaviour.GetType()))
+                {
+                    CollectMonoBehaviourDestructionOrder(
+                        dependent,
+                        monoBehaviours,
+                        collectedBehaviours,
+                        destructionOrder);
+                }
+            }
+
+            destructionOrder.Add(monoBehaviour);
+        }
+
+        private static bool RequiresComponent(Type componentType, Type requiredComponentType)
+        {
+            object[] attributes = componentType.GetCustomAttributes(typeof(RequireComponent), true);
+            for (int i = 0; i < attributes.Length; i++)
+            {
+                RequireComponent requireComponent = (RequireComponent)attributes[i];
+                if (MatchesRequiredComponent(requireComponent.m_Type0, requiredComponentType) ||
+                    MatchesRequiredComponent(requireComponent.m_Type1, requiredComponentType) ||
+                    MatchesRequiredComponent(requireComponent.m_Type2, requiredComponentType))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool MatchesRequiredComponent(Type declaredType, Type componentType)
+        {
+            return declaredType != null && declaredType.IsAssignableFrom(componentType);
         }
 
         private void ConfigurePreviewSkinnedMeshRenderers()

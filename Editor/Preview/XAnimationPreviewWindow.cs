@@ -1,7 +1,6 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
-using System.IO;
 using UnityEditor;
 using UnityEditor.UIElements;
 using UnityEngine;
@@ -45,6 +44,13 @@ namespace XAnimationEditor
         {
             Scene = 0,
             StatesGraph = 2,
+        }
+
+        private enum PreviewInspectorSelectionKind
+        {
+            None,
+            StateNode,
+            Transition,
         }
 
         private enum SearchEntryType
@@ -263,7 +269,7 @@ namespace XAnimationEditor
         private const float PlaybackOverlayMinWidth = 392f;
         private const float PlaybackOverlayClickThreshold = 2f;
         private const float PreviewTabBarHeight = 30f;
-        private const float DefaultTransitionDetailsWidth = 260f;
+        private const float PreviewInspectorInitialWidth = 260f;
         private const float FreeformBlendGraphOverlayInitialLeft = 12f;
         private const float FreeformBlendGraphOverlayInitialBottom = 12f;
         private const float FreeformBlendGraphOverlayWidth = 244f;
@@ -310,7 +316,6 @@ namespace XAnimationEditor
         [SerializeField] private bool m_StatesSectionExpanded = true;
         [SerializeField] private bool m_AutoTransitionSectionExpanded = true;
         [SerializeField] private bool m_DefaultTransitionsSectionExpanded = true;
-        [SerializeField] private bool m_ClipsSectionExpanded = true;
         [SerializeField] private bool m_ChannelsSectionExpanded = true;
         [SerializeField] private string m_StateTabChannelName;
         [SerializeField] private bool m_PreviewRootMotionEnabled = true;
@@ -335,7 +340,6 @@ namespace XAnimationEditor
         private Image m_PreviewImage;
         private Label m_StatusLabel;
         private Toggle m_GridToggle;
-        private Button m_AddClipButton;
         private Button m_AddClipGroupButton;
         private Button m_AddChannelButton;
         private Button m_AddParameterButton;
@@ -365,7 +369,7 @@ namespace XAnimationEditor
         private VisualElement m_PreviewSceneTabView;
         private VisualElement m_StatesGraphTabView;
         private XAnimationStatesGraphElement m_StatesGraphView;
-        private VisualElement m_StatesGraphDetailsView;
+        private VisualElement m_PreviewInspectorView;
         private VisualElement m_ClipListView;
         private ScrollView m_InspectorScrollView;
         private VisualElement m_InspectorOverlayLayer;
@@ -374,7 +378,7 @@ namespace XAnimationEditor
         private VisualElement m_MainGroupContainer;
         private VisualElement m_ClipTabContainer;
         private VisualElement m_ParametersGroupContainer;
-        private readonly HashSet<string> m_ExpandedStateKeys = new(StringComparer.Ordinal);
+        private string m_ExpandedBlendStateUiKey;
         private readonly HashSet<string> m_ExpandedStateGroupKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedBlendSampleStateKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_CollapsedDirectionalSampleStateKeys = new(StringComparer.Ordinal);
@@ -385,8 +389,10 @@ namespace XAnimationEditor
         private readonly Dictionary<string, EditableLabel> m_StateLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_StateGroupLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_StateRowMap = new(StringComparer.Ordinal);
-        private readonly Dictionary<string, VisualElement> m_StateEditorMap = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, VisualElement> m_BlendStateEditorMap = new(StringComparer.Ordinal);
+        private readonly List<string> m_StateNodeUiKeysInTreeOrder = new();
         private readonly Dictionary<string, VisualElement> m_StateGroupRowMap = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, VisualElement> m_StateGroupHeaderMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, RowVisualState> m_StateVisualStateMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_StateButtonMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, string> m_StateChannelMap = new(StringComparer.Ordinal);
@@ -394,11 +400,14 @@ namespace XAnimationEditor
         private readonly Dictionary<string, VisualElement> m_ParameterRowMap = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedClipKeys = new(StringComparer.Ordinal);
         private readonly HashSet<string> m_ExpandedClipPathKeys = new(StringComparer.Ordinal);
+        private readonly HashSet<string> m_TransientClipPathKeys = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_ClipLabelMap = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, EditableLabel> m_ClipPathLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ClipPathRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, ClipRowVisualState> m_ClipVisualStateMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, RowVisualState> m_BlendSampleRowMap = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, RowVisualState> m_ChannelTreeBlendSampleRowMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, Button> m_ClipButtonMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, EditableLabel> m_ChannelLabelMap = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VisualElement> m_ChannelRowMap = new(StringComparer.Ordinal);
@@ -413,6 +422,7 @@ namespace XAnimationEditor
         private readonly List<SearchEntry> m_VisibleSearchEntries = new();
         private VisualElement m_ChannelControlsContainer;
         private ScrollView m_CueLogContainer;
+        private IMGUIContainer m_AnimationClipObjectPickerBridge;
         private readonly List<Label> m_LogLabels = new();
 
         private XAnimationEditorPreviewSession m_Session;
@@ -423,7 +433,11 @@ namespace XAnimationEditor
         private Vector2 m_LastPreviewMousePosition;
         private int? m_SelectedLogId;
         private bool m_FollowLatestLog = true;
+        private bool m_OpenAnimationClipObjectPickerRequested;
+        private int m_AnimationClipObjectPickerControlId;
+        private string m_PendingAddClipParentPath;
         private string m_PendingClipRenameKey;
+        private string m_PendingClipPathRenameKey;
         private string m_PendingStateRenameKey;
         private string m_PendingParameterRenameKey;
         private string m_PendingChannelRenameKey;
@@ -439,7 +453,8 @@ namespace XAnimationEditor
         private bool m_DefaultTransitionTabPairWaitingSwitch;
         private string m_StatesGraphChannelName;
         private string m_StatesGraphCurrentPath = string.Empty;
-        private string m_StatesGraphSelectedStateUiKey;
+        private PreviewInspectorSelectionKind m_PreviewInspectorSelectionKind;
+        private string m_PreviewInspectorSelectedNodeUiKey;
         private float m_PlayFadeInOverride;
         private float m_PlayFadeOutOverride;
 
@@ -470,7 +485,6 @@ namespace XAnimationEditor
         private Vector2 m_FreeformBlendGraphOverlayDragStartPointer;
         private Vector2 m_FreeformBlendGraphOverlayDragStartPosition;
         private FoldoutCard m_StatesCard;
-        private FoldoutCard m_ClipsCard;
         private FoldoutCard m_ParametersCard;
         private FoldoutCard m_AutoTransitionCard;
         private FoldoutCard m_DefaultTransitionsCard;
@@ -1392,18 +1406,13 @@ namespace XAnimationEditor
 
         private void SetStatus(string message, bool isError = false)
         {
-            if (isError)
-            {
-                Debug.LogError(message);
-            }
-
             if (m_StatusLabel == null)
             {
                 return;
             }
 
             m_StatusLabel.text = message;
-            m_StatusLabel.style.color = TextNormal;
+            m_StatusLabel.style.color = isError ? DangerColor : TextNormal;
         }
 
         private static XAnimationTransitionOptions CloneTransitionOptions(XAnimationTransitionOptions options)

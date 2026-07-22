@@ -87,6 +87,11 @@ namespace XAnimationEditor
             searchDivider.style.flexShrink = 0;
             toolbar.Add(searchDivider);
 
+            m_AddClipGroupButton = CreateToolbarActionButton("+", ShowAddClipMenu);
+            ApplyToolbarIconButtonSize(m_AddClipGroupButton);
+            SetAddClipGroupButtonEnabled(false);
+            toolbar.Add(m_AddClipGroupButton);
+
             m_ReloadPreviewButton = CreateToolbarActionButton(string.Empty, LoadPreview);
             m_ReloadPreviewButton.tooltip = "重新读取 Prefab 和 XAnimation 资源并刷新预览。";
             ApplyToolbarButtonIcon(m_ReloadPreviewButton, "d_Refresh", "Refresh", "d_TreeEditor.Refresh", "TreeEditor.Refresh");
@@ -333,7 +338,7 @@ namespace XAnimationEditor
             m_MainGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main ? DisplayStyle.Flex : DisplayStyle.None;
             m_ClipTabContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip ? DisplayStyle.Flex : DisplayStyle.None;
             m_ParametersGroupContainer.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters ? DisplayStyle.Flex : DisplayStyle.None;
-
+            m_AddClipGroupButton.style.display = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip ? DisplayStyle.Flex : DisplayStyle.None;
             ApplyToolbarTabVisual(m_SettingGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Setting);
             ApplyToolbarTabVisual(m_MainGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main);
             m_MainChannelArrow.style.visibility = m_SelectedDebugToolbarGroup == DebugToolbarGroup.Main
@@ -341,6 +346,19 @@ namespace XAnimationEditor
                 : Visibility.Hidden;
             ApplyToolbarTabVisual(m_ClipTabButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip);
             ApplyToolbarTabVisual(m_ParametersGroupButton, m_SelectedDebugToolbarGroup == DebugToolbarGroup.Parameters);
+        }
+
+        private void ShowAddClipMenu()
+        {
+            ShowAddClipMenu(m_AddClipGroupButton, string.Empty);
+        }
+
+        private void ShowAddClipMenu(VisualElement activator, string parentPath)
+        {
+            GenericMenu menu = new();
+            menu.AddItem(new GUIContent("Clip"), false, () => AddClip(parentPath));
+            menu.AddItem(new GUIContent("Group"), false, () => AddClipGroup(parentPath));
+            menu.DropDown(activator.worldBound);
         }
 
         private void HandleStateTabClicked()

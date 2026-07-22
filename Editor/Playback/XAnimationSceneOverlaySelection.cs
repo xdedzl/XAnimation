@@ -19,8 +19,14 @@ namespace XAnimationEditor
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
         {
+            if (state == PlayModeStateChange.ExitingEditMode)
+            {
+                s_Controller?.Dispose();
+            }
+
             if (state == PlayModeStateChange.EnteredEditMode)
             {
+                s_Controller?.Dispose();
                 s_Controller = null;
             }
 

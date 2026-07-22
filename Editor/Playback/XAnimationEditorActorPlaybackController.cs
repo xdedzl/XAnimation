@@ -11,7 +11,9 @@ namespace XAnimationEditor
     {
         private const float StepDeltaTime = 1f / 60f;
 
-        private readonly XAnimationActorInspectorPlaybackSession m_EditModeSession = new();
+        private readonly XAnimationActorInspectorPlaybackSession m_IdleEditModeSession = new();
+        private readonly Dictionary<int, XAnimationActorInspectorPlaybackSession> m_EditModeSessions = new();
+        private XAnimationActorInspectorPlaybackSession m_EditModeSession;
         private XAnimationPlaybackSettings m_Settings;
         private readonly List<string> m_ActionStateChoices = new();
         private readonly List<string> m_ActionReturnStateChoices = new();
@@ -33,6 +35,7 @@ namespace XAnimationEditor
 
         public XAnimationEditorActorPlaybackController()
         {
+            m_EditModeSession = m_IdleEditModeSession;
             m_Settings = XAnimationPlaybackSettingsPrefs.Load();
             m_Settings.Speed = XAnimationPlaybackHudView.ClampSpeed(m_Settings.Speed);
         }
@@ -161,6 +164,9 @@ namespace XAnimationEditor
             {
                 ClearActionDebugRuntimeState();
                 m_Actor = actor;
+                m_EditModeSession = Application.isPlaying
+                    ? m_IdleEditModeSession
+                    : GetEditModeSession(actor);
                 m_Asset = null;
                 m_AssetInstanceId = 0;
                 m_ChannelChoices.Clear();
@@ -168,7 +174,7 @@ namespace XAnimationEditor
 
             if (Application.isPlaying)
             {
-                ReleaseEditModeSession();
+                ReleaseEditModeSessions();
             }
 
             RefreshAssetCache();
@@ -1008,7 +1014,7 @@ namespace XAnimationEditor
 
         public void Dispose()
         {
-            ReleaseEditModeSession();
+            ReleaseEditModeSessions();
         }
 
         private IReadOnlyList<string> GetActionStateChoices(List<string> choices)
@@ -1236,7 +1242,10 @@ namespace XAnimationEditor
 
             m_AssetInstanceId = instanceId;
             m_Asset = null;
-            m_EditModeSession.ClearParameterOverrides();
+            if (!Application.isPlaying && m_EditModeSession.IsLoaded && !m_EditModeSession.Matches(m_Actor))
+            {
+                m_EditModeSession.Dispose();
+            }
             m_ChannelChoices.Clear();
             if (m_Actor?.AnimationAsset == null)
             {
@@ -1254,7 +1263,9 @@ namespace XAnimationEditor
                 m_Asset = m_Actor.AnimationAsset.ToXAnimationAsset<XAnimationAsset>();
             }
 
-            m_RootMotionEnabled = m_Asset != null && m_Asset.rootMotion;
+            m_RootMotionEnabled = !Application.isPlaying && m_EditModeSession.IsLoaded
+                ? m_EditModeSession.GetRootMotionEnabled()
+                : m_Asset != null && m_Asset.rootMotion;
             XAnimationChannelConfig[] channels = m_Asset?.channels ?? Array.Empty<XAnimationChannelConfig>();
             for (int i = 0; i < channels.Length; i++)
             {
@@ -1320,12 +1331,33 @@ namespace XAnimationEditor
             m_StatusIsError = false;
         }
 
-        private void ReleaseEditModeSession()
+        private XAnimationActorInspectorPlaybackSession GetEditModeSession(XAnimationActor actor)
         {
-            if (m_EditModeSession.IsLoaded)
+            if (actor == null)
             {
-                m_EditModeSession.Dispose();
+                return m_IdleEditModeSession;
             }
+
+            int actorInstanceId = actor.GetInstanceID();
+            if (!m_EditModeSessions.TryGetValue(actorInstanceId, out XAnimationActorInspectorPlaybackSession session))
+            {
+                session = new XAnimationActorInspectorPlaybackSession();
+                m_EditModeSessions.Add(actorInstanceId, session);
+            }
+
+            return session;
+        }
+
+        private void ReleaseEditModeSessions()
+        {
+            foreach (XAnimationActorInspectorPlaybackSession session in m_EditModeSessions.Values)
+            {
+                session.Dispose();
+            }
+
+            m_EditModeSessions.Clear();
+            m_IdleEditModeSession.Dispose();
+            m_EditModeSession = m_IdleEditModeSession;
         }
 
         private static XAnimationActor ResolveSelectedActor()

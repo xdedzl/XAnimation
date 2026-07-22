@@ -349,13 +349,13 @@ namespace XAnimationEditor
 
             if (outEntries.Count > 0)
             {
-                SelectDefaultTransitionTabPair(outEntries[0], rebuild: false);
+                SelectDefaultTransitionTabPairDuringGraphRebuild(outEntries[0]);
                 return;
             }
 
             if (inEntries.Count > 0)
             {
-                SelectDefaultTransitionTabPair(inEntries[0], rebuild: false);
+                SelectDefaultTransitionTabPairDuringGraphRebuild(inEntries[0]);
                 return;
             }
 
@@ -363,6 +363,18 @@ namespace XAnimationEditor
             m_DefaultTransitionTabPairIndex = -1;
             m_DefaultTransitionTabPairIsAuto = false;
             m_DefaultTransitionTabPairWaitingSwitch = false;
+        }
+
+        private void SelectDefaultTransitionTabPairDuringGraphRebuild(DefaultTransitionPairEntry entry)
+        {
+            if (m_PreviewInspectorSelectionKind == PreviewInspectorSelectionKind.Transition &&
+                string.Equals(m_PreviewInspectorSelectedNodeUiKey, m_DefaultTransitionEditingStateUiKey, StringComparison.Ordinal))
+            {
+                SelectDefaultTransitionTabPair(entry, rebuild: false);
+                return;
+            }
+
+            ApplyDefaultTransitionTabPairSelection(entry);
         }
 
         private static bool ContainsDefaultTransitionPairEntry(
@@ -429,17 +441,7 @@ namespace XAnimationEditor
 
         private void SelectDefaultTransitionTabPair(DefaultTransitionPairEntry entry, bool rebuild = true)
         {
-            bool changed = entry.TransitionIndex != m_DefaultTransitionTabTransitionIndex ||
-                           entry.PairIndex != m_DefaultTransitionTabPairIndex ||
-                           entry.IsAuto != m_DefaultTransitionTabPairIsAuto;
-            m_DefaultTransitionTabTransitionIndex = entry.TransitionIndex;
-            m_DefaultTransitionTabPairIndex = entry.PairIndex;
-            m_DefaultTransitionTabPairIsAuto = entry.IsAuto;
-            m_SelectedDefaultTransitionIndex = entry.IsAuto ? -1 : entry.TransitionIndex;
-            if (changed)
-            {
-                m_DefaultTransitionTabPairWaitingSwitch = false;
-            }
+            SelectPreviewInspectorTransition(entry);
 
             if (rebuild)
             {
@@ -530,6 +532,8 @@ namespace XAnimationEditor
                     RebuildAutoTransitionEditor();
                     RebuildDefaultTransitionsEditor();
                     RefreshChannelStates();
+                    RebuildPreviewInspector();
+                    RebuildStatesGraphTabIfVisible();
                     SetStatus($"Transition 已转换为 {(evt.newValue ? "Auto" : "Default")}。");
                 }
                 catch (Exception ex)
@@ -674,6 +678,8 @@ namespace XAnimationEditor
                 ScheduleAssetSave();
                 RebuildDefaultTransitionsEditor();
                 RefreshChannelStates();
+                SetPreviewInspectorTransitionContext(m_DefaultTransitionEditingStateUiKey);
+                RebuildStatesGraphTabIfVisible();
                 SetStatus($"已新增 Default Transition pair: {preStateKey} -> {nextStateKey}。");
             }
             catch (Exception ex)
@@ -708,6 +714,8 @@ namespace XAnimationEditor
                 RebuildAutoTransitionEditor();
                 RebuildDefaultTransitionsEditor();
                 RefreshChannelStates();
+                SetPreviewInspectorTransitionContext(m_DefaultTransitionEditingStateUiKey);
+                RebuildStatesGraphTabIfVisible();
                 SetStatus($"已删除 {(entry.IsAuto ? "Auto" : "Default")} Transition。");
             }
             catch (Exception ex)

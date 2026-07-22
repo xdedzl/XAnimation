@@ -818,6 +818,12 @@ namespace XAnimationEditor
                    stateType == XAnimationStateType.Blend2DFreeformDirectional;
         }
 
+        private static bool IsBlendStateType(XAnimationStateType stateType)
+        {
+            return stateType == XAnimationStateType.Blend1D ||
+                   IsDirectionalBlendStateType(stateType);
+        }
+
         private static bool TryGetDirectionalBlendSamples(
             XAnimationCompiledState state,
             out IReadOnlyList<XAnimationCompiledBlend2DSimpleDirectionalSample> samples)
@@ -2236,6 +2242,21 @@ namespace XAnimationEditor
                 return false;
             }
 
+            foreach (string transientPath in m_TransientClipPathKeys)
+            {
+                if (string.Equals(transientPath, path, StringComparison.Ordinal) ||
+                    transientPath.StartsWith($"{path}/", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return HasPersistedClipPath(path);
+        }
+
+        private bool HasPersistedClipPath(string path)
+        {
+            path = NormalizeClipPathKey(path);
             IReadOnlyList<XAnimationCompiledClip> clips = m_Session.CompiledAsset.Clips;
             for (int i = 0; i < clips.Count; i++)
             {

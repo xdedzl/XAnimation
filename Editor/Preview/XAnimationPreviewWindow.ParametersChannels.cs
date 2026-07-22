@@ -400,6 +400,7 @@ namespace XAnimationEditor
             RebuildStateList();
             RefreshStatePlayingStates();
             string stateUiKey = string.IsNullOrWhiteSpace(channelName) ? ResolveStateUiKey(stateKey) : BuildStateUiKey(channelName, stateKey);
+            SelectPreviewInspectorStateNode(stateUiKey);
             if (m_StateRowMap.TryGetValue(stateUiKey, out VisualElement stateRow))
             {
                 ScheduleInspectorScrollIntoView(stateRow);
@@ -415,8 +416,6 @@ namespace XAnimationEditor
             }
 
             SetDebugToolbarGroup(DebugToolbarGroup.Clip);
-            m_ClipsSectionExpanded = true;
-            m_ClipsCard?.SetExpanded?.Invoke(true);
             ExpandClipPathForClip(clipKey);
             RebuildClipList();
             RefreshClipPlayingStates();
@@ -520,8 +519,6 @@ namespace XAnimationEditor
             }
 
             SetDebugToolbarGroup(DebugToolbarGroup.Clip);
-            m_ClipsSectionExpanded = true;
-            m_ClipsCard?.SetExpanded?.Invoke(true);
             if (!string.IsNullOrWhiteSpace(clipKey))
             {
                 ExpandClipPathForClip(clipKey);
@@ -626,7 +623,9 @@ namespace XAnimationEditor
             m_ClipListView?.Clear();
             m_ExpandedClipKeys.Clear();
             m_ClipLabelMap.Clear();
+            m_ClipPathLabelMap.Clear();
             m_ClipRowMap.Clear();
+            m_ClipPathRowMap.Clear();
             m_ClipVisualStateMap.Clear();
             m_ClipButtonMap.Clear();
             m_CueRowMap.Clear();
@@ -647,6 +646,10 @@ namespace XAnimationEditor
             m_DefaultTransitionRowMap.Clear();
             m_CollapsedDefaultTransitionIndices.Clear();
             m_PendingClipRenameKey = null;
+            m_PendingClipPathRenameKey = null;
+            m_PendingAddClipParentPath = null;
+            m_OpenAnimationClipObjectPickerRequested = false;
+            m_AnimationClipObjectPickerControlId = 0;
             m_PendingChannelRenameKey = null;
             if (m_PreviewImage != null)
             {
@@ -661,7 +664,7 @@ namespace XAnimationEditor
             SetStepForwardButtonEnabled(false);
             SetStopAllButtonEnabled(false);
             m_PlaybackHudView?.Refresh();
-            SetAddClipButtonEnabled(false);
+            SetAddClipGroupButtonEnabled(false);
             SetAddChannelButtonEnabled(false);
             SetAutoTransitionButtonsEnabled(false);
             SetDefaultTransitionButtonsEnabled(false);
@@ -669,6 +672,7 @@ namespace XAnimationEditor
 
         private void DisposeSession()
         {
+            m_TransientClipPathKeys.Clear();
             if (m_Session == null)
             {
                 return;

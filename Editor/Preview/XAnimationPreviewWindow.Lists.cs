@@ -19,6 +19,7 @@ namespace XAnimationEditor
         {
             m_ClipListView.Clear();
             m_ClipLabelMap.Clear();
+            m_ClipPathLabelMap.Clear();
             m_ClipRowMap.Clear();
             m_ClipPathRowMap.Clear();
             m_ClipVisualStateMap.Clear();
@@ -26,14 +27,14 @@ namespace XAnimationEditor
             m_CueRowMap.Clear();
             m_CueIndexRowMap.Clear();
             m_CueTimelineMarkerMap.Clear();
-            SetAddClipButtonEnabled(m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset);
+            SetAddClipGroupButtonEnabled(m_Session != null && m_Session.IsLoaded && !m_Session.IsOverrideAsset);
             if (m_Session == null || !m_Session.IsLoaded)
             {
                 return;
             }
 
             IReadOnlyList<XAnimationCompiledClip> clips = m_Session.CompiledAsset.Clips;
-            if (clips.Count == 0)
+            if (clips.Count == 0 && m_TransientClipPathKeys.Count == 0)
             {
                 Label emptyLabel = new("No clips");
                 emptyLabel.style.color = TextMuted;
@@ -83,20 +84,25 @@ namespace XAnimationEditor
         private ClipPathNode BuildClipPathTree(IReadOnlyList<XAnimationCompiledClip> clips)
         {
             ClipPathNode root = new(string.Empty, string.Empty);
-            if (clips == null)
+            if (clips != null)
             {
-                return root;
+                for (int clipIndex = 0; clipIndex < clips.Count; clipIndex++)
+                {
+                    XAnimationCompiledClip clip = clips[clipIndex];
+                    if (clip == null)
+                    {
+                        continue;
+                    }
+
+                    AddClipPathInfo(root, BuildClipPathInfo(clip));
+                }
             }
 
-            for (int clipIndex = 0; clipIndex < clips.Count; clipIndex++)
+            List<string> transientPaths = new(m_TransientClipPathKeys);
+            transientPaths.Sort(StringComparer.Ordinal);
+            for (int pathIndex = 0; pathIndex < transientPaths.Count; pathIndex++)
             {
-                XAnimationCompiledClip clip = clips[clipIndex];
-                if (clip == null)
-                {
-                    continue;
-                }
-
-                AddClipPathInfo(root, BuildClipPathInfo(clip));
+                GetOrCreateClipPathNode(root, transientPaths[pathIndex]);
             }
 
             return root;
@@ -109,16 +115,16 @@ namespace XAnimationEditor
                 return;
             }
 
-            List<string> segments = SplitClipPathSegments(pathInfo.FullPath);
-            if (segments.Count <= 1)
-            {
-                root.Clips.Add(pathInfo);
-                return;
-            }
+            ClipPathNode parent = GetOrCreateClipPathNode(root, pathInfo.ParentPath);
+            parent.Clips.Add(pathInfo);
+        }
 
+        private static ClipPathNode GetOrCreateClipPathNode(ClipPathNode root, string path)
+        {
+            List<string> segments = SplitClipPathSegments(path);
             ClipPathNode current = root;
             string currentPath = string.Empty;
-            for (int i = 0; i < segments.Count - 1; i++)
+            for (int i = 0; i < segments.Count; i++)
             {
                 currentPath = string.IsNullOrWhiteSpace(currentPath)
                     ? segments[i]
@@ -133,7 +139,7 @@ namespace XAnimationEditor
                 current = child;
             }
 
-            current.Clips.Add(pathInfo);
+            return current;
         }
 
         private static ClipPathNode FindClipPathChild(ClipPathNode node, string name, string fullPath)
@@ -186,10 +192,13 @@ namespace XAnimationEditor
             m_StateLabelMap.Clear();
             m_StateGroupLabelMap.Clear();
             m_StateRowMap.Clear();
-            m_StateEditorMap.Clear();
+            m_BlendStateEditorMap.Clear();
+            m_StateNodeUiKeysInTreeOrder.Clear();
             m_StateGroupRowMap.Clear();
+            m_StateGroupHeaderMap.Clear();
             m_StateVisualStateMap.Clear();
             m_BlendSampleRowMap.Clear();
+            m_ChannelTreeBlendSampleRowMap.Clear();
             m_StateButtonMap.Clear();
             m_StateChannelMap.Clear();
             m_AddStateNodeButton?.SetEnabled(false);
@@ -198,30 +207,13 @@ namespace XAnimationEditor
                 EnsureStateTabChannelSelection();
                 RefreshGlobalBlendGraph();
                 RebuildStatesGraphTabIfVisible();
+                RebuildPreviewInspector();
                 return;
-            }
-
-            if (m_ExpandedStateKeys.Count > 1)
-            {
-                string expandedStateKey = null;
-                foreach (string key in m_ExpandedStateKeys)
-                {
-                    if (!string.IsNullOrWhiteSpace(key))
-                    {
-                        expandedStateKey = key;
-                        break;
-                    }
-                }
-
-                m_ExpandedStateKeys.Clear();
-                if (!string.IsNullOrWhiteSpace(expandedStateKey))
-                {
-                    m_ExpandedStateKeys.Add(expandedStateKey);
-                }
             }
 
             if (!EnsureStateTabChannelSelection())
             {
+                RebuildPreviewInspector();
                 return;
             }
 
@@ -237,6 +229,7 @@ namespace XAnimationEditor
             RefreshSearchIndex();
             RefreshGlobalBlendGraph();
             RebuildStatesGraphTabIfVisible();
+            RebuildPreviewInspector();
             ApplyPendingFocusState();
         }
 
@@ -752,9 +745,12 @@ namespace XAnimationEditor
         {
             VisualElement group = CreateNestedListGroup();
             string groupKey = BuildStateGroupKey(channelName, node.FullPath);
+            string nodeUiKey = BuildStateUiKey(channelName, node.FullPath);
             m_StateGroupRowMap[groupKey] = group;
+            m_StateNodeUiKeysInTreeOrder.Add(nodeUiKey);
 
             VisualElement header = CreateListHeader();
+            m_StateGroupHeaderMap[nodeUiKey] = header;
             Label foldoutLabel = CreateFoldoutGlyph(!IsStateGroupCollapsed(groupKey));
             header.Add(foldoutLabel);
 
@@ -767,7 +763,7 @@ namespace XAnimationEditor
             }
             EditableLabel groupLabel = new(node.Name);
             ConfigureEditableNameLabel(groupLabel, 180f);
-            groupLabel.tooltip = $"{FormatStateDisplayPath(node.FullPath)}\nKind: {node.Kind}\n单击展开/收起这个 State Node；右键 Rename 编辑路径层级。";
+            groupLabel.tooltip = $"{FormatStateDisplayPath(node.FullPath)}\nKind: {node.Kind}\n单击选中并在右侧 Inspector 编辑；右键 Rename 编辑路径层级。";
             groupLabel.SetEditable(!m_Session.IsOverrideAsset, EditableLabelEditTrigger.ContextMenu);
             groupLabel.EditStarted += BeginNameEdit;
             groupLabel.EditEnded += EndNameEdit;
@@ -796,7 +792,17 @@ namespace XAnimationEditor
             ApplyClipIconButtonStyle(addNodeButton, AccentColor);
             addNodeButton.style.marginLeft = 4;
             header.Add(addNodeButton);
+
+            VisualElement foldoutHitArea = new();
+            foldoutHitArea.tooltip = "展开/收起这个 State Node。";
+            foldoutHitArea.style.position = Position.Absolute;
+            foldoutHitArea.style.left = 0;
+            foldoutHitArea.style.top = 0;
+            foldoutHitArea.style.bottom = 0;
+            foldoutHitArea.style.width = FoldoutGlyphWidth + 12f;
+            header.Add(foldoutHitArea);
             group.Add(header);
+            ApplyStateGroupSelectionVisualState(nodeUiKey);
 
             RegisterStateChannelDropTarget(group, header, channelName, node.FullPath);
 
@@ -823,7 +829,7 @@ namespace XAnimationEditor
                 SetStateGroupCollapsed(groupKey, expanded);
             }
 
-            header.RegisterCallback<MouseDownEvent>(evt =>
+            foldoutHitArea.RegisterCallback<MouseDownEvent>(evt =>
             {
                 if (evt.button != 0)
                 {
@@ -831,6 +837,18 @@ namespace XAnimationEditor
                 }
 
                 Toggle();
+                evt.StopImmediatePropagation();
+            });
+            addNodeButton.RegisterCallback<MouseDownEvent>(evt => evt.StopPropagation());
+            header.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0 || groupLabel.IsEditing)
+                {
+                    return;
+                }
+
+                SelectPreviewInspectorStateNode(nodeUiKey);
+                rootVisualElement.Focus();
                 evt.StopPropagation();
             });
 
@@ -944,6 +962,7 @@ namespace XAnimationEditor
             header.Add(foldoutLabel);
 
             EditableLabel groupLabel = new(node.Name);
+            m_ClipPathLabelMap[node.FullPath] = groupLabel;
             ConfigureEditableNameLabel(groupLabel, 180f);
             groupLabel.tooltip = $"{FormatClipDisplayPath(node.FullPath)}\n单击展开/收起这个 clip folder；右键 Rename 编辑路径层级。";
             groupLabel.SetEditable(!m_Session.IsOverrideAsset, EditableLabelEditTrigger.ContextMenu);
@@ -962,13 +981,14 @@ namespace XAnimationEditor
             Label info = CreateSmallInfoLabel($"{clipCount} clips");
             header.Add(info);
 
-            Button addClipButton = new(() => AddClip(node.FullPath))
+            Button addClipButton = new()
             {
                 text = "+"
             };
+            addClipButton.clicked += () => ShowAddClipMenu(addClipButton, node.FullPath);
             addClipButton.tooltip = m_Session.IsOverrideAsset
-                ? "Override 资源不能新增 clip。"
-                : "在这个 folder 下新增一个 clip。";
+                ? "Override 资源不能新增 Clip 或 Group。"
+                : "在这个 Group 下新增 Clip 或子 Group。";
             addClipButton.SetEnabled(!m_Session.IsOverrideAsset);
             ApplyClipIconButtonStyle(addClipButton, AccentColor);
             addClipButton.style.marginLeft = 4;
@@ -976,6 +996,7 @@ namespace XAnimationEditor
             group.Add(header);
 
             RegisterClipPathDropTarget(group, header, node.FullPath);
+            RegisterProjectClipDropTarget(group, node.FullPath, header);
 
             VisualElement content = new VisualElement();
             content.style.display = IsClipPathCollapsed(groupKey) ? DisplayStyle.None : DisplayStyle.Flex;
@@ -1050,6 +1071,7 @@ namespace XAnimationEditor
             VisualElement container = CreateInteractiveRowContainer(rowIndex);
             Color baseColor = rowIndex % 2 == 0 ? ListRowEvenBg : ListRowOddBg;
             m_StateRowMap[stateUiKey] = container;
+            m_StateNodeUiKeysInTreeOrder.Add(stateUiKey);
             m_StateChannelMap[stateUiKey] = state.ChannelName;
 
             VisualElement progressFill = CreateRowProgressFill();
@@ -1084,11 +1106,14 @@ namespace XAnimationEditor
             row.Add(summaryRow);
 
             string stateKey = state.Key;
+            bool isBlendState = IsBlendStateType(state.Config.stateType);
             EditableLabel label = new(GetStatePathLeafName(stateKey));
             ConfigureEditableNameLabel(label, 78f);
-            label.tooltip = string.IsNullOrWhiteSpace(GetStatePathParent(stateKey))
-                ? "单击展开/收起 state 配置；右键可 Rename，也可批量修改这个 state 用到的动画。"
-                : $"完整路径：{FormatStateDisplayPath(stateKey)}";
+            label.tooltip = isBlendState
+                ? $"完整路径：{FormatStateDisplayPath(stateKey)}；单击选中，再次单击已选中的节点展开动画列表。"
+                : string.IsNullOrWhiteSpace(GetStatePathParent(stateKey))
+                    ? "单击选中并在右侧 Inspector 编辑；右键可 Rename，也可批量修改这个 state 用到的动画。"
+                    : $"完整路径：{FormatStateDisplayPath(stateKey)}；单击在右侧 Inspector 编辑。";
             label.SetEditable(true, EditableLabelEditTrigger.None);
             label.EditStarted += BeginNameEdit;
             label.EditEnded += EndNameEdit;
@@ -1137,10 +1162,17 @@ namespace XAnimationEditor
                 summaryRow.Add(clipField);
             }
 
-            VisualElement editor = CreateStateEditor(state);
-            m_StateEditorMap[stateUiKey] = editor;
-            editor.style.display = m_ExpandedStateKeys.Contains(stateUiKey) ? DisplayStyle.Flex : DisplayStyle.None;
-            RegisterStateNameInteractions(label, editor, stateUiKey, stateKey);
+            VisualElement blendEditor = null;
+            if (isBlendState)
+            {
+                blendEditor = CreateChannelTreeBlendAnimationList(state);
+                blendEditor.style.display = string.Equals(m_ExpandedBlendStateUiKey, stateUiKey, StringComparison.Ordinal)
+                    ? DisplayStyle.Flex
+                    : DisplayStyle.None;
+                m_BlendStateEditorMap[stateUiKey] = blendEditor;
+            }
+
+            RegisterStateNameInteractions(label, blendEditor, stateUiKey, stateKey);
 
             VisualElement actionsRow = new VisualElement();
             actionsRow.style.flexDirection = FlexDirection.Row;
@@ -1176,8 +1208,126 @@ namespace XAnimationEditor
             actionsRow.Add(deleteButton);
 
             wrapper.Add(container);
-            wrapper.Add(editor);
+            if (blendEditor != null)
+            {
+                wrapper.Add(blendEditor);
+            }
+            ApplyStateRowVisualState(stateUiKey);
             return wrapper;
+        }
+
+        private VisualElement CreateChannelTreeBlendAnimationList(XAnimationCompiledState state)
+        {
+            VisualElement list = CreateFoldoutRowEditor();
+            XAnimationStateConfig config = state.Config;
+            if (config.stateType == XAnimationStateType.Blend1D)
+            {
+                XAnimationBlend1DSampleConfig[] samples = config.samples ?? Array.Empty<XAnimationBlend1DSampleConfig>();
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    int sampleIndex = i;
+                    XAnimationBlend1DSampleConfig sample = samples[i];
+                    float threshold = sample?.threshold ?? 0f;
+                    list.Add(CreateChannelTreeBlendAnimationRow(
+                        state.ChannelName,
+                        state.Key,
+                        sampleIndex,
+                        sample?.clipKey,
+                        () => PreviewBlendSample(state.ChannelName, state.Key, threshold)));
+                }
+            }
+            else
+            {
+                XAnimationBlend2DSimpleDirectionalSampleConfig[] samples =
+                    config.directionalSamples ?? Array.Empty<XAnimationBlend2DSimpleDirectionalSampleConfig>();
+                for (int i = 0; i < samples.Length; i++)
+                {
+                    int sampleIndex = i;
+                    XAnimationBlend2DSimpleDirectionalSampleConfig sample = samples[i];
+                    float positionX = sample?.positionX ?? 0f;
+                    float positionY = sample?.positionY ?? 0f;
+                    list.Add(CreateChannelTreeBlendAnimationRow(
+                        state.ChannelName,
+                        state.Key,
+                        sampleIndex,
+                        sample?.clipKey,
+                        () => PreviewDirectionalBlendSample(state.ChannelName, state.Key, positionX, positionY)));
+                }
+            }
+
+            return list;
+        }
+
+        private VisualElement CreateChannelTreeBlendAnimationRow(
+            string channelName,
+            string stateKey,
+            int sampleIndex,
+            string clipKey,
+            Action preview)
+        {
+            VisualElement row = CreateSubBox();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.alignItems = Align.Center;
+            row.style.marginBottom = 1;
+            row.style.position = Position.Relative;
+            row.style.overflow = Overflow.Hidden;
+
+            VisualElement weightFill = CreateProgressFill(BlendWeightFillBg);
+            row.Add(weightFill);
+            m_ChannelTreeBlendSampleRowMap[BuildBlendSampleRuntimeKey(channelName, stateKey, sampleIndex)] = new RowVisualState
+            {
+                BaseColor = new Color(0.14f, 0.14f, 0.15f, 1f),
+                ProgressFill = weightFill,
+            };
+
+            Label indexLabel = new($"#{sampleIndex}");
+            indexLabel.style.width = 28;
+            indexLabel.style.flexShrink = 0;
+            indexLabel.style.color = TextMuted;
+            indexLabel.style.fontSize = BodyFontSize;
+            indexLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            indexLabel.style.position = Position.Relative;
+            row.Add(indexLabel);
+
+            Label clipLabel = new(string.IsNullOrWhiteSpace(clipKey) ? "(Empty)" : clipKey);
+            clipLabel.tooltip = clipKey;
+            clipLabel.style.flexGrow = 1;
+            clipLabel.style.flexShrink = 1;
+            clipLabel.style.minWidth = 0;
+            clipLabel.style.color = string.IsNullOrWhiteSpace(clipKey) ? TextMuted : TextNormal;
+            clipLabel.style.fontSize = BodyFontSize;
+            clipLabel.style.position = Position.Relative;
+            row.Add(clipLabel);
+
+            bool canLocate = HasClipAsset(clipKey);
+            Button clipItemButton = CreateEmbeddedDropdownButton(
+                "↗",
+                "定位到 Clips 面板里当前动画对应的条目。",
+                canLocate,
+                () => FocusClipInInspector(clipKey),
+                marginLeft: 4,
+                marginRight: 2);
+            row.Add(clipItemButton);
+
+            Button pingButton = CreateEmbeddedDropdownButton(
+                "◎",
+                "定位当前动画对应的 AnimationClip 资源。",
+                canLocate,
+                () => PingClipAsset(clipKey),
+                marginLeft: 2,
+                marginRight: 2);
+            row.Add(pingButton);
+
+            Button previewButton = new(preview)
+            {
+                text = "▶"
+            };
+            previewButton.tooltip = "播放这个 Blend State 采样动画。";
+            ApplyClipButtonStyle(previewButton, false);
+            previewButton.style.marginLeft = 2;
+            previewButton.style.position = Position.Relative;
+            row.Add(previewButton);
+            return row;
         }
 
         private static string GetStatePrimaryClipKey(XAnimationCompiledState state)
@@ -2162,7 +2312,11 @@ namespace XAnimationEditor
             });
         }
 
-        private void RegisterStateNameInteractions(EditableLabel label, VisualElement editor, string stateUiKey, string stateKey)
+        private void RegisterStateNameInteractions(
+            EditableLabel label,
+            VisualElement blendEditor,
+            string stateUiKey,
+            string stateKey)
         {
             bool isPressed = false;
             Vector2 startPosition = Vector2.zero;
@@ -2216,12 +2370,7 @@ namespace XAnimationEditor
                     return;
                 }
 
-                if (!movedBeyondClickThreshold && !label.IsEditing)
-                {
-                    bool expanded = editor.style.display == DisplayStyle.None;
-                    SetStateExpanded(stateUiKey, expanded);
-                }
-
+                bool selectState = !movedBeyondClickThreshold && !label.IsEditing;
                 if (!dragStarted)
                 {
                     ClearStateDragData();
@@ -2231,7 +2380,219 @@ namespace XAnimationEditor
                 movedBeyondClickThreshold = false;
                 dragStarted = false;
                 evt.StopPropagation();
+
+                if (selectState)
+                {
+                    bool wasSelected = string.Equals(
+                        m_PreviewInspectorSelectedNodeUiKey,
+                        stateUiKey,
+                        StringComparison.Ordinal);
+                    SelectPreviewInspectorStateNode(stateUiKey);
+                    if (wasSelected && blendEditor != null)
+                    {
+                        SetBlendStateExpanded(stateUiKey, true);
+                    }
+                    rootVisualElement.Focus();
+                }
             });
+        }
+
+        private void SetBlendStateExpanded(string stateUiKey, bool expanded)
+        {
+            if (expanded)
+            {
+                if (!string.Equals(m_ExpandedBlendStateUiKey, stateUiKey, StringComparison.Ordinal) &&
+                    !string.IsNullOrWhiteSpace(m_ExpandedBlendStateUiKey) &&
+                    m_BlendStateEditorMap.TryGetValue(m_ExpandedBlendStateUiKey, out VisualElement previousEditor))
+                {
+                    previousEditor.style.display = DisplayStyle.None;
+                }
+
+                m_ExpandedBlendStateUiKey = stateUiKey;
+            }
+            else if (string.Equals(m_ExpandedBlendStateUiKey, stateUiKey, StringComparison.Ordinal))
+            {
+                m_ExpandedBlendStateUiKey = null;
+            }
+
+            if (m_BlendStateEditorMap.TryGetValue(stateUiKey, out VisualElement editor))
+            {
+                editor.style.display = expanded ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+        }
+
+        private bool SelectAdjacentChannelTreeNode(bool selectNext)
+        {
+            if (m_StateNodeUiKeysInTreeOrder.Count == 0 ||
+                !TryGetCompiledStateNodeByUiKey(m_PreviewInspectorSelectedNodeUiKey, out _))
+            {
+                return false;
+            }
+
+            List<string> visibleNodeUiKeys = new();
+            for (int i = 0; i < m_StateNodeUiKeysInTreeOrder.Count; i++)
+            {
+                string nodeUiKey = m_StateNodeUiKeysInTreeOrder[i];
+                if (TryGetCompiledStateNodeByUiKey(nodeUiKey, out XAnimationCompiledStateNode node) &&
+                    IsStateNodeVisibleInChannelTree(node))
+                {
+                    visibleNodeUiKeys.Add(nodeUiKey);
+                }
+            }
+
+            int selectedIndex = visibleNodeUiKeys.IndexOf(m_PreviewInspectorSelectedNodeUiKey);
+            if (selectedIndex < 0)
+            {
+                return false;
+            }
+
+            int nextIndex = Mathf.Clamp(selectedIndex + (selectNext ? 1 : -1), 0, visibleNodeUiKeys.Count - 1);
+            string nextNodeUiKey = visibleNodeUiKeys[nextIndex];
+            SelectPreviewInspectorStateNode(nextNodeUiKey);
+            ScrollChannelTreeNodeIntoView(nextNodeUiKey);
+            rootVisualElement.Focus();
+            return true;
+        }
+
+        private bool HandleChannelTreeHorizontalNavigation(bool expand)
+        {
+            if (!TryGetCompiledStateNodeByUiKey(
+                    m_PreviewInspectorSelectedNodeUiKey,
+                    out XAnimationCompiledStateNode selectedNode) ||
+                !string.Equals(selectedNode.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (expand)
+            {
+                if (selectedNode is XAnimationCompiledState selectedState)
+                {
+                    if (!IsBlendStateType(selectedState.Config.stateType) ||
+                        string.Equals(m_ExpandedBlendStateUiKey, m_PreviewInspectorSelectedNodeUiKey, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    SetBlendStateExpanded(m_PreviewInspectorSelectedNodeUiKey, true);
+                    rootVisualElement.Focus();
+                    return true;
+                }
+
+                string groupKey = BuildStateGroupKey(selectedNode.ChannelName, selectedNode.Key);
+                if (IsStateGroupCollapsed(groupKey))
+                {
+                    SetStateGroupCollapsed(groupKey, false);
+                    RebuildStateList();
+                    ScrollChannelTreeNodeIntoView(m_PreviewInspectorSelectedNodeUiKey);
+                    rootVisualElement.Focus();
+                    return true;
+                }
+
+                XAnimationCompiledStateNode firstChild = FindFirstVisibleTreeChild(selectedNode);
+                if (firstChild == null)
+                {
+                    return false;
+                }
+
+                string childUiKey = BuildStateUiKey(firstChild.ChannelName, firstChild.Key);
+                SelectPreviewInspectorStateNode(childUiKey);
+                ScrollChannelTreeNodeIntoView(childUiKey);
+                rootVisualElement.Focus();
+                return true;
+            }
+
+            if (selectedNode is XAnimationCompiledState selectedBlendState &&
+                IsBlendStateType(selectedBlendState.Config.stateType) &&
+                string.Equals(m_ExpandedBlendStateUiKey, m_PreviewInspectorSelectedNodeUiKey, StringComparison.Ordinal))
+            {
+                SetBlendStateExpanded(m_PreviewInspectorSelectedNodeUiKey, false);
+                rootVisualElement.Focus();
+                return true;
+            }
+
+            if (selectedNode.Kind != XAnimationStateNodeKind.State)
+            {
+                string groupKey = BuildStateGroupKey(selectedNode.ChannelName, selectedNode.Key);
+                if (!IsStateGroupCollapsed(groupKey))
+                {
+                    SetStateGroupCollapsed(groupKey, true);
+                    RebuildStateList();
+                    ScrollChannelTreeNodeIntoView(m_PreviewInspectorSelectedNodeUiKey);
+                    rootVisualElement.Focus();
+                    return true;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(selectedNode.ParentKey))
+            {
+                return false;
+            }
+
+            string parentUiKey = BuildStateUiKey(selectedNode.ChannelName, selectedNode.ParentKey);
+            SelectPreviewInspectorStateNode(parentUiKey);
+            ScrollChannelTreeNodeIntoView(parentUiKey);
+            rootVisualElement.Focus();
+            return true;
+        }
+
+        private static XAnimationCompiledStateNode FindFirstVisibleTreeChild(XAnimationCompiledStateNode node)
+        {
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                if (node.Children[i].Kind != XAnimationStateNodeKind.State)
+                {
+                    return node.Children[i];
+                }
+            }
+
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                if (node.Children[i].Kind == XAnimationStateNodeKind.State)
+                {
+                    return node.Children[i];
+                }
+            }
+
+            return null;
+        }
+
+        private bool IsStateNodeVisibleInChannelTree(XAnimationCompiledStateNode node)
+        {
+            if (!string.Equals(node.ChannelName, m_StateTabChannelName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            List<string> parentSegments = SplitStatePathSegments(node.ParentKey);
+            string parentPath = string.Empty;
+            for (int i = 0; i < parentSegments.Count; i++)
+            {
+                parentPath = BuildStatePathKey(parentPath, parentSegments[i]);
+                if (IsStateGroupCollapsed(BuildStateGroupKey(node.ChannelName, parentPath)))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void ScrollChannelTreeNodeIntoView(string nodeUiKey)
+        {
+            if (m_StateRowMap.TryGetValue(nodeUiKey, out VisualElement stateRow))
+            {
+                ScheduleInspectorScrollIntoView(stateRow);
+                return;
+            }
+
+            if (TryGetCompiledStateNodeByUiKey(nodeUiKey, out XAnimationCompiledStateNode node) &&
+                m_StateGroupRowMap.TryGetValue(
+                    BuildStateGroupKey(node.ChannelName, node.Key),
+                    out VisualElement groupRow))
+            {
+                ScheduleInspectorScrollIntoView(groupRow);
+            }
         }
 
         private void BeginNameEdit()
@@ -2251,93 +2612,6 @@ namespace XAnimationEditor
         private static void ClearStateDragData()
         {
             DragAndDrop.SetGenericData(StateDragDataKey, null);
-        }
-
-        private void SetStateExpanded(string stateUiKey, bool expanded)
-        {
-            if (string.IsNullOrWhiteSpace(stateUiKey))
-            {
-                return;
-            }
-
-            if (expanded)
-            {
-                if (m_ExpandedStateKeys.Count == 1 && m_ExpandedStateKeys.Contains(stateUiKey))
-                {
-                    if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement currentEditor))
-                    {
-                        currentEditor.style.display = DisplayStyle.Flex;
-                    }
-
-                    RefreshGlobalBlendGraph();
-                    return;
-                }
-
-                List<string> previouslyExpandedKeys = m_ExpandedStateKeys.Count > 0
-                    ? new List<string>(m_ExpandedStateKeys)
-                    : null;
-
-                m_ExpandedStateKeys.Clear();
-                m_ExpandedStateKeys.Add(stateUiKey);
-
-                if (previouslyExpandedKeys != null)
-                {
-                    for (int i = 0; i < previouslyExpandedKeys.Count; i++)
-                    {
-                        string expandedKey = previouslyExpandedKeys[i];
-                        if (string.Equals(expandedKey, stateUiKey, StringComparison.Ordinal))
-                        {
-                            continue;
-                        }
-
-                        if (m_StateEditorMap.TryGetValue(expandedKey, out VisualElement expandedEditor))
-                        {
-                            expandedEditor.style.display = DisplayStyle.None;
-                        }
-                    }
-                }
-
-                if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement nextEditor))
-                {
-                    nextEditor.style.display = DisplayStyle.Flex;
-                }
-
-                RefreshGlobalBlendGraph();
-                return;
-            }
-
-            bool removed = m_ExpandedStateKeys.Remove(stateUiKey);
-            if (m_StateEditorMap.TryGetValue(stateUiKey, out VisualElement editor))
-            {
-                editor.style.display = DisplayStyle.None;
-            }
-
-            if (removed)
-            {
-                RefreshGlobalBlendGraph();
-            }
-        }
-
-        private bool TryGetExpandedStateKey(out string stateKey)
-        {
-            stateKey = null;
-            if (m_ExpandedStateKeys.Count == 0)
-            {
-                return false;
-            }
-
-            foreach (string expandedStateKey in m_ExpandedStateKeys)
-            {
-                if (string.IsNullOrWhiteSpace(expandedStateKey))
-                {
-                    continue;
-                }
-
-                stateKey = ResolveStateKeyFromUiKey(expandedStateKey) ?? expandedStateKey;
-                return true;
-            }
-
-            return false;
         }
 
         private static void ClearClipDragData()
@@ -2363,6 +2637,12 @@ namespace XAnimationEditor
 
         private void DeleteChannel(string channelName)
         {
+            if (!m_Session.CanDeleteChannel(channelName, out string reason))
+            {
+                EditorUtility.DisplayDialog("无法删除 Channel", reason, "确定");
+                return;
+            }
+
             int stateCount = CountStatesInChannel(channelName);
             string message = stateCount > 0
                 ? $"确定删除 Channel '{channelName}'？\n\n将同时移除该 Channel 下的 {stateCount} 个 State；Clip 资源不会被删除。"
@@ -2374,7 +2654,15 @@ namespace XAnimationEditor
 
             try
             {
+                bool clearsInspector = TryGetCompiledStateNodeByUiKey(
+                    m_PreviewInspectorSelectedNodeUiKey,
+                    out XAnimationCompiledStateNode selectedNode) &&
+                    string.Equals(selectedNode.ChannelName, channelName, StringComparison.Ordinal);
                 m_Session.DeleteChannel(channelName);
+                if (clearsInspector)
+                {
+                    ClearPreviewInspectorSelection();
+                }
                 RebuildStatePresentation(includeChannelPresentation: true);
                 RefreshClipPlayingStates();
                 SetStatus($"已删除 Channel {channelName}。");
@@ -2501,6 +2789,12 @@ namespace XAnimationEditor
 
         private void AddState(string channelName)
         {
+            if (!m_Session.CanAddState(out string reason))
+            {
+                EditorUtility.DisplayDialog("无法新增 State", reason, "确定");
+                return;
+            }
+
             try
             {
                 string stateKey = m_Session.AddState(channelName);
@@ -2763,8 +3057,15 @@ namespace XAnimationEditor
                 }
 
                 m_CollapsedAutoTransitionKeys.Remove(stateUiKey);
+                if (string.Equals(m_ExpandedBlendStateUiKey, stateUiKey, StringComparison.Ordinal))
+                {
+                    SetBlendStateExpanded(stateUiKey, false);
+                }
                 m_SelectedDefaultTransitionIndex = -1;
-                SetStateExpanded(stateUiKey, false);
+                if (string.Equals(m_PreviewInspectorSelectedNodeUiKey, stateUiKey, StringComparison.Ordinal))
+                {
+                    ClearPreviewInspectorSelection();
+                }
                 RebuildStateList();
                 RebuildDefaultTransitionsEditor();
                 RefreshStatePlaybackViews();
@@ -2782,7 +3083,7 @@ namespace XAnimationEditor
             try
             {
                 m_Session.AddStateBehavior(channelName, stateKey, behaviorType);
-                SetStateExpanded(BuildStateUiKey(channelName, stateKey), true);
+                SelectPreviewInspectorStateNode(BuildStateUiKey(channelName, stateKey));
                 RebuildStateList();
                 SetStatus($"已为 State {stateKey} 新增 {behaviorType.Name}。");
             }
@@ -2828,22 +3129,77 @@ namespace XAnimationEditor
             }
         }
 
-        private void AddClip()
-        {
-            AddClip(string.Empty);
-        }
-
         private void AddClip(string parentPath)
         {
+            m_PendingAddClipParentPath = NormalizeClipPathKey(parentPath);
+            m_OpenAnimationClipObjectPickerRequested = true;
+            m_AnimationClipObjectPickerBridge.Focus();
+            m_AnimationClipObjectPickerBridge.MarkDirtyRepaint();
+        }
+
+        private void HandleAnimationClipObjectPickerIMGUI()
+        {
+            UEvent current = UEvent.current;
+            if (m_OpenAnimationClipObjectPickerRequested && current.type == EventType.Repaint)
+            {
+                m_OpenAnimationClipObjectPickerRequested = false;
+                m_AnimationClipObjectPickerControlId = GetInstanceID();
+                EditorGUIUtility.ShowObjectPicker<AnimationClip>(
+                    null,
+                    false,
+                    string.Empty,
+                    m_AnimationClipObjectPickerControlId);
+                return;
+            }
+
+            if (m_AnimationClipObjectPickerControlId == 0 || current.type != EventType.ExecuteCommand)
+            {
+                return;
+            }
+
+            if (string.Equals(current.commandName, "ObjectSelectorClosed", StringComparison.Ordinal))
+            {
+                m_AnimationClipObjectPickerControlId = 0;
+                m_PendingAddClipParentPath = null;
+                current.Use();
+                return;
+            }
+
+            if (!string.Equals(current.commandName, "ObjectSelectorSelectionDone", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            string parentPath = m_PendingAddClipParentPath;
+            AnimationClip animationClip = EditorGUIUtility.GetObjectPickerObject() as AnimationClip;
+            m_AnimationClipObjectPickerControlId = 0;
+            m_PendingAddClipParentPath = null;
+            current.Use();
+
+            if (animationClip != null)
+            {
+                AddClip(parentPath, animationClip);
+            }
+        }
+
+        private void AddClip(string parentPath, AnimationClip animationClip)
+        {
+            string clipPath = XAnimationEditorAssetResolver.BuildClipPath(animationClip);
+            if (string.IsNullOrWhiteSpace(clipPath))
+            {
+                EditorUtility.DisplayDialog("无法新增 Clip", "所选 AnimationClip 没有可用的资源路径。", "确定");
+                return;
+            }
+
             try
             {
-                string normalizedParentPath = NormalizeClipPathKey(parentPath);
-                string clipKey = m_Session.AddClip(normalizedParentPath);
+                string clipKey = m_Session.AddClip(parentPath, animationClip);
+                RemoveMaterializedTransientClipPaths(parentPath);
                 m_PendingClipRenameKey = clipKey;
                 RebuildStructureAndPlaybackViews();
-                SetStatus(string.IsNullOrWhiteSpace(normalizedParentPath)
+                SetStatus(string.IsNullOrWhiteSpace(parentPath)
                     ? $"已新增 Clip {clipKey}。"
-                    : $"已在 {normalizedParentPath} 新增 Clip {clipKey}。");
+                    : $"已在 {parentPath} 新增 Clip {clipKey}。");
             }
             catch (Exception ex)
             {
@@ -2854,24 +3210,92 @@ namespace XAnimationEditor
 
         private void AddClipGroup(string parentPath)
         {
-            if (!TryPromptForClipPathName("新建 Clip Folder", parentPath, string.Empty, out string groupName))
+            parentPath = NormalizeClipPathKey(parentPath);
+            const string defaultGroupName = "New Group";
+            string groupName = defaultGroupName;
+            int suffix = 1;
+            while (HasClipPath(BuildClipRenameKey(parentPath, groupName)))
+            {
+                groupName = $"{defaultGroupName} {suffix++}";
+            }
+
+            string groupPath = BuildClipRenameKey(parentPath, groupName);
+            m_TransientClipPathKeys.Add(groupPath);
+            ExpandClipPath(groupPath);
+            m_PendingClipPathRenameKey = groupPath;
+            RebuildClipList();
+            SetStatus($"已创建临时 Clip Folder {groupPath}。");
+        }
+
+        private void RemoveMaterializedTransientClipPaths(string clipParentPath)
+        {
+            clipParentPath = NormalizeClipPathKey(clipParentPath);
+            if (string.IsNullOrWhiteSpace(clipParentPath))
             {
                 return;
             }
 
-            string groupPath = BuildClipRenameKey(parentPath, groupName);
-            try
+            m_TransientClipPathKeys.RemoveWhere(path =>
+                string.Equals(path, clipParentPath, StringComparison.Ordinal) ||
+                clipParentPath.StartsWith($"{path}/", StringComparison.Ordinal));
+        }
+
+        private void RenameTransientClipPath(string oldPath, string newPath)
+        {
+            Dictionary<string, string> renamedPaths = new(StringComparer.Ordinal);
+            foreach (string path in m_TransientClipPathKeys)
             {
-                string clipKey = m_Session.AddClip(groupPath);
-                m_PendingClipRenameKey = clipKey;
-                ExpandClipPath(groupPath);
-                RebuildStructureAndPlaybackViews();
-                SetStatus($"已创建 Clip Folder {groupPath}，并新增 Clip {clipKey}。");
+                if (!string.Equals(path, oldPath, StringComparison.Ordinal) &&
+                    !path.StartsWith($"{oldPath}/", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string suffix = path.Length == oldPath.Length
+                    ? string.Empty
+                    : path[(oldPath.Length + 1)..];
+                renamedPaths[path] = string.IsNullOrWhiteSpace(suffix)
+                    ? newPath
+                    : $"{newPath}/{suffix}";
             }
-            catch (Exception ex)
+
+            foreach (KeyValuePair<string, string> pair in renamedPaths)
             {
-                SetStatus(ex.Message, true);
-                Debug.LogException(ex);
+                m_TransientClipPathKeys.Remove(pair.Key);
+                m_TransientClipPathKeys.Add(pair.Value);
+            }
+        }
+
+        private void ClearTransientClipPath(string path)
+        {
+            string parentPath = GetClipPathParent(path);
+            Dictionary<string, string> movedPaths = new(StringComparer.Ordinal);
+            foreach (string transientPath in m_TransientClipPathKeys)
+            {
+                if (string.Equals(transientPath, path, StringComparison.Ordinal))
+                {
+                    movedPaths[transientPath] = string.Empty;
+                    continue;
+                }
+
+                if (!transientPath.StartsWith($"{path}/", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string suffix = transientPath[(path.Length + 1)..];
+                movedPaths[transientPath] = string.IsNullOrWhiteSpace(parentPath)
+                    ? suffix
+                    : $"{parentPath}/{suffix}";
+            }
+
+            foreach (KeyValuePair<string, string> pair in movedPaths)
+            {
+                m_TransientClipPathKeys.Remove(pair.Key);
+                if (!string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    m_TransientClipPathKeys.Add(pair.Value);
+                }
             }
         }
 
@@ -2886,10 +3310,28 @@ namespace XAnimationEditor
                     throw new XAnimationException("Clip folder path cannot be empty.");
                 }
 
-                m_Session.RenameClipPath(oldPath, newPath);
+                if (!string.Equals(oldPath, newPath, StringComparison.Ordinal) && HasClipPath(newPath))
+                {
+                    throw new XAnimationException($"Clip folder '{newPath}' already exists.");
+                }
+
+                bool hasPersistedClips = HasPersistedClipPath(oldPath);
+                if (hasPersistedClips)
+                {
+                    m_Session.RenameClipPath(oldPath, newPath);
+                }
+
+                RenameTransientClipPath(oldPath, newPath);
                 ExpandClipPath(newPath);
                 SetStatus($"Clip Folder {oldPath} 已重命名为 {newPath}。");
-                RebuildStructureAndPlaybackViews();
+                if (hasPersistedClips)
+                {
+                    RebuildStructureAndPlaybackViews();
+                }
+                else
+                {
+                    RebuildClipList();
+                }
             }
             catch (Exception ex)
             {
@@ -2915,9 +3357,22 @@ namespace XAnimationEditor
             try
             {
                 string parentPath = GetClipPathParent(path);
-                m_Session.ClearClipPath(path);
+                bool hasPersistedClips = HasPersistedClipPath(path);
+                if (hasPersistedClips)
+                {
+                    m_Session.ClearClipPath(path);
+                }
+
+                ClearTransientClipPath(path);
                 ExpandClipPath(parentPath);
-                RebuildStructureAndPlaybackViews();
+                if (hasPersistedClips)
+                {
+                    RebuildStructureAndPlaybackViews();
+                }
+                else
+                {
+                    RebuildClipList();
+                }
                 SetStatus(string.IsNullOrWhiteSpace(parentPath)
                     ? $"已删除 Clip Folder {path}，clips 已移动到根层级。"
                     : $"已删除 Clip Folder {path}，clips 已移动到 {parentPath}。");
@@ -2927,36 +3382,6 @@ namespace XAnimationEditor
                 SetStatus(ex.Message, true);
                 Debug.LogException(ex);
             }
-        }
-
-        private bool TryPromptForClipPathName(string title, string parentPath, string currentName, out string pathName)
-        {
-            pathName = null;
-            parentPath = NormalizeClipPathKey(parentPath);
-            string message = string.IsNullOrWhiteSpace(parentPath)
-                ? "输入新的 Clip Folder 名称："
-                : $"在 Clip Folder '{parentPath}' 下输入新的子 Folder 名称：";
-            if (!StringInputPromptWindow.ShowPrompt(title, message, currentName, out string input))
-            {
-                return false;
-            }
-
-            input = NormalizeClipPathKey(input);
-            if (string.IsNullOrWhiteSpace(input))
-            {
-                SetStatus("Clip folder name cannot be empty.", true);
-                return false;
-            }
-
-            string fullPath = BuildClipRenameKey(parentPath, input);
-            if (HasClipPath(fullPath))
-            {
-                SetStatus($"已存在 Clip Folder '{fullPath}'。", true);
-                return false;
-            }
-
-            pathName = input;
-            return true;
         }
 
         private void DeleteClip(string clipKey)
@@ -3240,10 +3665,37 @@ namespace XAnimationEditor
             newName = newName?.Trim();
             try
             {
+                string selectedNodeKey =
+                    TryGetCompiledStateNodeByUiKey(m_PreviewInspectorSelectedNodeUiKey, out XAnimationCompiledStateNode selectedNode) &&
+                    string.Equals(selectedNode.ChannelName, oldName, StringComparison.Ordinal)
+                        ? selectedNode.Key
+                        : null;
+                string expandedBlendStateKey =
+                    !string.IsNullOrWhiteSpace(m_ExpandedBlendStateUiKey) &&
+                    TryGetCompiledStateByUiKey(m_ExpandedBlendStateUiKey, out XAnimationCompiledState expandedBlendState) &&
+                    string.Equals(expandedBlendState.ChannelName, oldName, StringComparison.Ordinal)
+                        ? expandedBlendState.Key
+                        : null;
                 m_Session.RenameChannel(oldName, newName);
                 if (string.Equals(m_StateTabChannelName, oldName, StringComparison.Ordinal))
                 {
                     m_StateTabChannelName = newName;
+                }
+                if (string.Equals(m_StatesGraphChannelName, oldName, StringComparison.Ordinal))
+                {
+                    m_StatesGraphChannelName = newName;
+                }
+                if (!string.IsNullOrWhiteSpace(selectedNodeKey))
+                {
+                    m_PreviewInspectorSelectedNodeUiKey = BuildStateUiKey(newName, selectedNodeKey);
+                    if (m_PreviewInspectorSelectionKind == PreviewInspectorSelectionKind.Transition)
+                    {
+                        m_DefaultTransitionEditingStateUiKey = m_PreviewInspectorSelectedNodeUiKey;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(expandedBlendStateKey))
+                {
+                    m_ExpandedBlendStateUiKey = BuildStateUiKey(newName, expandedBlendStateKey);
                 }
                 SetStatus($"Channel {oldName} 已重命名为 {newName}。");
                 RebuildStatePresentation(includeChannelPresentation: true);
@@ -3277,11 +3729,22 @@ namespace XAnimationEditor
                 }
 
                 SetStatus($"State {oldKey} 已重命名为 {newKey}。");
-                bool wasExpanded = m_ExpandedStateKeys.Remove(oldUiKey);
-                m_StateEditorMap.Remove(oldUiKey);
-                if (wasExpanded && !string.IsNullOrWhiteSpace(newKey))
+                if (string.Equals(m_PreviewInspectorSelectedNodeUiKey, oldUiKey, StringComparison.Ordinal))
                 {
-                    m_ExpandedStateKeys.Add(newUiKey);
+                    m_PreviewInspectorSelectedNodeUiKey = newUiKey;
+                }
+                if (string.Equals(m_DefaultTransitionEditingStateUiKey, oldUiKey, StringComparison.Ordinal))
+                {
+                    m_DefaultTransitionEditingStateUiKey = newUiKey;
+                }
+                if (string.Equals(m_ExpandedBlendStateUiKey, oldUiKey, StringComparison.Ordinal))
+                {
+                    m_ExpandedBlendStateUiKey = newUiKey;
+                }
+                if (string.Equals(m_StatesGraphChannelName, channelName, StringComparison.Ordinal) &&
+                    string.Equals(m_StatesGraphCurrentPath, oldKey, StringComparison.Ordinal))
+                {
+                    m_StatesGraphCurrentPath = newKey;
                 }
                 RebuildStateList();
                 RebuildDefaultTransitionsEditor();
@@ -3300,6 +3763,11 @@ namespace XAnimationEditor
             try
             {
                 m_Session.SetStateType(channelName, stateKey, stateType);
+                if (!IsBlendStateType(stateType) &&
+                    string.Equals(m_ExpandedBlendStateUiKey, BuildStateUiKey(channelName, stateKey), StringComparison.Ordinal))
+                {
+                    m_ExpandedBlendStateUiKey = null;
+                }
                 RebuildStatePresentation();
                 SetStatus($"{stateKey} stateType = {stateType}。");
             }
@@ -3398,6 +3866,24 @@ namespace XAnimationEditor
                 }
 
                 m_Session.RenameStatePath(channelName, oldName, newName);
+                string oldUiKey = BuildStateUiKey(channelName, oldName);
+                string newUiKey = BuildStateUiKey(channelName, newName);
+                m_PreviewInspectorSelectedNodeUiKey = RemapStatesGraphPath(
+                    m_PreviewInspectorSelectedNodeUiKey,
+                    oldUiKey,
+                    newUiKey);
+                m_DefaultTransitionEditingStateUiKey = RemapStatesGraphPath(
+                    m_DefaultTransitionEditingStateUiKey,
+                    oldUiKey,
+                    newUiKey);
+                m_ExpandedBlendStateUiKey = RemapStatesGraphPath(
+                    m_ExpandedBlendStateUiKey,
+                    oldUiKey,
+                    newUiKey);
+                if (string.Equals(m_StatesGraphChannelName, channelName, StringComparison.Ordinal))
+                {
+                    m_StatesGraphCurrentPath = RemapStatesGraphPath(m_StatesGraphCurrentPath, oldName, newName);
+                }
                 SetStatus($"State Node {oldName} 已重命名为 {newName}。");
                 RebuildStatePresentation();
             }
@@ -3423,7 +3909,13 @@ namespace XAnimationEditor
 
             try
             {
+                string removedNodeUiKey = BuildStateUiKey(channelName, groupName);
                 m_Session.DeleteContainerStateNode(channelName, groupName);
+                if (string.Equals(m_PreviewInspectorSelectedNodeUiKey, removedNodeUiKey, StringComparison.Ordinal) ||
+                    m_PreviewInspectorSelectedNodeUiKey?.StartsWith(removedNodeUiKey + "/", StringComparison.Ordinal) == true)
+                {
+                    ClearPreviewInspectorSelection();
+                }
                 SetStatus($"已移除 State Node {channelName} / {groupName}。");
                 RebuildStatePresentation();
             }
@@ -3436,6 +3928,12 @@ namespace XAnimationEditor
 
         private void AddState(string channelName, string groupName)
         {
+            if (!m_Session.CanAddState(out string reason))
+            {
+                EditorUtility.DisplayDialog("无法新增 State", reason, "确定");
+                return;
+            }
+
             try
             {
                 string stateKey = m_Session.AddState(channelName, groupName);
@@ -3737,6 +4235,160 @@ namespace XAnimationEditor
             }
         }
 
+        private void RegisterProjectClipDropTarget(
+            VisualElement target,
+            string parentPath = null,
+            VisualElement groupHeader = null)
+        {
+            parentPath = NormalizeClipPathKey(parentPath);
+            target.RegisterCallback<DragUpdatedEvent>(evt =>
+            {
+                if (!CanAcceptProjectClips())
+                {
+                    return;
+                }
+
+                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+                SetProjectClipDropHighlight(target, groupHeader, true);
+                evt.StopPropagation();
+            });
+            target.RegisterCallback<DragLeaveEvent>(_ => SetProjectClipDropHighlight(target, groupHeader, false));
+            target.RegisterCallback<DragPerformEvent>(evt =>
+            {
+                List<AnimationClip> animationClips = GetDraggedProjectClips();
+                if (animationClips.Count == 0)
+                {
+                    SetProjectClipDropHighlight(target, groupHeader, false);
+                    return;
+                }
+
+                DragAndDrop.AcceptDrag();
+                SetProjectClipDropHighlight(target, groupHeader, false);
+                try
+                {
+                    IReadOnlyList<string> clipKeys = m_Session.AddClips(parentPath, animationClips);
+                    RemoveMaterializedTransientClipPaths(parentPath);
+                    ExpandClipPath(parentPath);
+                    RebuildStructureAndPlaybackViews();
+                    SetStatus(string.IsNullOrWhiteSpace(parentPath)
+                        ? $"已从 Project 添加 {clipKeys.Count} 个 Clip 到根层级。"
+                        : $"已从 Project 添加 {clipKeys.Count} 个 Clip 到 {parentPath}。");
+                }
+                catch (Exception ex)
+                {
+                    SetStatus(ex.Message, true);
+                    Debug.LogException(ex);
+                }
+
+                evt.StopPropagation();
+            });
+        }
+
+        private bool CanAcceptProjectClips()
+        {
+            return !m_IsEditingName &&
+                   m_SelectedDebugToolbarGroup == DebugToolbarGroup.Clip &&
+                   m_Session != null &&
+                   m_Session.IsLoaded &&
+                   !m_Session.IsOverrideAsset &&
+                   DragAndDrop.GetGenericData(ClipDragDataKey) == null &&
+                   HasDraggedProjectClips();
+        }
+
+        private static bool HasDraggedProjectClips()
+        {
+            UnityEngine.Object[] objects = DragAndDrop.objectReferences;
+            for (int i = 0; i < objects.Length; i++)
+            {
+                if (objects[i] is AnimationClip)
+                {
+                    return true;
+                }
+
+                string assetPath = AssetDatabase.GetAssetPath(objects[i]);
+                if (string.Equals(Path.GetExtension(assetPath), ".fbx", StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static List<AnimationClip> GetDraggedProjectClips()
+        {
+            List<AnimationClip> clips = new();
+            HashSet<int> instanceIds = new();
+            UnityEngine.Object[] objects = DragAndDrop.objectReferences;
+            for (int i = 0; i < objects.Length; i++)
+            {
+                if (objects[i] is AnimationClip clip)
+                {
+                    AddDraggedProjectClip(clips, instanceIds, clip);
+                    continue;
+                }
+
+                string assetPath = AssetDatabase.GetAssetPath(objects[i]);
+                if (!string.Equals(Path.GetExtension(assetPath), ".fbx", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                UnityEngine.Object[] subAssets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+                for (int subAssetIndex = 0; subAssetIndex < subAssets.Length; subAssetIndex++)
+                {
+                    if (subAssets[subAssetIndex] is AnimationClip subClip &&
+                        !subClip.name.Contains("__preview__", StringComparison.Ordinal))
+                    {
+                        AddDraggedProjectClip(clips, instanceIds, subClip);
+                    }
+                }
+            }
+
+            return clips;
+        }
+
+        private static void AddDraggedProjectClip(
+            List<AnimationClip> clips,
+            HashSet<int> instanceIds,
+            AnimationClip clip)
+        {
+            if (instanceIds.Add(clip.GetInstanceID()) &&
+                !string.IsNullOrWhiteSpace(XAnimationEditorAssetResolver.BuildClipPath(clip)))
+            {
+                clips.Add(clip);
+            }
+        }
+
+        private static void SetProjectClipDropHighlight(VisualElement target, bool highlighted)
+        {
+            float width = highlighted ? 1f : 0f;
+            Color color = highlighted ? AccentColor : Color.clear;
+            target.style.borderLeftWidth = width;
+            target.style.borderRightWidth = width;
+            target.style.borderTopWidth = width;
+            target.style.borderBottomWidth = width;
+            target.style.borderLeftColor = color;
+            target.style.borderRightColor = color;
+            target.style.borderTopColor = color;
+            target.style.borderBottomColor = color;
+        }
+
+        private void SetProjectClipDropHighlight(
+            VisualElement target,
+            VisualElement groupHeader,
+            bool highlighted)
+        {
+            if (groupHeader == null)
+            {
+                SetProjectClipDropHighlight(target, highlighted);
+                return;
+            }
+
+            SetProjectClipDropHighlight(m_InspectorScrollView, false);
+            groupHeader.style.backgroundColor = highlighted ? AccentColor : ListHeaderBg;
+        }
+
         private void RegisterStateChannelDropTarget(VisualElement group, VisualElement groupHeader, string channelName, string groupName)
         {
             group.RegisterCallback<DragUpdatedEvent>(evt =>
@@ -3923,9 +4575,31 @@ namespace XAnimationEditor
 
             string normalizedGroup = NormalizeStatePath(groupName);
             string stateKey = sourceState.Key;
+            string sourceUiKey = BuildStateUiKey(sourceState.ChannelName, stateKey);
             m_Session.MoveState(sourceState.ChannelName, stateKey, channelName, insertBeforeStateKey, normalizedGroup);
             string targetKey = BuildStatePathKey(normalizedGroup, GetStatePathLeafName(stateKey));
-            m_StateChannelMap[BuildStateUiKey(channelName, targetKey)] = channelName;
+            string targetUiKey = BuildStateUiKey(channelName, targetKey);
+            m_StateChannelMap[targetUiKey] = channelName;
+            if (string.Equals(m_PreviewInspectorSelectedNodeUiKey, sourceUiKey, StringComparison.Ordinal))
+            {
+                m_PreviewInspectorSelectedNodeUiKey = targetUiKey;
+            }
+            if (string.Equals(m_DefaultTransitionEditingStateUiKey, sourceUiKey, StringComparison.Ordinal))
+            {
+                m_DefaultTransitionEditingStateUiKey = targetUiKey;
+            }
+            if (string.Equals(m_ExpandedBlendStateUiKey, sourceUiKey, StringComparison.Ordinal))
+            {
+                m_ExpandedBlendStateUiKey = targetUiKey;
+            }
+            if (string.Equals(m_StatesGraphChannelName, sourceState.ChannelName, StringComparison.Ordinal) &&
+                string.Equals(m_StatesGraphCurrentPath, stateKey, StringComparison.Ordinal))
+            {
+                m_StatesGraphCurrentPath = string.Equals(sourceState.ChannelName, channelName, StringComparison.Ordinal)
+                    ? targetKey
+                    : string.Empty;
+                m_StatesGraphEditingStateTransitions = false;
+            }
             RebuildStatePresentation();
             SetStatus(string.IsNullOrWhiteSpace(normalizedGroup)
                 ? $"{stateKey} 已移动到 {channelName}。"
@@ -3938,6 +4612,7 @@ namespace XAnimationEditor
             try
             {
                 m_Session.MoveClip(clipKey, path, insertBeforeClipKey);
+                RemoveMaterializedTransientClipPaths(path);
                 ExpandClipPath(path);
                 RebuildStructureAndPlaybackViews();
                 SetStatus(string.IsNullOrWhiteSpace(path)
@@ -3973,19 +4648,24 @@ namespace XAnimationEditor
                 }).StartingIn(0);
             }
 
+            if (!string.IsNullOrWhiteSpace(m_PendingClipPathRenameKey) &&
+                m_ClipPathLabelMap.TryGetValue(m_PendingClipPathRenameKey, out EditableLabel clipPathLabel))
+            {
+                m_PendingClipPathRenameKey = null;
+                rootVisualElement.schedule.Execute(clipPathLabel.BeginEdit).StartingIn(0);
+            }
+
             string pendingStateUiKey = !string.IsNullOrWhiteSpace(m_PendingStateRenameKey)
                 ? ResolveStateUiKey(m_PendingStateRenameKey)
                 : null;
             if (!string.IsNullOrWhiteSpace(pendingStateUiKey) &&
                 m_StateLabelMap.TryGetValue(pendingStateUiKey, out EditableLabel stateLabel))
             {
-                string stateUiKey = pendingStateUiKey;
                 m_PendingStateRenameKey = null;
                 rootVisualElement.schedule.Execute(() =>
                 {
                     if (stateLabel != null)
                     {
-                        SetStateExpanded(stateUiKey, false);
                         stateLabel.BeginEdit();
                     }
                 }).StartingIn(0);

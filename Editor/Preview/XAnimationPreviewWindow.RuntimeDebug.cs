@@ -235,15 +235,15 @@ namespace XAnimationEditor
         private string BuildGraphDebuggerSourceName()
         {
             string assetName = m_SelectedAsset != null ? m_SelectedAsset.name : "Preview";
-            string prefabName = m_SelectedPrefab != null ? m_SelectedPrefab.name : "No Prefab";
-            return $"{assetName} / {prefabName}";
+            string templateName = m_SelectedPrefab != null ? m_SelectedPrefab.name : "No Template";
+            return $"{assetName} / {templateName}";
         }
 
         private XAnimationDebugGraphSnapshot GetPreviewDebugGraphSnapshot()
         {
             return m_Session != null && m_Session.IsLoaded
                 ? m_Session.GetDebugGraphSnapshot()
-                : XAnimationDebugGraphSnapshot.Invalid("XAnimation Preview 尚未加载。请选择 asset 和 prefab 后点击 Load。");
+                : XAnimationDebugGraphSnapshot.Invalid("XAnimation Preview 尚未加载。请选择 Asset 和 Template 后点击 Load。");
         }
 
         private bool IsPreviewTabVisible()
@@ -382,7 +382,7 @@ namespace XAnimationEditor
             {
                 SetDebugToolbarGroup(DebugToolbarGroup.Setting);
                 SetStatus(canLoadAsset
-                    ? "已打开 XAnimation 资源；当前没有可用 Prefab，暂不加载模型。"
+                    ? "已打开 XAnimation 资源；当前没有可用 Template，暂不加载模型。"
                     : "已打开 XAnimationOverride 资源；请在 Setting 设置 BaseAsset，暂不加载模型。");
             }
 
@@ -480,7 +480,7 @@ namespace XAnimationEditor
             GameObject prefab = AssetDatabase.LoadAssetAtPath<GameObject>(defaultPrefabPath);
             if (prefab == null)
             {
-                SetStatus($"默认 prefab 不存在：{defaultPrefabPath}", true);
+                SetStatus($"默认 Template 资源不存在：{defaultPrefabPath}", true);
                 return null;
             }
 
@@ -821,7 +821,7 @@ namespace XAnimationEditor
             GameObject prefab = m_PrefabField?.value as GameObject;
             if (prefab == null)
             {
-                SetStatus("请选择一个 prefab 后再设为默认。", true);
+                SetStatus("请选择一个 Template 后再设为默认。", true);
                 return;
             }
 
@@ -835,7 +835,7 @@ namespace XAnimationEditor
             string prefabPath = AssetDatabase.GetAssetPath(prefab);
             if (string.IsNullOrWhiteSpace(prefabPath))
             {
-                SetStatus("无法获取当前 prefab 的资源路径。", true);
+                SetStatus("场景 GameObject 不能设为资源的默认模型。", true);
                 return;
             }
 
@@ -844,7 +844,7 @@ namespace XAnimationEditor
                 overrideAsset.DefaultPrefabPath = prefabPath;
                 overrideAsset.SaveAsset();
                 RefreshAssetsToolbarButtons();
-                SetStatus($"已写入 Override 默认 prefab：{prefabPath}");
+                SetStatus($"已写入 Override 默认 Template：{prefabPath}");
                 return;
             }
 
@@ -858,7 +858,7 @@ namespace XAnimationEditor
             asset.DefaultPrefabPath = prefabPath;
             asset.SaveAsset();
             RefreshAssetsToolbarButtons();
-            SetStatus($"已写入默认 prefab：{prefabPath}");
+            SetStatus($"已写入默认 Template：{prefabPath}");
         }
 
         private void ResetPrefabToDefault()
@@ -873,7 +873,7 @@ namespace XAnimationEditor
             GameObject defaultPrefab = LoadDefaultPrefabForAsset(assetText);
             if (defaultPrefab == null)
             {
-                SetStatus("当前资源没有可用的默认 prefab。", true);
+                SetStatus("当前资源没有可用的默认 Template。", true);
                 RefreshAssetsToolbarButtons();
                 return;
             }
@@ -887,7 +887,7 @@ namespace XAnimationEditor
                 LoadPreview();
             }
 
-            SetStatus($"已恢复默认 prefab：{defaultPrefab.name}。");
+            SetStatus($"已恢复默认 Template：{defaultPrefab.name}。");
         }
 
         private void RefreshAssetsToolbarButtons()
@@ -900,6 +900,7 @@ namespace XAnimationEditor
             TextAsset assetText = m_AssetField?.value as TextAsset;
             GameObject currentPrefab = m_PrefabField?.value as GameObject;
             string currentPrefabPath = currentPrefab == null ? string.Empty : AssetDatabase.GetAssetPath(currentPrefab);
+            bool canSaveAsDefault = currentPrefab != null && EditorUtility.IsPersistent(currentPrefab);
             bool hasDefaultPrefab = TryGetDefaultPrefabPath(assetText, out string defaultPrefabPath) &&
                                     !string.IsNullOrWhiteSpace(defaultPrefabPath);
             bool matchesDefaultPrefab = hasDefaultPrefab &&
@@ -911,6 +912,7 @@ namespace XAnimationEditor
 
             m_ReloadPreviewButton?.SetEnabled(canLoadAsset && currentPrefab != null);
             m_SaveCurrentPrefabAsDefaultButton.style.display = showDefaultActions ? DisplayStyle.Flex : DisplayStyle.None;
+            m_SaveCurrentPrefabAsDefaultButton.SetEnabled(canSaveAsDefault);
             m_ResetPrefabToDefaultButton.style.display = showDefaultActions && hasDefaultPrefab ? DisplayStyle.Flex : DisplayStyle.None;
             RefreshOverrideBaseAssetField();
             RefreshPreloadToggle();

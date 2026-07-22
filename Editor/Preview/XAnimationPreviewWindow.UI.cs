@@ -20,7 +20,7 @@ namespace XAnimationEditor
             BuildUI();
             RegisterWindowShortcuts();
             ApplyDefaultSelections();
-            SetStatus("拖入 prefab 和 .xanimation/.xanimationoverride，或打开已配置默认 prefab 的 XAnimationAsset。");
+            SetStatus("拖入 Template（Prefab 资源或场景 GameObject）和 .xanimation/.xanimationoverride，或打开已配置默认模型的 XAnimationAsset。");
             ScheduleAutoReloadPreview();
             ApplyPendingOpenRequest();
         }
@@ -34,13 +34,42 @@ namespace XAnimationEditor
 
         private void HandleWindowKeyDown(KeyDownEvent evt)
         {
-            if (evt.keyCode != KeyCode.S || (!evt.ctrlKey && !evt.commandKey))
+            if (evt.keyCode == KeyCode.S && (evt.ctrlKey || evt.commandKey))
+            {
+                TrySaveAssetChanges();
+                evt.StopImmediatePropagation();
+                return;
+            }
+
+            bool isVerticalNavigation = evt.keyCode == KeyCode.UpArrow || evt.keyCode == KeyCode.DownArrow;
+            bool isHorizontalNavigation = evt.keyCode == KeyCode.LeftArrow || evt.keyCode == KeyCode.RightArrow;
+            if ((!isVerticalNavigation && !isHorizontalNavigation) ||
+                evt.altKey || evt.ctrlKey || evt.commandKey || evt.shiftKey ||
+                m_IsEditingName || IsBaseFieldEventTarget(evt.target as VisualElement))
             {
                 return;
             }
 
-            TrySaveAssetChanges();
-            evt.StopImmediatePropagation();
+            bool handled = isVerticalNavigation
+                ? SelectAdjacentChannelTreeNode(evt.keyCode == KeyCode.DownArrow)
+                : HandleChannelTreeHorizontalNavigation(evt.keyCode == KeyCode.RightArrow);
+            if (handled)
+            {
+                evt.StopImmediatePropagation();
+            }
+        }
+
+        private static bool IsBaseFieldEventTarget(VisualElement target)
+        {
+            for (VisualElement element = target; element != null; element = element.parent)
+            {
+                if (element.ClassListContains(BaseField<string>.ussClassName))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void BuildUI()
@@ -54,12 +83,35 @@ namespace XAnimationEditor
             root.style.paddingBottom = 2;
             root.style.flexDirection = FlexDirection.Column;
 
-            TwoPaneSplitView splitView = new(0, DebugPaneInitialWidth, TwoPaneSplitViewOrientation.Horizontal);
-            splitView.style.flexGrow = 1;
-            root.Add(splitView);
+            VisualElement previewInspectorPane = BuildPreviewInspectorPane();
 
-            splitView.Add(BuildDebugPane());
-            splitView.Add(BuildPreviewPane());
+            TwoPaneSplitView contentSplit = new(1, PreviewInspectorInitialWidth, TwoPaneSplitViewOrientation.Horizontal);
+            contentSplit.style.flexGrow = 1;
+            contentSplit.style.minHeight = 0;
+            contentSplit.RegisterCallback<GeometryChangedEvent>(_ => m_StatesGraphView?.RefreshViewportAfterLayout());
+            root.Add(contentSplit);
+
+            TwoPaneSplitView previewSplit = new(0, DebugPaneInitialWidth, TwoPaneSplitViewOrientation.Horizontal);
+            previewSplit.style.flexGrow = 1;
+            previewSplit.style.minWidth = 0;
+            previewSplit.style.minHeight = 0;
+            previewSplit.Add(BuildDebugPane());
+            previewSplit.Add(BuildPreviewPane());
+
+            contentSplit.Add(previewSplit);
+            contentSplit.Add(previewInspectorPane);
+
+            m_AnimationClipObjectPickerBridge = new IMGUIContainer(HandleAnimationClipObjectPickerIMGUI)
+            {
+                focusable = true,
+                pickingMode = PickingMode.Ignore
+            };
+            m_AnimationClipObjectPickerBridge.style.position = Position.Absolute;
+            m_AnimationClipObjectPickerBridge.style.left = 0;
+            m_AnimationClipObjectPickerBridge.style.top = 0;
+            m_AnimationClipObjectPickerBridge.style.width = 1;
+            m_AnimationClipObjectPickerBridge.style.height = 1;
+            root.Add(m_AnimationClipObjectPickerBridge);
         }
 
         private void LoadPlaybackPrefs()
@@ -138,14 +190,14 @@ namespace XAnimationEditor
             bool isPlayGlyphButton = label == "▶";
             btn.tooltip = label switch
             {
-                "重载" => "重新读取 Prefab 和 XAnimation 资源并刷新预览。",
+                "重载" => "根据当前 Template 和 XAnimation 资源重新创建预览对象。",
                 "重置位置" => "将预览对象位置和旋转恢复到初始状态。",
                 "重置视角" => "将预览相机恢复到默认视角。",
                 "■" => "停止所有正在播放的 channel。",
                 "Ⅱ" => "暂停或继续当前预览播放。",
                 "▶" => "暂停或继续当前预览播放。",
                 "▸|" => "暂停状态下向后推进固定一帧（1/60s）。",
-                "设为默认" => "用当前 Prefab 覆盖 XAnimationAsset 的 DefaultPrefabPath。",
+                "设为默认" => "用当前 Template 资源覆盖 XAnimationAsset 的 DefaultPrefabPath。",
                 _ => label
             };
             btn.style.backgroundColor = bgColor;
@@ -485,6 +537,7 @@ namespace XAnimationEditor
             m_InspectorScrollView.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             m_InspectorScrollView.style.flexGrow = 1;
             m_InspectorScrollView.style.minHeight = 0;
+            RegisterProjectClipDropTarget(m_InspectorScrollView);
             inspectorPane.Add(m_InspectorScrollView);
 
             m_InspectorOverlayLayer = new VisualElement();
@@ -513,6 +566,7 @@ namespace XAnimationEditor
             m_InspectorScrollView.Add(m_MainGroupContainer);
 
             m_ClipTabContainer = CreateDebugTabContainer();
+            m_ClipTabContainer.style.flexGrow = 1;
             m_InspectorScrollView.Add(m_ClipTabContainer);
 
             m_ParametersGroupContainer = CreateDebugTabContainer();
@@ -543,7 +597,7 @@ namespace XAnimationEditor
 
         private void ComposeClipTab()
         {
-            m_ClipTabContainer.Add(CreateClipsSection().Root);
+            m_ClipTabContainer.Add(CreateClipsSection());
         }
 
         private void ComposeParametersTab()
@@ -619,11 +673,11 @@ namespace XAnimationEditor
 
             m_PrefabField = new ObjectField()
             {
-                label = "Prefab",
+                label = "Template",
                 objectType = typeof(GameObject),
-                allowSceneObjects = false
+                allowSceneObjects = true
             };
-            m_PrefabField.tooltip = "用于预览动画的角色 Prefab，必须包含 Animator。";
+            m_PrefabField.tooltip = "用于创建预览对象的模板，支持 Prefab 资源或场景中的 GameObject。";
             m_PrefabField.RegisterValueChangedCallback(evt =>
             {
                 m_SelectedPrefab = evt.newValue as GameObject;
@@ -641,14 +695,14 @@ namespace XAnimationEditor
 
             m_SaveCurrentPrefabAsDefaultButton = CreateAssetToolbarIconButton(
                 "✓",
-                "把当前 Prefab 设为这个 XAnimation 的默认模型。",
+                "把当前 Template 资源设为这个 XAnimation 的默认模型；场景 GameObject 不可设为默认。",
                 SaveCurrentPrefabAsDefault);
             m_SaveCurrentPrefabAsDefaultButton.style.marginLeft = 6;
             prefabRow.Add(m_SaveCurrentPrefabAsDefaultButton);
 
             m_ResetPrefabToDefaultButton = CreateAssetToolbarIconButton(
                 "↺",
-                "把当前模型恢复成默认 Prefab，并重新加载预览。",
+                "把当前 Template 恢复成默认模型，并重新创建预览对象。",
                 ResetPrefabToDefault,
                 ListHeaderBg);
             m_ResetPrefabToDefaultButton.style.marginLeft = 4;
@@ -790,24 +844,14 @@ namespace XAnimationEditor
             return m_DefaultTransitionsCard;
         }
 
-        private FoldoutCard CreateClipsSection()
+        private VisualElement CreateClipsSection()
         {
-            m_AddClipButton = CreateStyledButton("+", AddClip, AccentColor);
-            m_AddClipButton.tooltip = "新增一个全局 clip 资源叶子。";
-            m_AddClipGroupButton = CreateStyledButton("+ Group", () => AddClipGroup(string.Empty), AccentColor, 4);
-            m_AddClipGroupButton.tooltip = "在根层级新增一个 clip folder。";
-            SetAddClipButtonEnabled(false);
-
-            VisualElement clipActions = new VisualElement();
-            clipActions.style.flexDirection = FlexDirection.Row;
-            clipActions.style.alignItems = Align.Center;
-            clipActions.Add(m_AddClipButton);
-            clipActions.Add(m_AddClipGroupButton);
-
-            m_ClipsCard = CreateFoldoutCard("Clips", m_ClipsSectionExpanded, value => m_ClipsSectionExpanded = value, clipActions);
+            VisualElement section = new VisualElement();
+            section.style.flexGrow = 1;
             m_ClipListView = new VisualElement();
-            m_ClipsCard.Content.Add(m_ClipListView);
-            return m_ClipsCard;
+            m_ClipListView.style.flexGrow = 1;
+            section.Add(m_ClipListView);
+            return section;
         }
 
         private FoldoutCard CreateChannelsSection()

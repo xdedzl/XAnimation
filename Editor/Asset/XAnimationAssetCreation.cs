@@ -18,7 +18,16 @@ namespace XAnimationEditor
             string assetPath = AssetDatabase.GenerateUniqueAssetPath(
                 Path.Combine(directoryPath, $"NewXAnimation{XAnimationAssetUtility.AnimationAssetExtension}"));
 
-            XAnimationAsset asset = new();
+            XAnimationAsset asset = new()
+            {
+                channels = new[]
+                {
+                    new XAnimationChannelConfig
+                    {
+                        name = "base",
+                    },
+                },
+            };
             CreateAssetFile(assetPath, asset.Serialize());
         }
 
@@ -37,10 +46,15 @@ namespace XAnimationEditor
         }
 
         [MenuItem(CreateAssetMenuPath, true)]
-        [MenuItem(CreateOverrideMenuPath, true)]
         private static bool ValidateCreateAsset()
         {
             return !string.IsNullOrWhiteSpace(ResolveTargetDirectoryPath());
+        }
+
+        [MenuItem(CreateOverrideMenuPath, true)]
+        private static bool ValidateCreateOverrideAsset()
+        {
+            return !string.IsNullOrWhiteSpace(ResolveSelectedBaseAssetPath());
         }
 
         private static string ResolveTargetDirectoryPath()
