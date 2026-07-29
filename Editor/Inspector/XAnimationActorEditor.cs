@@ -136,6 +136,16 @@ namespace XAnimationEditor
             root.Add(startStateKeyContainer);
             RebuildStateKeyPopup(startStateKeyContainer, "m_StartStateKey", "Start State Key");
 
+            Button resetButton = new(ResetActorPose)
+            {
+                text = "Reset"
+            };
+            resetButton.tooltip = "停止编辑态动画预览，移除动画对模型的影响并恢复 T-Pose。";
+            resetButton.style.height = 22;
+            resetButton.style.marginTop = 6;
+            resetButton.SetEnabled(!Application.isPlaying && !EditorUtility.IsPersistent(((XAnimationActor)target).gameObject));
+            root.Add(resetButton);
+
             root.Add(BuildRuntimeInspector());
 
             animationAssetField?.RegisterCallback<SerializedPropertyChangeEvent>(_ =>
@@ -158,6 +168,22 @@ namespace XAnimationEditor
             });
             root.schedule.Execute(RefreshRuntimeViews).ExecuteLater(0);
             return root;
+        }
+
+        private void ResetActorPose()
+        {
+            XAnimationActor actor = (XAnimationActor)target;
+            XAnimationEditorActorPlaybackController controller = XAnimationSceneOverlaySelection.Controller;
+            controller.StopAll();
+
+            Animator animator = actor.Animator != null ? actor.Animator : actor.GetComponent<Animator>();
+            animator ??= actor.GetComponentInChildren<Animator>(true);
+            animator.WriteDefaultValues();
+
+            ClearCurrentPlayback();
+            SetStatus("已移除动画影响并恢复 T-Pose。");
+            XAnimationSceneOverlaySelection.RequestRepaint();
+            RefreshRuntimeViews();
         }
 
         private void OnDisable()
