@@ -15,6 +15,8 @@ namespace XAnimationEditor
             Selection.selectionChanged += RepaintSceneViews;
             EditorApplication.hierarchyChanged += RepaintSceneViews;
             EditorApplication.playModeStateChanged += OnPlayModeStateChanged;
+            EditorApplication.quitting += DisposeController;
+            AssemblyReloadEvents.beforeAssemblyReload += DisposeController;
         }
 
         private static void OnPlayModeStateChanged(PlayModeStateChange state)
@@ -75,6 +77,12 @@ namespace XAnimationEditor
         {
             s_Controller?.RefreshSelection();
             SceneView.RepaintAll();
+        }
+
+        private static void DisposeController()
+        {
+            s_Controller?.Dispose();
+            s_Controller = null;
         }
     }
 }

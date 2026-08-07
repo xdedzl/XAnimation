@@ -7,15 +7,7 @@ namespace XAnimationEngine
 {
     internal readonly struct XAnimationRuntimeDebugContext
     {
-        public XAnimationRuntimeDebugContext(
-            bool isInitialized,
-            PlayableGraph graph,
-            AnimationPlayableOutput output,
-            AnimationLayerMixerPlayable layerMixer,
-            bool useDirectChannelOutput,
-            Animator animator,
-            IReadOnlyList<XAnimationChannel> channels,
-            float globalSpeed)
+        public XAnimationRuntimeDebugContext(bool isInitialized, PlayableGraph graph, AnimationPlayableOutput output, AnimationLayerMixerPlayable layerMixer, bool useDirectChannelOutput, Animator animator, IReadOnlyList<XAnimationChannel> channels, IReadOnlyList<XAnimationOutputJobNode> outputJobs, float globalSpeed)
         {
             IsInitialized = isInitialized;
             Graph = graph;
@@ -24,6 +16,7 @@ namespace XAnimationEngine
             UseDirectChannelOutput = useDirectChannelOutput;
             Animator = animator;
             Channels = channels;
+            OutputJobs = outputJobs;
             GlobalSpeed = globalSpeed;
         }
 
@@ -34,6 +27,7 @@ namespace XAnimationEngine
         public bool UseDirectChannelOutput { get; }
         public Animator Animator { get; }
         public IReadOnlyList<XAnimationChannel> Channels { get; }
+        public IReadOnlyList<XAnimationOutputJobNode> OutputJobs { get; }
         public float GlobalSpeed { get; }
         public string AnimatorName => Animator != null ? Animator.name : string.Empty;
     }

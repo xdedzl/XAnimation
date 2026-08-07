@@ -58,6 +58,8 @@ namespace XAnimationEngine
         public int parentId;
         public string displayName = string.Empty;
         public string playableType = string.Empty;
+        public string jobType = string.Empty;
+        public int outputJobSequence;
         public int inputIndex = -1;
         public bool isConnected = true;
         public bool isActive;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Animations;
 
 namespace XAnimationEngine
 {
@@ -484,6 +485,16 @@ namespace XAnimationEngine
             EnsureInitialized();
             m_Runtime.RunManualFrame(deltaTime);
             ProcessActionReturns();
+        }
+
+        #endregion
+
+        #region Output Jobs
+
+        public XAnimationOutputJobHandle<TJob> InsertOutputJob<TJob>(TJob job, string name = null) where TJob : struct, IAnimationJob
+        {
+            EnsureInitialized();
+            return m_Runtime.InsertOutputJob(job, name);
         }
 
         #endregion

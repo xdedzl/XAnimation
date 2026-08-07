@@ -1,5 +1,6 @@
 using System;
 using UnityEngine;
+using UnityEngine.Animations;
 
 namespace XAnimationEngine
 {
@@ -19,6 +20,7 @@ namespace XAnimationEngine
         private bool m_PausedByDisable;
         private bool m_Initialized;
         public bool IsRunning => m_Driver.IsRunning;
+        internal bool IsInitialized => m_Initialized;
         private Action<Animator, Vector3, Quaternion> m_NativeRootMotionApplied;
         private Action<Animator> m_OnAnimatorMove = IgnoreAnimatorMove;
         
@@ -475,6 +477,11 @@ namespace XAnimationEngine
         public XAnimationDebugGraphSnapshot GetDebugGraphSnapshot()
         {
             return m_Driver.GetDebugGraphSnapshot();
+        }
+
+        public XAnimationOutputJobHandle<TJob> InsertOutputJob<TJob>(TJob job, string name = null) where TJob : struct, IAnimationJob
+        {
+            return m_Driver.InsertOutputJob(job, name);
         }
 
         internal void HandleNativeRootMotion(Animator animator)

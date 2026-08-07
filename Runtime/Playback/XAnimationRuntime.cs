@@ -12,6 +12,7 @@ namespace XAnimationEngine
 
         private readonly List<XAnimationChannel> m_Channels = new();
         private readonly Dictionary<string, XAnimationChannel> m_ChannelMap = new(StringComparer.Ordinal);
+        private readonly List<XAnimationOutputJobNode> m_OutputJobs = new();
         private readonly XAnimationCueRuntime m_CueRuntime = new();
         private readonly XAnimationPlaybackController m_PlaybackController;
 
@@ -33,6 +34,7 @@ namespace XAnimationEngine
         private float m_GlobalSpeed = 1f;
         private XAnimationUpdateMode m_UpdateMode = XAnimationUpdateMode.Manual;
         private bool m_UnityAnimationEventsEnabled;
+        private int m_NextOutputJobSequence = 1;
 
         internal event Action<XAnimationCueEvent> CueTriggered;
         internal event Action<XAnimationStateEvent> StateEntered;
@@ -48,6 +50,7 @@ namespace XAnimationEngine
         internal XAnimationUpdateMode UpdateMode => m_UpdateMode;
         internal bool UnityAnimationEventsEnabled => m_UnityAnimationEventsEnabled;
         internal bool IsInitialized => m_RuntimeInitialized;
+        internal IReadOnlyList<XAnimationOutputJobNode> OutputJobs => m_OutputJobs;
 
         #endregion
 
@@ -172,8 +175,69 @@ namespace XAnimationEngine
 
         internal XAnimationDebugGraphSnapshot BuildDebugGraphSnapshot()
         {
-            XAnimationRuntimeDebugContext debugContext = new(m_RuntimeInitialized, m_Graph, m_Output, m_LayerMixer, m_UseDirectChannelOutput, m_Animator, m_Channels, m_GlobalSpeed);
+            XAnimationRuntimeDebugContext debugContext = new(m_RuntimeInitialized, m_Graph, m_Output, m_LayerMixer, m_UseDirectChannelOutput, m_Animator, m_Channels, m_OutputJobs, m_GlobalSpeed);
             return new XAnimationDebugGraphBuilder().Build(debugContext);
+        }
+
+        #endregion
+
+        #region Output Jobs
+
+        internal XAnimationOutputJobHandle<TJob> InsertOutputJob<TJob>(TJob job, string name) where TJob : struct, IAnimationJob
+        {
+            ThrowIfDisposed();
+            string jobName = string.IsNullOrWhiteSpace(name) ? typeof(TJob).Name : name;
+            AnimationScriptPlayable playable = AnimationScriptPlayable.Create(m_Graph, job, 1);
+            Playable upstream = GetOutputTailPlayable();
+            m_Graph.Connect(upstream, 0, playable, 0);
+            playable.SetInputWeight(0, 1f);
+            m_Output.SetSourcePlayable(playable);
+
+            XAnimationOutputJobNode node = new(this, jobName, typeof(TJob), m_NextOutputJobSequence++, playable);
+            m_OutputJobs.Add(node);
+            return new XAnimationOutputJobHandle<TJob>(node);
+        }
+
+        internal void RemoveOutputJob(XAnimationOutputJobNode node)
+        {
+            int index = m_OutputJobs.IndexOf(node);
+            Playable upstream = index > 0 ? m_OutputJobs[index - 1].Playable : GetOutputBasePlayable();
+            if (index < m_OutputJobs.Count - 1)
+            {
+                AnimationScriptPlayable downstream = m_OutputJobs[index + 1].Playable;
+                m_Graph.Disconnect(downstream, 0);
+                m_Graph.Connect(upstream, 0, downstream, 0);
+                downstream.SetInputWeight(0, 1f);
+            }
+            else
+            {
+                m_Output.SetSourcePlayable(upstream);
+            }
+
+            m_Graph.DestroyPlayable(node.Playable);
+            m_OutputJobs.RemoveAt(index);
+            node.Invalidate();
+        }
+
+        private Playable GetOutputTailPlayable()
+        {
+            return m_OutputJobs.Count > 0 ? m_OutputJobs[m_OutputJobs.Count - 1].Playable : GetOutputBasePlayable();
+        }
+
+        private Playable GetOutputBasePlayable()
+        {
+            return m_UseDirectChannelOutput ? m_Channels[0].Mixer : m_LayerMixer;
+        }
+
+        private void InvalidateOutputJobs()
+        {
+            for (int i = 0; i < m_OutputJobs.Count; i++)
+            {
+                m_OutputJobs[i].Invalidate();
+            }
+
+            m_OutputJobs.Clear();
+            m_NextOutputJobSequence = 1;
         }
 
         #endregion
@@ -431,6 +495,7 @@ namespace XAnimationEngine
             XAnimationCompiledAsset compiledAsset = m_CompiledAsset;
             m_CompiledAsset = null;
             m_PlaybackController.Reset();
+            InvalidateOutputJobs();
             if (!m_RuntimeInitialized)
             {
                 m_CueRuntime.Clear();

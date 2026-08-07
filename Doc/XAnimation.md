@@ -42,7 +42,8 @@ flowchart LR
 
     F --> J
     J --> K["AnimationLayerMixerPlayable"]
-    K --> L["Animator"]
+    K --> O["Output Animation Jobs"]
+    O --> L["Animator"]
 
     J --> M["CueDispatcher"]
     I --> N["Auto Transition"]
@@ -482,14 +483,90 @@ MonoBehaviour(Update)
       -> PlayableGraph / Animator
 ```
 
-### 4.3 更新模式
+### 4.3 最终姿势 Animation Jobs
+
+`XAnimationDriver` 与 `XAnimationActor` 都可以通过 `InsertOutputJob` 把自定义 `IAnimationJob` 插到最终 Mixer 与 `AnimationPlayableOutput` 之间：
+
+```text
+Channel / Layer Mixer
+  -> 最先插入的 Job
+    -> ...
+      -> 最后插入的 Job
+        -> AnimationPlayableOutput
+```
+
+Job 按调用顺序串联，后插入的 Job 会处理前面 Job 的结果。`XAnimationOutputJobHandle<TJob>` 可以读取或替换 Playable 内的 JobData，也可以只移除自己的 Playable：
+
+```csharp
+using Unity.Collections;
+using UnityEngine;
+using UnityEngine.Animations;
+
+public struct LeanJob : IAnimationJob
+{
+    public TransformStreamHandle Bone;
+    public NativeArray<float> Angle;
+
+    public void ProcessRootMotion(AnimationStream stream)
+    {
+    }
+
+    public void ProcessAnimation(AnimationStream stream)
+    {
+        Quaternion rotation = Bone.GetLocalRotation(stream);
+        Bone.SetLocalRotation(stream, rotation * Quaternion.Euler(0f, 0f, Angle[0]));
+    }
+}
+
+NativeArray<float> angle = new(1, Allocator.Persistent);
+LeanJob job = new()
+{
+    Bone = actor.Animator.BindStreamTransform(spine),
+    Angle = angle,
+};
+
+XAnimationOutputJobHandle<LeanJob> handle = actor.InsertOutputJob(job, "Lean");
+angle[0] = 15f;
+
+LeanJob currentJob = handle.GetJobData();
+currentJob.Bone = actor.Animator.BindStreamTransform(chest);
+handle.SetJobData(currentJob);
+
+handle.Dispose();
+angle.Dispose();
+```
+
+所有权与生命周期规则：
+
+- Handle 只管理对应的 `AnimationScriptPlayable`，不会释放 Job 中的 `NativeArray` 或其他 Native 容器。
+- 清理时必须先 `handle.Dispose()`，确认 Job 已离开 Graph，再释放调用方持有的 Native 容器。
+- `Dispose()` 可以重复调用；Graph 销毁或 `AnimationAsset` 热切导致 Graph 重建后，旧 Handle 的 `IsValid` 为 `false`，`GetJobData` / `SetJobData` 会抛出 `XAnimationException`。
+- Graph 重建不会自动迁移 Output Job；业务需要在新 Graph 上重新调用 `InsertOutputJob`。
+- Output Job 是最终姿势后处理，不参与 Channel 权重、State 过渡、Seek、Cue 或时间轴语义。
+
+Runtime 提供两个可直接挂载的组件：
+
+- `XAnimationHitReaction`：与 Actor 挂在同一 GameObject，配置一组脊柱骨骼；`Hit(worldDirection, force)` 的方向是命中点/攻击者指向角色的世界空间作用方向，组件会产生侧倾并平滑回正。
+- `XAnimationDamping`：与 Actor 挂在同一 GameObject，配置 `End Bone`、`Bone Count` 和 `Damping Time`；组件自动向父级收集骨链。同一 Actor 可以挂多个 Damping 组件处理头发、尾巴或不同肢体。
+- 两个组件都在 `Start` 接入当前 Graph，在 `OnDestroy` 中先移除 Job 再释放自身 NativeArray；第一阶段不支持运行时换骨链或在 Graph 重建后自动重绑。
+
+编辑态场景预览同样支持这两个组件：
+
+- 在 Hierarchy 中选中场景里的 `XAnimationActor`，通过 Actor Inspector 播放 State/Clip，或使用 Scene View 的 `XAnimation Playback` Overlay 控制播放。
+- 预览 Session 会按同一 GameObject 上启用组件的顺序，把 Hit Reaction 和全部 Damping 插入编辑态 Graph；Damping 随动画采样自动生效。
+- Overlay 的 `Output Jobs Preview` 区域可以填写世界空间 `World Direction` 和正向角速度 `Force`，点击 `Hit` 触发受击侧倾。
+- 组件配置在预览 Session 创建时读取。修改骨骼或参数后，先点击 Actor Inspector 的 `Reset` 停止当前预览，再重新播放以创建新 Session。
+- 停止预览、进入 Play Mode、脚本重载或退出 Editor 时，预览 Session 都会先移除 Job Handle，再释放其 Editor 专用 NativeArray。
+- 独立 `XAnimation Preview` Window 不加载场景组件，因此不预览 Hit Reaction 或 Damping。
+
+### 4.4 更新模式
 
 - `Manual` 是默认模式，兼容旧行为。XAnimation 每帧推进自身逻辑并调用 `PlayableGraph.Evaluate(deltaTime)`，支持 Cue、`Step(deltaTime)`、`SyncFrame()`、Seek 与预览调试。
 - `GameTime` 是性能优先模式。XAnimation 每帧仍同步状态、淡入淡出、Blend 参数、通道权重和自动转场，但不手动调用 `PlayableGraph.Evaluate(deltaTime)`，图由 Unity 按 `DirectorUpdateMode.GameTime` 推进。
 - XAnimation Cue 在 `Manual` 与 `GameTime` 下都由内部 `PlayableBehaviour` 跟随 `PlayableGraph` 采集；`SupportsCue` 为 `true`。`Step(deltaTime)` 与 `SyncFrame()` 仍只支持 `Manual`，非 Manual 调用会抛出异常。
 - `XAnimation Preview` 永远固定 `Manual`，不会跟随运行时 Actor 的 `UpdateMode`。
 
-### 4.4 特定帧暂停
+### 4.5 特定帧暂停
 
 特定帧暂停的核心是先把帧号换算成归一化时间：
 
@@ -539,7 +616,7 @@ driver.ResumeChannel("UpperBody");
 
 注意：`XAnimationActor` 目前只封装了部分 `XAnimationDriver` 接口。通过 Actor 做 `GameTime` 首帧进入并冻结时，可以使用 `UpdateMode`、`PlayState(... enterTime ...)` 和 `GlobalSpeed = 0f`；如果业务需要直接调用 `SeekChannel()` 或 `SyncFrame()`，应持有 `XAnimationDriver`，或按项目需要在 Actor 上补转发方法。
 
-### 4.5 Unity AnimationEvent
+### 4.6 Unity AnimationEvent
 
 - XAnimation 默认关闭 Unity 原生 `AnimationEvent`，内部通过 `Animator.fireEvents = false` 实现，不修改也不复制原始 `AnimationClip`。
 - 关闭 Unity 原生 `AnimationEvent` 只影响 Unity 对目标 GameObject 的函数回调，不影响 XAnimation 从 `AnimationClip.events` 读取数据并派生 Cue。

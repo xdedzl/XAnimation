@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Animations;
 using XAnimationEngine;
 
 namespace XAnimationEditor
@@ -404,6 +405,12 @@ namespace XAnimationEditor
             return IsLoaded
                 ? m_Driver.GetDebugGraphSnapshot()
                 : XAnimationDebugGraphSnapshot.Invalid("XAnimation editor actor is not loaded.");
+        }
+
+        public XAnimationOutputJobHandle<TJob> InsertOutputJob<TJob>(TJob job, string name = null) where TJob : struct, IAnimationJob
+        {
+            EnsureLoaded();
+            return m_Driver.InsertOutputJob(job, name);
         }
 
         public void PreloadAll()

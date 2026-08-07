@@ -386,6 +386,7 @@ namespace XAnimationEditor
                    Contains(node.channelName, query) ||
                    Contains(node.stateKey, query) ||
                    Contains(node.clipKey, query) ||
+                   Contains(node.jobType, query) ||
                    Contains(node.details, query);
         }
 
@@ -918,6 +919,11 @@ namespace XAnimationEditor
         private static string BuildNodeTitle(XAnimationDebugNodeSnapshot node)
         {
             string name = string.IsNullOrWhiteSpace(node.displayName) ? node.playableType : node.displayName;
+            if (node.outputJobSequence > 0)
+            {
+                return $"#{node.outputJobSequence} {name}";
+            }
+
             if (node.inputIndex >= 0)
             {
                 name = $"[{node.inputIndex}] {name}";
@@ -929,7 +935,12 @@ namespace XAnimationEditor
         private static string BuildNodeSubtitle(XAnimationDebugNodeSnapshot node)
         {
             List<string> parts = new();
-            if (!string.IsNullOrWhiteSpace(node.playableType))
+            if (!string.IsNullOrWhiteSpace(node.jobType))
+            {
+                parts.Add(GetShortTypeName(node.jobType));
+                parts.Add(node.isConnected ? "Connected" : "Disconnected");
+            }
+            else if (!string.IsNullOrWhiteSpace(node.playableType))
             {
                 parts.Add(node.playableType);
             }
@@ -952,6 +963,12 @@ namespace XAnimationEditor
             return string.Join(" | ", parts);
         }
 
+        private static string GetShortTypeName(string typeName)
+        {
+            int separator = typeName.LastIndexOf('.');
+            return separator >= 0 ? typeName.Substring(separator + 1) : typeName;
+        }
+
         private static string BuildNodeWeight(XAnimationDebugNodeSnapshot node)
         {
             if (node.inputIndex < 0 && node.effectiveWeight <= 0f)
@@ -965,6 +982,11 @@ namespace XAnimationEditor
         private static Color GetNodeAccent(XAnimationDebugNodeSnapshot node)
         {
             string type = node.playableType ?? string.Empty;
+            if (node.outputJobSequence > 0)
+            {
+                return new Color(0.40f, 0.68f, 0.96f, 1f);
+            }
+
             if (type.IndexOf("Graph", StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 return new Color(0.56f, 0.68f, 1f, 1f);
@@ -1041,6 +1063,12 @@ namespace XAnimationEditor
 
             AddDetailsLabel(m_SelectedNode.displayName, TextNormal, FontStyle.Bold, 13);
             AddDetailsRow("Type", m_SelectedNode.playableType);
+            if (!string.IsNullOrWhiteSpace(m_SelectedNode.jobType))
+            {
+                AddDetailsRow("Job Type", m_SelectedNode.jobType);
+                AddDetailsRow("Insertion Sequence", $"#{m_SelectedNode.outputJobSequence}");
+            }
+
             AddDetailsRow("Input", m_SelectedNode.inputIndex >= 0 ? m_SelectedNode.inputIndex.ToString() : "-");
             AddDetailsRow("Connected", m_SelectedNode.isConnected ? "Yes" : "No");
             AddDetailsRow("Active", m_SelectedNode.isActive ? "Yes" : "No");

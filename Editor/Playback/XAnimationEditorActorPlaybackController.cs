@@ -156,6 +156,9 @@ namespace XAnimationEditor
         public XAnimationActor Actor => m_Actor;
         public XAnimationAsset Asset => m_Asset;
         public bool EditModeSessionLoaded => !Application.isPlaying && m_EditModeSession.IsLoaded;
+        public int PreviewHitReactionCount => CountEnabledComponents<XAnimationHitReaction>();
+        public int PreviewDampingCount => CountEnabledComponents<XAnimationDamping>();
+        public int PreviewAimIKCount => CountEnabledComponents<XAnimationAimIK>();
 
         public void RefreshSelection()
         {
@@ -197,6 +200,28 @@ namespace XAnimationEditor
             else if (m_EditModeSession.IsLoaded)
             {
                 m_EditModeSession.SetGlobalSpeed(m_Settings.Speed);
+            }
+        }
+
+        public void PreviewHit(Vector3 worldDirection, float force)
+        {
+            RefreshSelection();
+            try
+            {
+                if (Application.isPlaying)
+                {
+                    throw new XAnimationException("Hit Reaction preview is only available in Edit Mode.");
+                }
+
+                EnsureEditModeSessionLoaded();
+                m_EditModeSession.PreviewHit(worldDirection, force);
+                SetStatus($"已触发 Hit Reaction：direction = {worldDirection}, force = {force:0.###}。");
+                XAnimationSceneOverlaySelection.RequestRepaint();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogException(ex, m_Actor);
+                SetStatus(ex.Message, true);
             }
         }
 
@@ -1216,6 +1241,26 @@ namespace XAnimationEditor
         {
             m_EditModeSession.EnsureLoaded(m_Actor);
             m_EditModeSession.SetRootMotionEnabled(m_RootMotionEnabled);
+        }
+
+        private int CountEnabledComponents<T>() where T : Behaviour
+        {
+            if (m_Actor == null)
+            {
+                return 0;
+            }
+
+            T[] components = m_Actor.GetComponents<T>();
+            int count = 0;
+            for (int i = 0; i < components.Length; i++)
+            {
+                if (components[i].enabled)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         public XAnimationChannelState GetChannelState(string channelName)
