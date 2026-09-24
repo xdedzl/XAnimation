@@ -25,7 +25,8 @@ namespace XAnimationEngine
                 return;
             }
 
-            int separatorIndex = clipPath.LastIndexOf(SubClipSeparator, StringComparison.Ordinal);
+            // FBX 子动画名可以包含 |（例如 root|slash01），第一个分隔符才是资源路径边界。
+            int separatorIndex = clipPath.IndexOf(SubClipSeparator, StringComparison.Ordinal);
             if (separatorIndex <= 0 || separatorIndex >= clipPath.Length - 1)
             {
                 return;
